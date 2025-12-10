@@ -104,6 +104,7 @@ class AppConfig:
 
     # Distribution
     email_enabled: bool = True
+    email_from: str = "noreply@townsquaremedia.com"
     teams_chat_enabled: bool = True
 
     # Filtering

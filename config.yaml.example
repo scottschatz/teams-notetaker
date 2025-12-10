@@ -18,6 +18,7 @@ summary_max_tokens: 2000  # Maximum tokens for Claude API response
 
 # Distribution
 email_enabled: true  # Send email summaries
+email_from: noreply@townsquaremedia.com  # From address for emails
 teams_chat_enabled: true  # Post to Teams meeting chat
 
 # Filtering

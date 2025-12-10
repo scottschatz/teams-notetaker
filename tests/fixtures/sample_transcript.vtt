@@ -1,0 +1,67 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:05.000
+<v John Smith>Good morning everyone, welcome to our weekly team sync.</v>
+
+00:00:05.500 --> 00:00:12.000
+<v Sarah Johnson>Thanks for joining. Let's start with project updates from last week.</v>
+
+00:00:12.500 --> 00:00:20.000
+<v John Smith>Sure, I'll go first. We completed the API integration with the new authentication system.</v>
+
+00:00:20.500 --> 00:00:28.000
+<v John Smith>It's now live in staging and we're running final tests before production deployment.</v>
+
+00:00:28.500 --> 00:00:35.000
+<v Mike Chen>That's great news. Did you encounter any blockers during the implementation?</v>
+
+00:00:35.500 --> 00:00:42.000
+<v John Smith>We had some initial issues with token expiration, but we resolved them by adjusting the refresh logic.</v>
+
+00:00:42.500 --> 00:00:50.000
+<v Sarah Johnson>Excellent work. Mike, can you give us an update on the database migration?</v>
+
+00:00:50.500 --> 00:00:58.000
+<v Mike Chen>Yes, the migration scripts are ready. We're planning to run them this Friday evening during the maintenance window.</v>
+
+00:00:58.500 --> 00:01:05.000
+<v Mike Chen>I've coordinated with the ops team to ensure minimal downtime. Estimated duration is 2 hours.</v>
+
+00:01:05.500 --> 00:01:12.000
+<v Lisa Park>Do we need to notify users about the maintenance window?</v>
+
+00:01:12.500 --> 00:01:18.000
+<v Sarah Johnson>Yes, Lisa, can you send out a notification email by Wednesday?</v>
+
+00:01:18.500 --> 00:01:22.000
+<v Lisa Park>Will do. I'll draft it today and send it for review.</v>
+
+00:01:22.500 --> 00:01:30.000
+<v Sarah Johnson>Perfect. One more thing - we need to discuss the Q1 roadmap priorities.</v>
+
+00:01:30.500 --> 00:01:38.000
+<v John Smith>I think we should prioritize the mobile app performance improvements. We're getting a lot of user feedback about it.</v>
+
+00:01:38.500 --> 00:01:45.000
+<v Mike Chen>Agreed. The analytics show that mobile users have a 30% higher bounce rate than desktop.</v>
+
+00:01:45.500 --> 00:01:52.000
+<v Lisa Park>I can work on optimizing the API calls to reduce the number of round trips.</v>
+
+00:01:52.500 --> 00:01:58.000
+<v Sarah Johnson>Great. Let's make that a priority. I'll update the roadmap accordingly.</v>
+
+00:01:58.500 --> 00:02:05.000
+<v Sarah Johnson>Any other topics we need to cover today?</v>
+
+00:02:05.500 --> 00:02:10.000
+<v Mike Chen>Just a heads up - I'll be on vacation next week, so I won't be at the next meeting.</v>
+
+00:02:10.500 --> 00:02:15.000
+<v Sarah Johnson>Thanks for the notice. Enjoy your time off!</v>
+
+00:02:15.500 --> 00:02:20.000
+<v John Smith>Have a great vacation, Mike!</v>
+
+00:02:20.500 --> 00:02:25.000
+<v Sarah Johnson>Alright, I think that covers everything. Thanks everyone!</v>

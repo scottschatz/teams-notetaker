@@ -1,0 +1,58 @@
+{
+  "id": "MCMxOTptZWV0aW5nX05EWXhNVEF4TlRVMk16VXhOamN3TXpFeU16QXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3",
+  "subject": "Weekly Team Sync - Engineering",
+  "startDateTime": "2025-12-10T14:00:00.0000000",
+  "endDateTime": "2025-12-10T14:30:00.0000000",
+  "joinUrl": "https://teams.microsoft.com/l/meetup-join/19%3ameeting_example",
+  "participants": [
+    {
+      "identity": {
+        "user": {
+          "id": "user1-id",
+          "displayName": "Sarah Johnson",
+          "userIdentityType": "aadUser"
+        }
+      },
+      "role": "organizer"
+    },
+    {
+      "identity": {
+        "user": {
+          "id": "user2-id",
+          "displayName": "John Smith",
+          "userIdentityType": "aadUser"
+        }
+      },
+      "role": "attendee"
+    },
+    {
+      "identity": {
+        "user": {
+          "id": "user3-id",
+          "displayName": "Mike Chen",
+          "userIdentityType": "aadUser"
+        }
+      },
+      "role": "attendee"
+    },
+    {
+      "identity": {
+        "user": {
+          "id": "user4-id",
+          "displayName": "Lisa Park",
+          "userIdentityType": "aadUser"
+        }
+      },
+      "role": "attendee"
+    }
+  ],
+  "organizer": {
+    "identity": {
+      "user": {
+        "id": "user1-id",
+        "displayName": "Sarah Johnson",
+        "userIdentityType": "aadUser"
+      }
+    }
+  }
+}

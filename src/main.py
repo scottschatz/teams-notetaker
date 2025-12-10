@@ -250,9 +250,6 @@ def db():
 
 @db.command("init")
 @click.option("--drop", is_flag=True, help="Drop existing tables first (DESTRUCTIVE!)")
-@click.confirmation_option(
-    prompt="⚠️  This will drop all existing tables. Are you sure?", help="Confirm table drop"
-)
 def db_init(drop):
     """Initialize database schema.
 
@@ -267,6 +264,9 @@ def db_init(drop):
         db = DatabaseManager(config.database.connection_string)
 
         if drop:
+            if not click.confirm("⚠️  This will drop all existing tables. Are you sure?"):
+                click.echo("Aborted.")
+                return
             click.echo("🗑️  Dropping existing tables...")
             db.drop_tables()
 
@@ -388,9 +388,10 @@ def health():
             click.echo("   ⚠️  Graph API: Credentials not configured")
             all_healthy = False
         else:
-            # TODO: Implement Graph API authentication test
-            click.echo("   ⏳ Graph API: Not yet testable (coming in Phase 3)")
-            click.echo(f"      Client ID: {config.graph_api.client_id[:20]}...")
+            from src.graph.client import GraphAPIClient
+            client = GraphAPIClient(config.graph_api)
+            client.test_connection()
+            click.echo("   ✅ Graph API: Connected")
     except Exception as e:
         click.echo(f"   ❌ Graph API: Failed ({e})")
         all_healthy = False
@@ -398,13 +399,13 @@ def health():
     # Test Claude API
     click.echo("\n🤖 Claude API...")
     try:
-        if not config.claude.api_key:
+        if not config.claude.api_key or config.claude.api_key == "your-api-key-here":
             click.echo("   ⚠️  Claude API: API key not configured")
-            all_healthy = False
+            # Don't mark as unhealthy - Claude is optional for basic operation
         else:
-            # TODO: Implement Claude API test
-            click.echo("   ⏳ Claude API: Not yet testable (coming in Phase 5)")
-            click.echo(f"      API Key: {config.claude.api_key[:20]}...")
+            # Don't actually test Claude API (costs money)
+            click.echo("   ✅ Claude API: Configured")
+            click.echo(f"      Model: {config.claude.model}")
     except Exception as e:
         click.echo(f"   ❌ Claude API: Failed ({e})")
         all_healthy = False
@@ -485,6 +486,139 @@ def config_validate():
             click.echo(f"   • {error}")
         click.echo("")
         sys.exit(1)
+
+
+# ============================================================================
+# MAIN OPERATIONS
+# ============================================================================
+
+
+@cli.command()
+@click.option("--loop", is_flag=True, help="Run continuously (for systemd)")
+@click.option("--interval", type=int, help="Polling interval in minutes (default from config)")
+@click.option("--dry-run", is_flag=True, help="Discover meetings but don't enqueue")
+def run(loop, interval, dry_run):
+    """Run meeting discovery and processing.
+
+    Example:
+        python -m src.main run                    # Run once
+        python -m src.main run --loop             # Run continuously (for systemd)
+        python -m src.main run --dry-run          # Dry run (no enqueue)
+    """
+    from src.discovery.poller import MeetingPoller
+    from src.jobs.worker import JobWorker
+    import asyncio
+    import threading
+
+    config = get_config()
+
+    if loop:
+        click.echo("🚀 Starting continuous mode (poller + worker)")
+        click.echo("   Press Ctrl+C to stop")
+        click.echo("")
+
+        # Start worker in background thread
+        worker = JobWorker(
+            config=config,
+            max_concurrent=config.app.max_concurrent_jobs,
+            job_timeout=config.app.job_timeout_minutes * 60
+        )
+
+        worker_thread = threading.Thread(target=worker.run, daemon=True)
+        worker_thread.start()
+
+        # Run poller in main thread
+        poller = MeetingPoller(config)
+        poller.run_loop(interval_minutes=interval)
+    else:
+        click.echo("🔍 Running single discovery cycle")
+        click.echo("")
+
+        poller = MeetingPoller(config)
+        stats = poller.run_discovery(dry_run=dry_run)
+
+        click.echo("")
+        click.echo("📊 Results:")
+        click.echo(f"   Discovered: {stats['discovered']}")
+        click.echo(f"   New: {stats['new']}")
+        click.echo(f"   Queued: {stats['queued']}")
+        click.echo(f"   Skipped: {stats['skipped']}")
+        click.echo(f"   Errors: {stats['errors']}")
+        click.echo("")
+
+
+@cli.command()
+@click.option("--port", type=int, default=8000, help="Port to run on")
+@click.option("--host", default="0.0.0.0", help="Host to bind to")
+@click.option("--reload", is_flag=True, help="Enable auto-reload")
+def serve(port, host, reload):
+    """Start web dashboard.
+
+    Example:
+        python -m src.main serve                  # Start on port 8000
+        python -m src.main serve --port 8080      # Custom port
+        python -m src.main serve --reload         # Auto-reload on code changes
+    """
+    from src.web.app import run_server
+
+    click.echo(f"🌐 Starting web dashboard on http://{host}:{port}")
+    click.echo("   Press Ctrl+C to stop")
+    click.echo("")
+
+    run_server(host=host, port=port, reload=reload)
+
+
+@cli.command()
+def start_all():
+    """Start both poller and web dashboard (development mode).
+
+    Example:
+        python -m src.main start-all
+    """
+    import subprocess
+    import os
+
+    click.echo("🚀 Starting all services in development mode...")
+    click.echo("")
+
+    # This is a convenience command for development
+    # In production, use systemd services instead
+    click.echo("⚠️  This is for development only!")
+    click.echo("   For production, use: ./deployment/setup-services.sh")
+    click.echo("")
+
+    try:
+        # Start web server
+        web_proc = subprocess.Popen(
+            ["python", "-m", "src.main", "serve"],
+            cwd=os.getcwd()
+        )
+
+        # Start poller + worker
+        poller_proc = subprocess.Popen(
+            ["python", "-m", "src.main", "run", "--loop"],
+            cwd=os.getcwd()
+        )
+
+        click.echo("✅ Services started:")
+        click.echo(f"   Web dashboard: PID {web_proc.pid}")
+        click.echo(f"   Poller/Worker: PID {poller_proc.pid}")
+        click.echo("")
+        click.echo("   Web: http://localhost:8000")
+        click.echo("   Press Ctrl+C to stop all services")
+        click.echo("")
+
+        # Wait for processes
+        web_proc.wait()
+        poller_proc.wait()
+
+    except KeyboardInterrupt:
+        click.echo("\n\n🛑 Stopping services...")
+        web_proc.terminate()
+        poller_proc.terminate()
+        web_proc.wait()
+        poller_proc.wait()
+        click.echo("✅ All services stopped")
 
 
 # ============================================================================

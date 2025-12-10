@@ -1,0 +1,28 @@
+[Unit]
+Description=Teams Meeting Transcript Summarizer - Web Dashboard
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=%u
+WorkingDirectory=/home/%u/projects/teams-notetaker
+Environment="PATH=/home/%u/projects/teams-notetaker/venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Run web server
+ExecStart=/home/%u/projects/teams-notetaker/venv/bin/python -m src.main serve --port 8000
+
+# Restart on failure
+Restart=on-failure
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=teams-notetaker-web
+
+# Resource limits
+MemoryLimit=512M
+
+[Install]
+WantedBy=default.target

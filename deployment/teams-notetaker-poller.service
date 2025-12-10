@@ -1,0 +1,29 @@
+[Unit]
+Description=Teams Meeting Transcript Summarizer - Poller & Worker
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=%u
+WorkingDirectory=/home/%u/projects/teams-notetaker
+Environment="PATH=/home/%u/projects/teams-notetaker/venv/bin:/usr/local/bin:/usr/bin:/bin"
+
+# Run poller in loop mode (includes worker)
+ExecStart=/home/%u/projects/teams-notetaker/venv/bin/python -m src.main run --loop
+
+# Restart on failure
+Restart=on-failure
+RestartSec=10
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=teams-notetaker-poller
+
+# Resource limits
+MemoryLimit=1G
+CPUQuota=200%
+
+[Install]
+WantedBy=default.target

@@ -21,6 +21,17 @@ class ConfigurationError(TeamsNotetakerException):
 
 
 # ============================================================================
+# Rate Limiting Exceptions
+# ============================================================================
+
+
+class RateLimitError(TeamsNotetakerException):
+    """Generic rate limit exceeded exception."""
+
+    pass
+
+
+# ============================================================================
 # Graph API Exceptions
 # ============================================================================
 
@@ -37,7 +48,7 @@ class GraphAPIAuthenticationError(GraphAPIError):
     pass
 
 
-class GraphAPIRateLimitError(GraphAPIError):
+class GraphAPIRateLimitError(RateLimitError, GraphAPIError):
     """Graph API rate limit exceeded."""
 
     pass
@@ -66,7 +77,7 @@ class ClaudeAPIError(TeamsNotetakerException):
     pass
 
 
-class ClaudeAPIRateLimitError(ClaudeAPIError):
+class ClaudeAPIRateLimitError(RateLimitError, ClaudeAPIError):
     """Claude API rate limit exceeded."""
 
     pass
@@ -120,6 +131,12 @@ class JobTimeoutError(JobProcessingError):
 
 class JobDependencyError(JobProcessingError):
     """Job dependency not satisfied."""
+
+    pass
+
+
+class JobQueueError(JobProcessingError):
+    """Job queue operation failed."""
 
     pass
 

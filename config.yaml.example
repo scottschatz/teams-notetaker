@@ -1,0 +1,27 @@
+# Teams Meeting Transcript Summarizer - Runtime Configuration
+# This file can be edited via the web dashboard
+# Copy to config.yaml and customize as needed
+
+# Polling Configuration
+polling_interval_minutes: 5  # How often to check for new meetings
+lookback_hours: 48  # How far back to search for meetings
+
+# Operating Mode
+pilot_mode_enabled: true  # Only process meetings with pilot users
+
+# Job Processing
+max_concurrent_jobs: 5  # Number of jobs to process simultaneously
+job_timeout_minutes: 10  # Maximum time for a single job
+
+# AI Summarization
+summary_max_tokens: 2000  # Maximum tokens for Claude API response
+
+# Distribution
+email_enabled: true  # Send email summaries
+teams_chat_enabled: true  # Post to Teams meeting chat
+
+# Filtering
+minimum_meeting_duration_minutes: 5  # Skip meetings shorter than this
+
+# Worker Configuration
+worker_heartbeat_interval_seconds: 30  # How often worker updates heartbeat

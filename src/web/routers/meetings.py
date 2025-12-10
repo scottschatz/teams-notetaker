@@ -1,0 +1,182 @@
+"""
+Meetings API Router
+
+REST API endpoints for meetings data.
+"""
+
+import logging
+from typing import List, Optional
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
+from datetime import datetime
+
+from ...auth.dependencies import get_current_user, get_db
+from ...core.database import DatabaseManager, Meeting, Summary, Transcript, MeetingParticipant
+from ...jobs.queue import JobQueueManager
+
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+class MeetingResponse(BaseModel):
+    """Meeting API response."""
+    id: int
+    meeting_id: str
+    subject: str
+    organizer_name: str
+    start_time: Optional[datetime]
+    duration_minutes: int
+    participant_count: int
+    status: str
+    has_transcript: bool
+    has_summary: bool
+    has_distribution: bool
+
+    class Config:
+        from_attributes = True
+
+
+class MeetingDetailResponse(MeetingResponse):
+    """Detailed meeting response with summary and transcript."""
+    summary_text: Optional[str] = None
+    transcript_preview: Optional[str] = None
+    participants: List[dict] = []
+
+
+@router.get("/", response_model=List[MeetingResponse])
+async def list_meetings(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    status: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
+    db: DatabaseManager = Depends(get_db)
+):
+    """
+    List meetings with pagination.
+
+    Args:
+        skip: Number of records to skip
+        limit: Number of records to return
+        status: Filter by status
+        current_user: Current user
+        db: Database manager
+
+    Returns:
+        List of meetings
+    """
+    with db.get_session() as session:
+        query = session.query(Meeting)
+
+        if status:
+            query = query.filter(Meeting.status == status)
+
+        query = query.order_by(Meeting.start_time.desc())
+
+        meetings = query.offset(skip).limit(limit).all()
+
+        return [MeetingResponse.from_orm(m) for m in meetings]
+
+
+@router.get("/{meeting_id}", response_model=MeetingDetailResponse)
+async def get_meeting(
+    meeting_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: DatabaseManager = Depends(get_db)
+):
+    """
+    Get meeting details.
+
+    Args:
+        meeting_id: Meeting ID
+        current_user: Current user
+        db: Database manager
+
+    Returns:
+        Meeting details with summary and transcript
+    """
+    with db.get_session() as session:
+        meeting = session.query(Meeting).filter_by(id=meeting_id).first()
+
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        # Get summary
+        summary = session.query(Summary).filter_by(meeting_id=meeting_id).first()
+
+        # Get transcript preview (first 500 chars)
+        transcript = session.query(Transcript).filter_by(meeting_id=meeting_id).first()
+        transcript_preview = None
+        if transcript:
+            preview = transcript.vtt_content[:500]
+            transcript_preview = preview + "..." if len(transcript.vtt_content) > 500 else preview
+
+        # Get participants
+        participants = session.query(MeetingParticipant).filter_by(meeting_id=meeting_id).all()
+
+        return MeetingDetailResponse(
+            **MeetingResponse.from_orm(meeting).dict(),
+            summary_text=summary.summary_text if summary else None,
+            transcript_preview=transcript_preview,
+            participants=[
+                {
+                    "email": p.email,
+                    "display_name": p.display_name,
+                    "role": p.role,
+                    "is_pilot_user": p.is_pilot_user
+                }
+                for p in participants
+            ]
+        )
+
+
+@router.post("/{meeting_id}/reprocess")
+async def reprocess_meeting(
+    meeting_id: int,
+    current_user: dict = Depends(get_current_user),
+    db: DatabaseManager = Depends(get_db)
+):
+    """
+    Requeue meeting for processing.
+
+    Args:
+        meeting_id: Meeting ID
+        current_user: Current user
+        db: Database manager
+
+    Returns:
+        Success message
+    """
+    with db.get_session() as session:
+        meeting = session.query(Meeting).filter_by(id=meeting_id).first()
+
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        # Enqueue jobs
+        queue = JobQueueManager(db)
+        job_ids = queue.enqueue_meeting_jobs(meeting_id, priority=10)  # High priority
+
+        logger.info(f"Reprocessing meeting {meeting_id} (jobs: {job_ids})")
+
+        return {
+            "success": True,
+            "message": f"Meeting queued for reprocessing ({len(job_ids)} jobs created)",
+            "job_ids": job_ids
+        }
+
+
+@router.get("/stats/overview")
+async def get_stats(
+    current_user: dict = Depends(get_current_user),
+    db: DatabaseManager = Depends(get_db)
+):
+    """
+    Get dashboard statistics.
+
+    Returns:
+        Statistics dictionary
+    """
+    stats = db.get_dashboard_stats()
+    return stats

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+
+{% block title %}Login - Teams Meeting Summarizer{% endblock %}
+
+{% block content %}
+<div class="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-md w-full space-y-8">
+        <div>
+            <h2 class="mt-6 text-center text-3xl font-extrabold text-gray-900">
+                Teams Meeting Summarizer
+            </h2>
+            <p class="mt-2 text-center text-sm text-gray-600">
+                Sign in to view meeting summaries
+            </p>
+        </div>
+
+        <div class="mt-8 space-y-6">
+            <!-- Password Login -->
+            <div class="rounded-md shadow-sm space-y-4">
+                <div>
+                    <label for="email" class="sr-only">Email address</label>
+                    <input id="email" name="email" type="email" required
+                           class="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                           placeholder="Email address">
+                </div>
+                <div>
+                    <label for="password" class="sr-only">Password (optional)</label>
+                    <input id="password" name="password" type="password"
+                           class="appearance-none rounded-md relative block w-full px-3 py-2 border border-gray-300 placeholder-gray-500 text-gray-900 focus:outline-none focus:ring-blue-500 focus:border-blue-500 focus:z-10 sm:text-sm"
+                           placeholder="Password (optional for domain users)">
+                </div>
+            </div>
+
+            <div>
+                <button onclick="loginWithPassword()"
+                        class="group relative w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                    Sign in with Email
+                </button>
+            </div>
+
+            {% if azure_ad_enabled %}
+            <div class="relative">
+                <div class="absolute inset-0 flex items-center">
+                    <div class="w-full border-t border-gray-300"></div>
+                </div>
+                <div class="relative flex justify-center text-sm">
+                    <span class="px-2 bg-gray-50 text-gray-500">Or</span>
+                </div>
+            </div>
+
+            <div>
+                <a href="/auth/sso"
+                   class="group relative w-full flex justify-center py-2 px-4 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                    <svg class="h-5 w-5 mr-2" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M10.5 0L0 6.5V14.5L10.5 21L21 14.5V6.5L10.5 0Z" fill="#00A4EF"/>
+                    </svg>
+                    Sign in with Microsoft
+                </a>
+            </div>
+            {% endif %}
+
+            <div id="error-message" class="hidden mt-4 p-4 bg-red-100 border border-red-400 text-red-700 rounded">
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+async function loginWithPassword() {
+    const email = document.getElementById('email').value;
+    const password = document.getElementById('password').value;
+
+    if (!email) {
+        showError('Please enter your email address');
+        return;
+    }
+
+    try {
+        const response = await fetch('/auth/login', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({email, password})
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+            window.location.href = data.redirect_url;
+        } else {
+            showError(data.detail || 'Login failed');
+        }
+    } catch (error) {
+        showError('Login error: ' + error.message);
+    }
+}
+
+function showError(message) {
+    const errorDiv = document.getElementById('error-message');
+    errorDiv.textContent = message;
+    errorDiv.classList.remove('hidden');
+}
+
+// Allow Enter key to submit
+document.getElementById('password').addEventListener('keypress', function(e) {
+    if (e.key === 'Enter') {
+        loginWithPassword();
+    }
+});
+</script>
+{% endblock %}

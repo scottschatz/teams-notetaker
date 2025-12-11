@@ -55,8 +55,8 @@ class MeetingFilter:
         """
         # Check duration
         duration = meeting_data.get("duration_minutes", 0)
-        if duration < self.config.minimum_meeting_duration_minutes:
-            return False, f"Duration too short ({duration} min < {self.config.minimum_meeting_duration_minutes} min)"
+        if duration < self.config.app.minimum_meeting_duration_minutes:
+            return False, f"Duration too short ({duration} min < {self.config.app.minimum_meeting_duration_minutes} min)"
 
         # Check exclusions
         is_excluded, reason = self._is_excluded(meeting_data)
@@ -64,7 +64,7 @@ class MeetingFilter:
             return False, reason
 
         # Check pilot mode
-        if self.config.pilot_mode_enabled:
+        if self.config.app.pilot_mode_enabled:
             has_pilot_user, reason = self._has_pilot_user(meeting_data)
             if not has_pilot_user:
                 return False, reason

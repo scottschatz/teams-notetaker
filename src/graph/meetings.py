@@ -123,12 +123,11 @@ class MeetingDiscovery:
         logger.debug(f"Fetching meetings for {user_email} from {start_time} to {end_time}")
 
         # Use calendarView to get meetings in time range
-        # Filter for online meetings (Teams meetings)
+        # Note: Cannot filter by isOnlineMeeting in API, so we get all events and filter client-side
         endpoint = f"/users/{user_email}/calendarView"
         params = {
             "startDateTime": start_time,
             "endDateTime": end_time,
-            "$filter": "isOnlineMeeting eq true",
             "$select": "id,subject,start,end,organizer,attendees,onlineMeeting,isOnlineMeeting",
             "$top": 50
         }
@@ -138,9 +137,11 @@ class MeetingDiscovery:
 
             meetings = []
             for event in events:
-                meeting = self._parse_meeting_event(event)
-                if meeting:
-                    meetings.append(meeting)
+                # Filter for online meetings (Teams meetings only)
+                if event.get('isOnlineMeeting') and event.get('onlineMeeting'):
+                    meeting = self._parse_meeting_event(event)
+                    if meeting:
+                        meetings.append(meeting)
 
             logger.debug(f"Found {len(meetings)} online meetings for {user_email}")
             return meetings

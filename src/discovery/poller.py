@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 from ..graph.client import GraphAPIClient
 from ..graph.meetings import MeetingDiscovery
-from ..core.database import DatabaseManager, Meeting, MeetingParticipant, ProcessingRun
+from ..core.database import DatabaseManager, Meeting, MeetingParticipant, ProcessingRun, PilotUser
 from ..core.config import AppConfig
 from ..jobs.queue import JobQueueManager
 from ..discovery.filters import MeetingFilter
@@ -199,29 +199,36 @@ class MeetingPoller:
         """
         Discover meetings from Graph API.
 
+        In pilot mode: Queries calendars of pilot users only
+        In production mode: Queries all pilot users (can expand to all users later)
+
         Returns:
             List of meeting dictionaries
         """
-        # For now, we need to implement org-wide discovery
-        # This is a placeholder - actual implementation depends on Graph API permissions
+        # Get pilot users to query
+        with self.db.get_session() as session:
+            pilot_users = session.query(PilotUser).filter_by(is_active=True).all()
+            user_emails = [user.email for user in pilot_users]
 
-        # Option 1: Query specific users' calendars (requires user list)
-        # Option 2: Use change notifications/webhooks
-        # Option 3: Query shared calendars
+        if not user_emails:
+            logger.warning("No active pilot users found - nothing to discover")
+            return []
 
-        # For initial implementation, let's return empty list
-        # This will be populated once we have proper Graph API access
-
-        logger.warning(
-            "Org-wide meeting discovery not fully implemented yet. "
-            "Need to configure user iteration or webhook-based discovery."
+        logger.info(
+            f"Discovering meetings for {len(user_emails)} pilot users "
+            f"(lookback: {self.config.app.lookback_hours}h)"
         )
 
-        # Placeholder: return empty list
-        # In production, this would call:
-        # return self.discovery.discover_meetings(hours_back=self.config.app.lookback_hours)
-
-        return []
+        # Query meetings for pilot users
+        try:
+            meetings = self.discovery.discover_meetings(
+                hours_back=self.config.app.lookback_hours,
+                user_emails=user_emails
+            )
+            return meetings
+        except Exception as e:
+            logger.error(f"Error discovering meetings: {e}", exc_info=True)
+            return []
 
     def _meeting_exists(self, meeting_id: str) -> bool:
         """

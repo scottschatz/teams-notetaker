@@ -262,6 +262,7 @@ class MeetingPoller:
                 subject=meeting_data.get("subject", "No Subject"),
                 organizer_email=meeting_data.get("organizer_email", ""),
                 organizer_name=meeting_data.get("organizer_name", ""),
+                organizer_user_id=meeting_data.get("organizer_user_id", ""),
                 start_time=meeting_data.get("start_time"),
                 end_time=meeting_data.get("end_time"),
                 duration_minutes=meeting_data.get("duration_minutes", 0),

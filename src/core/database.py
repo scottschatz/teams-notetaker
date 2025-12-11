@@ -97,6 +97,7 @@ class Meeting(Base):
     subject = Column(String(500))
     organizer_email = Column(String(255), index=True)
     organizer_name = Column(String(500))
+    organizer_user_id = Column(String(255))  # User ID (GUID) for getAllTranscripts API
     start_time = Column(DateTime, index=True)
     end_time = Column(DateTime)
     duration_minutes = Column(Integer)

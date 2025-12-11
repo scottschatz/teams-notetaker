@@ -84,7 +84,7 @@ class JobQueueManager:
             # Check if jobs already exist for this meeting
             existing_jobs = session.query(JobQueue).filter(
                 JobQueue.meeting_id == meeting_id,
-                JobQueue.status.in_([JobStatus.PENDING, JobStatus.RUNNING, JobStatus.RETRYING])
+                JobQueue.status.in_(["pending", "running", "retrying"])
             ).count()
 
             if existing_jobs > 0:
@@ -98,7 +98,7 @@ class JobQueueManager:
                 job_type=JobType.FETCH_TRANSCRIPT,
                 meeting_id=meeting_id,
                 priority=priority,
-                status=JobStatus.PENDING,
+                status="pending",
                 input_data={"meeting_id": meeting_id},
                 max_retries=3
             )
@@ -110,7 +110,7 @@ class JobQueueManager:
                 job_type=JobType.GENERATE_SUMMARY,
                 meeting_id=meeting_id,
                 priority=priority,
-                status=JobStatus.PENDING,
+                status="pending",
                 input_data={"meeting_id": meeting_id},
                 depends_on_job_id=job1.id,
                 max_retries=3
@@ -123,7 +123,7 @@ class JobQueueManager:
                 job_type=JobType.DISTRIBUTE,
                 meeting_id=meeting_id,
                 priority=priority,
-                status=JobStatus.PENDING,
+                status="pending",
                 input_data={"meeting_id": meeting_id},
                 depends_on_job_id=job2.id,
                 max_retries=5  # More retries for distribution (network issues)
@@ -196,10 +196,10 @@ class JobQueueManager:
             result = session.execute(
                 query,
                 {
-                    "running_status": JobStatus.RUNNING.value,
-                    "pending_status": JobStatus.PENDING.value,
-                    "retrying_status": JobStatus.RETRYING.value,
-                    "completed_status": JobStatus.COMPLETED.value,
+                    "running_status": "running".value,
+                    "pending_status": "pending".value,
+                    "retrying_status": "retrying".value,
+                    "completed_status": "completed".value,
                     "worker_id": worker_id,
                     "now": now
                 }
@@ -235,7 +235,7 @@ class JobQueueManager:
         """
         with self.db.get_session() as session:
             job = session.query(JobQueue).filter_by(id=job_id).first()
-            if job and job.status == JobStatus.RUNNING:
+            if job and job.status == "running":
                 job.heartbeat_at = datetime.now()
                 session.commit()
                 return True
@@ -254,7 +254,7 @@ class JobQueueManager:
             if not job:
                 raise JobQueueError(f"Job {job_id} not found")
 
-            job.status = JobStatus.COMPLETED
+            job.status = "completed"
             job.completed_at = datetime.now()
             job.output_data = output_data
             session.commit()
@@ -289,7 +289,7 @@ class JobQueueManager:
             # Check if we should retry
             if should_retry and job.retry_count < job.max_retries:
                 job.retry_count += 1
-                job.status = JobStatus.RETRYING
+                job.status = "retrying"
 
                 # Calculate next retry time using exponential backoff
                 strategy = get_retry_strategy(job.job_type.value)
@@ -305,7 +305,7 @@ class JobQueueManager:
                     f"at {job.next_retry_at.strftime('%Y-%m-%d %H:%M:%S')}: {error_message}"
                 )
             else:
-                job.status = JobStatus.FAILED
+                job.status = "failed"
                 job.completed_at = datetime.now()
 
                 reason = "max retries exceeded" if job.retry_count >= job.max_retries else "retry disabled"
@@ -349,7 +349,7 @@ class JobQueueManager:
 
             # Oldest pending job
             oldest_pending = session.query(JobQueue).filter(
-                JobQueue.status.in_([JobStatus.PENDING, JobStatus.RETRYING])
+                JobQueue.status.in_(["pending", "retrying"])
             ).order_by(JobQueue.created_at.asc()).first()
 
             oldest_age_minutes = None
@@ -359,7 +359,7 @@ class JobQueueManager:
 
             # Average processing time (completed jobs only)
             completed_jobs = session.query(JobQueue).filter(
-                JobQueue.status == JobStatus.COMPLETED,
+                JobQueue.status == "completed",
                 JobQueue.started_at.isnot(None),
                 JobQueue.completed_at.isnot(None)
             ).all()
@@ -395,7 +395,7 @@ class JobQueueManager:
             cutoff = datetime.now() - timedelta(days=days)
 
             deleted = session.query(JobQueue).filter(
-                JobQueue.status.in_([JobStatus.COMPLETED, JobStatus.FAILED]),
+                JobQueue.status.in_(["completed", "failed"]),
                 JobQueue.completed_at < cutoff
             ).delete()
 
@@ -419,11 +419,11 @@ class JobQueueManager:
 
             jobs = session.query(JobQueue).filter(
                 JobQueue.meeting_id == meeting_id,
-                JobQueue.status.in_([JobStatus.PENDING, JobStatus.RETRYING])
+                JobQueue.status.in_(["pending", "retrying"])
             ).all()
 
             for job in jobs:
-                job.status = JobStatus.FAILED
+                job.status = "failed"
                 job.error_message = "Cancelled by user"
                 job.completed_at = datetime.now()
                 cancelled += 1

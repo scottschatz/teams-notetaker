@@ -250,12 +250,22 @@ class MeetingDiscovery:
             duration = end_time - start_time
             duration_minutes = int(duration.total_seconds() / 60)
 
+        # Get organizer user ID (needed for transcript API)
+        organizer_user_id = None
+        organizer_email = organizer.get("address", "")
+        if organizer_email:
+            try:
+                organizer_user_id = self._get_user_id(organizer_email)
+            except Exception as e:
+                logger.warning(f"Could not get user ID for organizer {organizer_email}: {e}")
+
         return {
             "meeting_id": online_meeting.get("id", event["id"]),
             "event_id": event["id"],
             "subject": event.get("subject", "No Subject"),
-            "organizer_email": organizer.get("address", ""),
+            "organizer_email": organizer_email,
             "organizer_name": organizer.get("name", ""),
+            "organizer_user_id": organizer_user_id,
             "start_time": start_time,
             "end_time": end_time,
             "duration_minutes": duration_minutes,
@@ -293,6 +303,25 @@ class MeetingDiscovery:
             "participants": [],  # onlineMeeting API doesn't include participants
             "has_transcript": None
         }
+
+    def _get_user_id(self, email: str) -> Optional[str]:
+        """
+        Get user ID from email address.
+
+        Args:
+            email: User's email address
+
+        Returns:
+            User ID (GUID) or None if not found
+        """
+        try:
+            endpoint = f"/users/{email}"
+            params = {'$select': 'id,displayName'}
+            user = self.client.get(endpoint, params=params)
+            return user.get('id')
+        except Exception as e:
+            logger.error(f"Failed to get user ID for {email}: {e}")
+            return None
 
     def _parse_datetime(self, dt_string: Optional[str]) -> Optional[datetime]:
         """

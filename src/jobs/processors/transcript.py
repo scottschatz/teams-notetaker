@@ -58,8 +58,8 @@ class TranscriptProcessor(BaseProcessor):
         """
         super().__init__(db, config)
 
-        # Initialize Graph API client and transcript fetcher
-        self.graph_client = GraphAPIClient(config.graph_api)
+        # Initialize Graph API client (use beta for getAllTranscripts)
+        self.graph_client = GraphAPIClient(config.graph_api, use_beta=True)
         self.transcript_fetcher = TranscriptFetcher(self.graph_client)
 
     async def process(self, job) -> Dict[str, Any]:
@@ -94,27 +94,40 @@ class TranscriptProcessor(BaseProcessor):
                     cached=True
                 )
 
-        # Determine user_id for Graph API call
-        # Use organizer email as user_id
-        user_id = meeting.organizer_email
-        if not user_id:
-            raise GraphAPIError("Meeting organizer email not found")
-
-        # Get online meeting ID (Graph API ID)
-        graph_meeting_id = meeting.meeting_id  # This should be the Graph API meeting ID
-
-        try:
-            # Fetch transcript from Graph API
-            self._log_progress(job, f"Downloading transcript from Graph API (user: {user_id})")
-
-            transcript_data = self.transcript_fetcher.get_transcript_with_metadata(
-                meeting_id=graph_meeting_id,
-                user_id=user_id
+        # Get organizer user ID (required for getAllTranscripts API)
+        organizer_user_id = meeting.organizer_user_id
+        if not organizer_user_id:
+            raise GraphAPIError(
+                f"Meeting organizer user ID not found for {meeting.organizer_email}. "
+                "This may be an old meeting record - try rediscovering it."
             )
 
+        try:
+            # Fetch transcript using new getAllTranscripts approach
+            # We use find_transcript_by_thread_id since we have calendar data
+            self._log_progress(
+                job,
+                f"Searching for transcript by organizer {meeting.organizer_name} ({organizer_user_id})"
+            )
+
+            # Extract thread ID from meeting ID or joinUrl
+            # Meeting IDs from getAllTranscripts contain the thread ID
+            # We'll search recent transcripts and match by time or meeting ID
+
+            transcript_data = self.transcript_fetcher.get_transcript_with_metadata(
+                organizer_user_id=organizer_user_id,
+                meeting_id=meeting.meeting_id  # Try with calendar event ID first
+            )
+
+            if not transcript_data:
+                # No transcript found
+                raise TranscriptNotFoundError(
+                    f"No transcript found for meeting organized by {meeting.organizer_name}"
+                )
+
             vtt_content = transcript_data["content"]
-            vtt_url = transcript_data.get("content_url", "")
-            graph_transcript_id = transcript_data.get("transcript_id", "")
+            vtt_url = transcript_data.get("contentUrl", "")
+            graph_transcript_id = transcript_data.get("id", "")
 
             self._log_progress(job, f"Downloaded {len(vtt_content)} chars of VTT content")
 

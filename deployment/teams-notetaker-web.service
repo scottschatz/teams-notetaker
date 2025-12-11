@@ -9,7 +9,7 @@ WorkingDirectory=/home/%u/projects/teams-notetaker
 Environment="PATH=/home/%u/projects/teams-notetaker/venv/bin:/usr/local/bin:/usr/bin:/bin"
 
 # Run web server
-ExecStart=/home/%u/projects/teams-notetaker/venv/bin/python -m src.main serve --port 8001
+ExecStart=/home/%u/projects/teams-notetaker/venv/bin/python -m src.main serve --port 8765
 
 # Restart on failure
 Restart=on-failure

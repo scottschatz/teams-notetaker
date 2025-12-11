@@ -372,9 +372,10 @@ def health():
     # Test Database
     click.echo("\n📦 Database Connection...")
     try:
+        from sqlalchemy import text
         db = DatabaseManager(config.database.connection_string)
         session = db.get_session()
-        session.execute("SELECT 1")
+        session.execute(text("SELECT 1"))
         session.close()
         click.echo("   ✅ Database: Connected")
     except Exception as e:

@@ -248,7 +248,7 @@ class DistributionProcessor(BaseProcessor):
 
             # Update meeting status
             meeting.has_distribution = True
-            meeting.status = MeetingStatus.COMPLETED
+            meeting.status = "completed"
 
             session.commit()
 

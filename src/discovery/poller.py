@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 from ..graph.client import GraphAPIClient
 from ..graph.meetings import MeetingDiscovery
-from ..core.database import DatabaseManager, Meeting, MeetingParticipant, ProcessingRun, MeetingStatus
+from ..core.database import DatabaseManager, Meeting, MeetingParticipant, ProcessingRun
 from ..core.config import AppConfig
 from ..jobs.queue import JobQueueManager
 from ..discovery.filters import MeetingFilter
@@ -60,7 +60,7 @@ class MeetingPoller:
             graph_client: GraphAPIClient instance (created if None)
         """
         self.config = config
-        self.db = db or DatabaseManager(config.database)
+        self.db = db or DatabaseManager(config.database.connection_string)
         self.graph_client = graph_client or GraphAPIClient(config.graph_api)
 
         # Initialize components
@@ -69,8 +69,8 @@ class MeetingPoller:
         self.filter = MeetingFilter(self.db, config)
 
         logger.info(
-            f"MeetingPoller initialized (pilot_mode: {config.pilot_mode_enabled}, "
-            f"lookback: {config.lookback_hours}h)"
+            f"MeetingPoller initialized (pilot_mode: {config.app.pilot_mode_enabled}, "
+            f"lookback: {config.app.lookback_hours}h)"
         )
 
     def run_discovery(self, dry_run: bool = False) -> Dict[str, Any]:
@@ -125,13 +125,13 @@ class MeetingPoller:
 
                         # Still save to database but mark as skipped
                         if not dry_run:
-                            self._save_meeting(meeting_data, status=MeetingStatus.SKIPPED)
+                            self._save_meeting(meeting_data, status="skipped")
 
                         continue
 
                     # Save meeting to database
                     if not dry_run:
-                        meeting_id = self._save_meeting(meeting_data, status=MeetingStatus.DISCOVERED)
+                        meeting_id = self._save_meeting(meeting_data, status="discovered")
 
                         # Enqueue for processing
                         self.queue.enqueue_meeting_jobs(meeting_id, priority=5)
@@ -176,7 +176,7 @@ class MeetingPoller:
             interval_minutes: Polling interval (default from config)
         """
         if interval_minutes is None:
-            interval_minutes = self.config.polling_interval_minutes
+            interval_minutes = self.config.app.polling_interval_minutes
 
         logger.info(f"Starting discovery loop (interval: {interval_minutes} minutes)")
 
@@ -219,7 +219,7 @@ class MeetingPoller:
 
         # Placeholder: return empty list
         # In production, this would call:
-        # return self.discovery.discover_meetings(hours_back=self.config.lookback_hours)
+        # return self.discovery.discover_meetings(hours_back=self.config.app.lookback_hours)
 
         return []
 
@@ -237,7 +237,7 @@ class MeetingPoller:
             exists = session.query(Meeting).filter_by(meeting_id=meeting_id).first() is not None
             return exists
 
-    def _save_meeting(self, meeting_data: Dict[str, Any], status: MeetingStatus) -> int:
+    def _save_meeting(self, meeting_data: Dict[str, Any], status: str) -> int:
         """
         Save meeting and participants to database.
 
@@ -298,7 +298,7 @@ class MeetingPoller:
             run = ProcessingRun(
                 started_at=start_time,
                 completed_at=datetime.now(),
-                mode="pilot" if self.config.pilot_mode_enabled else "production",
+                mode="pilot" if self.config.app.pilot_mode_enabled else "production",
                 meetings_discovered=stats["discovered"],
                 meetings_queued=stats["queued"],
                 meetings_skipped=stats["skipped"],

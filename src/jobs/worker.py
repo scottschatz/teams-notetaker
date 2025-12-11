@@ -61,7 +61,7 @@ class JobWorker:
             job_timeout: Job timeout in seconds (default 600 = 10 minutes)
         """
         self.config = config
-        self.db = db or DatabaseManager(config.database)
+        self.db = db or DatabaseManager(config.database.connection_string)
         self.max_concurrent = max_concurrent
         self.job_timeout = job_timeout
 

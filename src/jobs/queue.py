@@ -12,8 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, and_, or_
 
 from ..core.database import (
-    DatabaseManager, JobQueue, Meeting,
-    JobStatus, JobType, MeetingStatus
+    DatabaseManager, JobQueue, Meeting
 )
 from ..jobs.retry import calculate_next_retry, get_retry_strategy
 from ..core.exceptions import JobQueueError
@@ -133,7 +132,7 @@ class JobQueueManager:
             session.commit()
 
             # Update meeting status
-            meeting.status = MeetingStatus.QUEUED
+            meeting.status = "queued"
             session.commit()
 
             job_ids = [job1.id, job2.id, job3.id]
@@ -316,7 +315,7 @@ class JobQueueManager:
                 if job.meeting_id:
                     meeting = session.query(Meeting).filter_by(id=job.meeting_id).first()
                     if meeting:
-                        meeting.status = MeetingStatus.FAILED
+                        meeting.status = "failed"
                         meeting.error_message = error_message
 
             session.commit()

@@ -157,7 +157,7 @@ class TranscriptProcessor(BaseProcessor):
 
                 # Update meeting
                 meeting.has_transcript = True
-                meeting.status = MeetingStatus.PROCESSING
+                meeting.status = "processing"
 
                 session.commit()
 
@@ -180,7 +180,7 @@ class TranscriptProcessor(BaseProcessor):
             # Update meeting status
             self._update_meeting_status(
                 meeting_id,
-                MeetingStatus.SKIPPED,
+                "skipped",
                 error_message=f"No transcript available: {e}"
             )
 

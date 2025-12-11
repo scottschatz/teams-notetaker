@@ -5,7 +5,8 @@ Handles login, logout, and Azure AD SSO callback.
 """
 
 import logging
-from fastapi import APIRouter, Request, Depends, HTTPException, Response
+from typing import Optional
+from fastapi import APIRouter, Request, Depends, HTTPException, Response, Cookie
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import BaseModel
 
@@ -245,7 +246,3 @@ async def logout(
         "message": "Logged out successfully",
         "redirect_url": "/auth/login"
     }
-
-
-from typing import Optional
-from fastapi import Cookie

@@ -129,7 +129,7 @@ class SummaryProcessor(BaseProcessor):
                     transcript=formatted_transcript,
                     meeting_metadata=meeting_metadata,
                     summary_type="full",
-                    max_tokens=self.config.max_summary_tokens
+                    max_tokens=self.config.app.summary_max_tokens
                 )
 
                 summary_text = result["summary"]

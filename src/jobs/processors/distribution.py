@@ -131,7 +131,7 @@ class DistributionProcessor(BaseProcessor):
             chat_message_id = None
 
             # Send email (if enabled)
-            if self.config.email_enabled:
+            if self.config.app.email_enabled:
                 try:
                     self._log_progress(job, f"Sending email to {len(participant_emails)} recipients")
 
@@ -186,7 +186,7 @@ class DistributionProcessor(BaseProcessor):
                 self._log_progress(job, "Email distribution disabled in config", "info")
 
             # Post to Teams chat (if enabled)
-            if self.config.teams_chat_enabled:
+            if self.config.app.teams_chat_enabled:
                 try:
                     self._log_progress(job, "Posting summary to Teams meeting chat")
 

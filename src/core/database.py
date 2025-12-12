@@ -103,6 +103,11 @@ class Meeting(Base):
     duration_minutes = Column(Integer)
     participant_count = Column(Integer)
 
+    # Teams meeting URLs and IDs
+    join_url = Column(String(1000))  # Teams meeting join URL
+    recording_url = Column(String(1000))  # Recording URL (if available)
+    chat_id = Column(String(255))  # Teams chat thread ID
+
     # Discovery metadata
     discovered_at = Column(DateTime, default=func.now(), index=True)
     discovery_run_id = Column(Integer, ForeignKey("processing_runs.id"))

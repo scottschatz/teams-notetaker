@@ -267,6 +267,9 @@ class MeetingPoller:
                 end_time=meeting_data.get("end_time"),
                 duration_minutes=meeting_data.get("duration_minutes", 0),
                 participant_count=meeting_data.get("participant_count", 0),
+                join_url=meeting_data.get("join_url", ""),
+                chat_id=meeting_data.get("chat_id", ""),
+                recording_url=meeting_data.get("recording_url", ""),
                 status=status
             )
             session.add(meeting)

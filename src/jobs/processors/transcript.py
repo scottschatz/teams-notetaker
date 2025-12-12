@@ -13,7 +13,7 @@ from ..processors.base import BaseProcessor, register_processor
 from ...graph.client import GraphAPIClient
 from ...graph.transcripts import TranscriptFetcher
 from ...utils.vtt_parser import parse_vtt, get_transcript_metadata, format_transcript_for_summary
-from ...core.database import Transcript, MeetingStatus
+from ...core.database import Transcript
 from ...core.exceptions import TranscriptNotFoundError, GraphAPIError
 
 
@@ -110,20 +110,35 @@ class TranscriptProcessor(BaseProcessor):
                 f"Searching for transcript by organizer {meeting.organizer_name} ({organizer_user_id})"
             )
 
-            # Extract thread ID from meeting ID or joinUrl
-            # Meeting IDs from getAllTranscripts contain the thread ID
-            # We'll search recent transcripts and match by time or meeting ID
-
-            transcript_data = self.transcript_fetcher.get_transcript_with_metadata(
+            # Try to find transcript by matching meeting start time
+            # (Calendar meeting IDs don't match transcript meeting IDs)
+            transcript_metadata = self.transcript_fetcher.find_transcript_by_time(
                 organizer_user_id=organizer_user_id,
-                meeting_id=meeting.meeting_id  # Try with calendar event ID first
+                meeting_start_time=meeting.start_time,
+                tolerance_minutes=30
             )
 
-            if not transcript_data:
+            if not transcript_metadata:
                 # No transcript found
                 raise TranscriptNotFoundError(
                     f"No transcript found for meeting organized by {meeting.organizer_name}"
                 )
+
+            # Download the transcript content
+            vtt_content = self.transcript_fetcher.download_transcript_content(
+                organizer_user_id=organizer_user_id,
+                meeting_id=transcript_metadata.get('meetingId'),
+                transcript_id=transcript_metadata.get('id')
+            )
+
+            # Build transcript data structure
+            transcript_data = {
+                'id': transcript_metadata.get('id'),
+                'meetingId': transcript_metadata.get('meetingId'),
+                'createdDateTime': transcript_metadata.get('createdDateTime'),
+                'contentUrl': transcript_metadata.get('transcriptContentUrl'),
+                'content': vtt_content
+            }
 
             vtt_content = transcript_data["content"]
             vtt_url = transcript_data.get("contentUrl", "")
@@ -144,7 +159,7 @@ class TranscriptProcessor(BaseProcessor):
 
             speaker_count = metadata["speaker_count"]
             word_count = metadata["word_count"]
-            duration_seconds = metadata["duration_seconds"]
+            duration_seconds = metadata["total_duration_seconds"]
 
             self._log_progress(
                 job,

@@ -14,10 +14,9 @@ from ..ai.claude_client import ClaudeClient
 from ..ai.prompts import (
     SUMMARY_SYSTEM_PROMPT,
     build_summary_prompt,
-    build_action_items_prompt,
-    build_decisions_prompt,
-    estimate_tokens,
-    truncate_to_token_limit
+    build_action_items_extraction_prompt,
+    build_decision_extraction_prompt,
+    estimate_token_count
 )
 from ..core.exceptions import SummaryGenerationError
 
@@ -113,9 +112,9 @@ class MeetingSummarizer:
             if summary_type == "full":
                 user_prompt = build_summary_prompt(transcript, meeting_metadata)
             elif summary_type == "action_items":
-                user_prompt = build_action_items_prompt(transcript, meeting_metadata)
+                user_prompt = build_action_items_extraction_prompt(transcript, meeting_metadata)
             elif summary_type == "decisions":
-                user_prompt = build_decisions_prompt(transcript, meeting_metadata)
+                user_prompt = build_decision_extraction_prompt(transcript, meeting_metadata)
             elif summary_type == "executive":
                 # For executive summary, use a condensed version
                 user_prompt = self._build_executive_prompt(transcript, meeting_metadata)
@@ -123,7 +122,7 @@ class MeetingSummarizer:
                 raise SummaryGenerationError(f"Unknown summary type: {summary_type}")
 
             # Check token count and truncate if needed
-            input_token_estimate = estimate_tokens(user_prompt)
+            input_token_estimate = estimate_token_count(user_prompt)
             truncated = False
 
             # Reserve tokens for output (default max_tokens for response)
@@ -297,9 +296,9 @@ Meetings:
         if summary_type == "full":
             user_prompt = build_summary_prompt(transcript, metadata)
         elif summary_type == "action_items":
-            user_prompt = build_action_items_prompt(transcript, metadata)
+            user_prompt = build_action_items_extraction_prompt(transcript, metadata)
         elif summary_type == "decisions":
-            user_prompt = build_decisions_prompt(transcript, metadata)
+            user_prompt = build_decision_extraction_prompt(transcript, metadata)
         else:
             user_prompt = self._build_executive_prompt(transcript, metadata)
 

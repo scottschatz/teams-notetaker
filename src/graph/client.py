@@ -230,6 +230,20 @@ class GraphAPIClient:
         response = self._request("GET", endpoint, params=params)
         return response.json()
 
+    def get_text(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> str:
+        """
+        GET request to Graph API that returns text content.
+
+        Args:
+            endpoint: API endpoint
+            params: Query parameters
+
+        Returns:
+            Response body as text string
+        """
+        response = self._request("GET", endpoint, params=params)
+        return response.text
+
     def post(self, endpoint: str, json: Optional[Dict[str, Any]] = None, data: Optional[Any] = None) -> Dict[str, Any]:
         """
         POST request to Graph API.

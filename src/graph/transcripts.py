@@ -155,12 +155,8 @@ class TranscriptFetcher:
 
             logger.debug(f"Downloading transcript {transcript_id} for meeting {meeting_id}")
 
-            # The content endpoint returns the raw VTT text
-            content = self.client.get(endpoint, params=params)
-
-            # If content is a dict, convert to string
-            if isinstance(content, dict):
-                content = str(content)
+            # The content endpoint returns the raw VTT text (not JSON)
+            content = self.client.get_text(endpoint, params=params)
 
             logger.info(f"Downloaded transcript {transcript_id}: {len(content)} bytes")
             return content
@@ -226,6 +222,64 @@ class TranscriptFetcher:
         except Exception as e:
             logger.error(f"Error fetching transcript with metadata: {e}")
             raise
+
+    def find_transcript_by_time(
+        self,
+        organizer_user_id: str,
+        meeting_start_time: datetime,
+        tolerance_minutes: int = 30
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Find a transcript by matching the meeting start time.
+
+        Since calendar meeting IDs don't match transcript meeting IDs,
+        we match by comparing the transcript createdDateTime with the
+        meeting start time.
+
+        Args:
+            organizer_user_id: User ID of the meeting organizer
+            meeting_start_time: When the meeting started (datetime object)
+            tolerance_minutes: Allow this many minutes difference (default 30)
+
+        Returns:
+            Transcript metadata dict if found, None otherwise
+        """
+        try:
+            # Get recent transcripts (last 72 hours)
+            all_transcripts = self.get_all_transcripts_for_organizer(
+                organizer_user_id,
+                since_hours=72
+            )
+
+            # Find transcript created around the meeting start time
+            from datetime import timezone
+            for transcript in all_transcripts:
+                created_str = transcript.get('createdDateTime', '')
+                if not created_str:
+                    continue
+
+                created_dt = datetime.fromisoformat(created_str.replace('Z', '+00:00'))
+
+                # Make meeting_start_time timezone-aware if it isn't
+                if meeting_start_time.tzinfo is None:
+                    meeting_start_time = meeting_start_time.replace(tzinfo=timezone.utc)
+
+                # Check if times are within tolerance
+                time_diff = abs((created_dt - meeting_start_time).total_seconds() / 60)
+
+                if time_diff <= tolerance_minutes:
+                    logger.info(
+                        f"Found transcript {transcript.get('id')} created at {created_str} "
+                        f"matching meeting at {meeting_start_time} (diff: {time_diff:.1f} min)"
+                    )
+                    return transcript
+
+            logger.info(f"No transcript found for meeting at {meeting_start_time}")
+            return None
+
+        except Exception as e:
+            logger.error(f"Error finding transcript by time: {e}")
+            return None
 
     def find_transcript_by_thread_id(
         self,

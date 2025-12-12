@@ -13,7 +13,7 @@ from ..processors.base import BaseProcessor, register_processor
 from ...ai.claude_client import ClaudeClient
 from ...ai.summarizer import MeetingSummarizer
 from ...utils.vtt_parser import format_transcript_for_summary
-from ...core.database import Summary, Transcript, MeetingStatus
+from ...core.database import Summary, Transcript
 from ...core.exceptions import SummaryGenerationError, ClaudeAPIError
 
 
@@ -108,8 +108,7 @@ class SummaryProcessor(BaseProcessor):
             # Format transcript for summarization
             formatted_transcript = format_transcript_for_summary(
                 transcript.parsed_content,
-                include_timestamps=True,
-                include_speakers=True
+                include_timestamps=True
             )
 
             # Build meeting metadata

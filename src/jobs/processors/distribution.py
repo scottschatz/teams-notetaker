@@ -14,7 +14,7 @@ from ...graph.client import GraphAPIClient
 from ...graph.mail import EmailSender
 from ...graph.chat import TeamsChatPoster
 from ...core.database import (
-    Distribution, Summary, Meeting, MeetingParticipant, MeetingStatus
+    Distribution, Summary, Meeting, MeetingParticipant
 )
 from ...core.exceptions import EmailSendError, TeamsChatPostError, DistributionError
 

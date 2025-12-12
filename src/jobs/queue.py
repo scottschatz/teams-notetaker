@@ -95,7 +95,7 @@ class JobQueueManager:
 
             # Job 1: Fetch transcript (no dependencies)
             job1 = JobQueue(
-                job_type=JobType.FETCH_TRANSCRIPT,
+                job_type='fetch_transcript',
                 meeting_id=meeting_id,
                 priority=priority,
                 status="pending",
@@ -107,7 +107,7 @@ class JobQueueManager:
 
             # Job 2: Generate summary (depends on job1)
             job2 = JobQueue(
-                job_type=JobType.GENERATE_SUMMARY,
+                job_type='generate_summary',
                 meeting_id=meeting_id,
                 priority=priority,
                 status="pending",
@@ -120,7 +120,7 @@ class JobQueueManager:
 
             # Job 3: Distribute (depends on job2)
             job3 = JobQueue(
-                job_type=JobType.DISTRIBUTE,
+                job_type='distribute',
                 meeting_id=meeting_id,
                 priority=priority,
                 status="pending",
@@ -186,7 +186,7 @@ class JobQueueManager:
                         jq.priority DESC,
                         jq.created_at ASC
                     LIMIT 1
-                    FOR UPDATE SKIP LOCKED
+                    FOR UPDATE OF jq SKIP LOCKED
                 )
                 RETURNING *
             """)
@@ -196,10 +196,10 @@ class JobQueueManager:
             result = session.execute(
                 query,
                 {
-                    "running_status": "running".value,
-                    "pending_status": "pending".value,
-                    "retrying_status": "retrying".value,
-                    "completed_status": "completed".value,
+                    "running_status": "running",
+                    "pending_status": "pending",
+                    "retrying_status": "retrying",
+                    "completed_status": "completed",
                     "worker_id": worker_id,
                     "now": now
                 }
@@ -213,7 +213,7 @@ class JobQueueManager:
                 job = session.query(JobQueue).filter_by(id=row.id).first()
 
                 logger.info(
-                    f"✓ Claimed job {job.id} (type: {job.job_type.value}, "
+                    f"✓ Claimed job {job.id} (type: {job.job_type}, "
                     f"meeting: {job.meeting_id}, priority: {job.priority}, "
                     f"retry: {job.retry_count}/{job.max_retries})"
                 )
@@ -259,7 +259,7 @@ class JobQueueManager:
             job.output_data = output_data
             session.commit()
 
-            logger.info(f"✓ Job {job_id} marked as completed (type: {job.job_type.value})")
+            logger.info(f"✓ Job {job_id} marked as completed (type: {job.job_type})")
 
     def mark_failed(
         self,
@@ -292,7 +292,7 @@ class JobQueueManager:
                 job.status = "retrying"
 
                 # Calculate next retry time using exponential backoff
-                strategy = get_retry_strategy(job.job_type.value)
+                strategy = get_retry_strategy(job.job_type)
                 job.next_retry_at = calculate_next_retry(
                     retry_count=job.retry_count,
                     base_delay=strategy["base_delay"],
@@ -337,15 +337,15 @@ class JobQueueManager:
 
             # Count by status
             by_status = {}
-            for status in JobStatus:
+            for status in ['pending', 'running', 'completed', 'failed', 'retrying']:
                 count = session.query(JobQueue).filter_by(status=status).count()
-                by_status[status.value] = count
+                by_status[status] = count
 
             # Count by type
             by_type = {}
-            for job_type in JobType:
+            for job_type in ['fetch_transcript', 'generate_summary', 'distribute']:
                 count = session.query(JobQueue).filter_by(job_type=job_type).count()
-                by_type[job_type.value] = count
+                by_type[job_type] = count
 
             # Oldest pending job
             oldest_pending = session.query(JobQueue).filter(
@@ -450,7 +450,7 @@ class JobQueueManager:
 
             return {
                 "id": job.id,
-                "type": job.job_type.value,
+                "type": job.job_type,
                 "status": job.status.value,
                 "meeting_id": job.meeting_id,
                 "priority": job.priority,

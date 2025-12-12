@@ -19,6 +19,9 @@ from ..jobs.queue import JobQueueManager
 from ..jobs.processors.base import get_processor_registry
 from ..core.exceptions import JobProcessingError
 
+# Import processors to register them
+from ..jobs.processors import transcript, summary, distribution
+
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +175,7 @@ class JobWorker:
             job: JobQueue object to process
         """
         logger.info(
-            f"Processing job {job.id} (type: {job.job_type.value}, "
+            f"Processing job {job.id} (type: {job.job_type}, "
             f"meeting: {job.meeting_id}, priority: {job.priority})"
         )
 
@@ -237,13 +240,13 @@ class JobWorker:
         """
         # Get processor for job type
         processor = self.registry.get_processor(
-            job.job_type.value,
+            job.job_type,
             self.db,
             self.config
         )
 
         if not processor:
-            raise JobProcessingError(f"No processor found for job type: {job.job_type.value}")
+            raise JobProcessingError(f"No processor found for job type: {job.job_type}")
 
         # Execute processor
         try:
@@ -293,13 +296,17 @@ class JobWorker:
 
         Sets up signal handlers for graceful shutdown.
         """
-        # Set up signal handlers
+        # Set up signal handlers (only works in main thread)
         def signal_handler(signum, frame):
             logger.info(f"Received signal {signum}, initiating shutdown...")
             asyncio.create_task(self.stop())
 
-        signal.signal(signal.SIGTERM, signal_handler)
-        signal.signal(signal.SIGINT, signal_handler)
+        try:
+            signal.signal(signal.SIGTERM, signal_handler)
+            signal.signal(signal.SIGINT, signal_handler)
+        except ValueError:
+            # Signal handlers only work in main thread, skip if in background thread
+            logger.debug("Running in background thread, skipping signal handlers")
 
         # Run event loop
         try:

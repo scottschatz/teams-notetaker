@@ -105,12 +105,6 @@ class SummaryProcessor(BaseProcessor):
                 f"Found transcript: {transcript.word_count} words, {transcript.speaker_count} speakers"
             )
 
-            # Format transcript for summarization
-            formatted_transcript = format_transcript_for_summary(
-                transcript.parsed_content,
-                include_timestamps=True
-            )
-
             # Build meeting metadata
             meeting_metadata = {
                 "subject": meeting.subject,
@@ -126,7 +120,7 @@ class SummaryProcessor(BaseProcessor):
 
             try:
                 result = self.summarizer.summarize_meeting(
-                    transcript=formatted_transcript,
+                    transcript=transcript.parsed_content,  # Pass raw segments, not formatted string
                     meeting_metadata=meeting_metadata,
                     summary_type="full",
                     max_tokens=self.config.app.summary_max_tokens

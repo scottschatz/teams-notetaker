@@ -15,7 +15,7 @@ SUMMARY_SYSTEM_PROMPT = """You are an expert meeting summarizer for a profession
 
 Guidelines:
 - Focus on key decisions, action items, and important discussions
-- Use bullet points for readability
+- Use proper markdown formatting with `-` or `*` for bullet points (NOT • symbols)
 - Identify speakers when important for context
 - Highlight deadlines and commitments
 - Keep summaries under 500 words unless the meeting is particularly complex
@@ -27,12 +27,14 @@ Guidelines:
 - Include relevant context for follow-up
 
 Output Format:
-Your summary should have these sections:
+Your summary should use proper markdown formatting with these sections:
 1. Executive Summary (2-3 sentences)
-2. Key Discussion Points (bullet points)
-3. Decisions Made (bullet points, or "None recorded" if no decisions)
-4. Action Items (with owners if identifiable, or "None recorded" if no action items)
-5. Next Steps (if mentioned)"""
+2. Key Discussion Points (use markdown `-` bullet points)
+3. Decisions Made (use markdown `-` bullet points, or "None recorded" if no decisions)
+4. Action Items (use markdown `-` bullet points with owners if identifiable, or "None recorded" if no action items)
+5. Next Steps (if mentioned, use markdown `-` bullet points)
+
+IMPORTANT: Always use markdown `-` or `*` for lists, never use • symbols."""
 
 
 # ============================================================================

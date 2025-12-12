@@ -76,10 +76,17 @@ class EmailSender:
         try:
             logger.info(f"Sending meeting summary to {len(to_emails)} recipient(s)")
 
-            # Convert markdown to HTML
+            # Convert markdown to HTML with better list support
             summary_html = markdown2.markdown(
                 summary_markdown,
-                extras=["tables", "fenced-code-blocks", "code-friendly"]
+                extras=[
+                    "tables",
+                    "fenced-code-blocks",
+                    "code-friendly",
+                    "break-on-newline",  # Convert single newlines to <br>
+                    "cuddled-lists",     # Better list handling
+                    "header-ids"         # Add IDs to headers for anchors
+                ]
             )
 
             # Build email body

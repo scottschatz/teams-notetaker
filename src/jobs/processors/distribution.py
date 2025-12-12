@@ -14,7 +14,7 @@ from ...graph.client import GraphAPIClient
 from ...graph.mail import EmailSender
 from ...graph.chat import TeamsChatPoster
 from ...core.database import (
-    Distribution, Summary, Meeting, MeetingParticipant
+    Distribution, Summary, Meeting, MeetingParticipant, Transcript
 )
 from ...core.exceptions import EmailSendError, TeamsChatPostError, DistributionError
 
@@ -116,12 +116,17 @@ class DistributionProcessor(BaseProcessor):
 
             # Build meeting metadata
             meeting_metadata = {
+                "meeting_id": meeting.id,
                 "subject": meeting.subject,
                 "organizer_name": meeting.organizer_name,
+                "organizer_email": meeting.organizer_email,
                 "start_time": meeting.start_time.isoformat() if meeting.start_time else "",
                 "end_time": meeting.end_time.isoformat() if meeting.end_time else "",
                 "duration_minutes": meeting.duration_minutes,
-                "participant_count": meeting.participant_count
+                "participant_count": meeting.participant_count,
+                "join_url": meeting.join_url or "",
+                "recording_url": meeting.recording_url or "",
+                "chat_id": meeting.chat_id or ""
             }
 
             distribution_results = []
@@ -137,12 +142,25 @@ class DistributionProcessor(BaseProcessor):
 
                     from_email = self.config.app.email_from or "noreply@townsquaremedia.com"
 
+                    # Get transcript for attachment
+                    transcript_obj = session.query(Transcript).filter_by(meeting_id=meeting_id).first()
+                    transcript_content = transcript_obj.parsed_content if transcript_obj else None
+
+                    # Build transcript stats
+                    transcript_stats = {
+                        "word_count": transcript_obj.word_count if transcript_obj else 0,
+                        "speaker_count": transcript_obj.speaker_count if transcript_obj else 0
+                    }
+
                     email_message_id = self.email_sender.send_meeting_summary(
                         from_email=from_email,
                         to_emails=participant_emails,
                         subject=f"Meeting Summary: {meeting.subject}",
                         summary_markdown=summary.summary_text,
                         meeting_metadata=meeting_metadata,
+                        transcript_content=transcript_content,
+                        participants=participants,
+                        transcript_stats=transcript_stats,
                         include_footer=True
                     )
 

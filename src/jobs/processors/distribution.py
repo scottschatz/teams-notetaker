@@ -135,7 +135,7 @@ class DistributionProcessor(BaseProcessor):
                 try:
                     self._log_progress(job, f"Sending email to {len(participant_emails)} recipients")
 
-                    from_email = self.config.email_from or "noreply@townsquaremedia.com"
+                    from_email = self.config.app.email_from or "noreply@townsquaremedia.com"
 
                     email_message_id = self.email_sender.send_meeting_summary(
                         from_email=from_email,

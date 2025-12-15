@@ -144,11 +144,22 @@ class DistributionProcessor(BaseProcessor):
                 "mentions": summary.mentions_json or []
             }
 
-            # Build transcript stats
+            # Build transcript stats (v2.1: includes speaker breakdown)
             transcript_stats = {
                 "word_count": transcript_obj.word_count if transcript_obj else 0,
                 "speaker_count": transcript_obj.speaker_count if transcript_obj else 0
             }
+
+            # Extract detailed speaker stats from transcript VTT (v2.1)
+            if transcript_obj and transcript_obj.vtt_content:
+                try:
+                    from src.utils.transcript_stats import extract_transcript_stats
+                    detailed_stats = extract_transcript_stats(transcript_obj.vtt_content)
+                    transcript_stats["speaker_details"] = detailed_stats.get("speakers", [])
+                    transcript_stats["actual_duration_minutes"] = detailed_stats.get("actual_duration_minutes", 0)
+                except Exception as e:
+                    self._log_progress(job, f"Could not extract detailed speaker stats: {e}", "warning")
+                    transcript_stats["speaker_details"] = []
 
             distribution_results = []
             email_sent = False

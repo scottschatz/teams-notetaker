@@ -335,6 +335,20 @@ class EmailSender:
         speaker_count = transcript_stats.get("speaker_count", 0) if transcript_stats else 0
         participant_count = meeting_metadata.get("participant_count", 0)
 
+        # Get scheduled vs actual stats (v2.1 feature)
+        scheduled_duration = meeting_metadata.get("scheduled_duration")
+        invited_count = meeting_metadata.get("invited_count")
+
+        # Build duration display with actual vs scheduled if different
+        duration_display = f"{duration} minutes"
+        if scheduled_duration and abs(duration - scheduled_duration) > 5:
+            duration_display = f"{duration} minutes <span style='color: #666; font-size: 0.9em;'>(scheduled: {scheduled_duration})</span>"
+
+        # Build participant display with actual vs invited if different
+        participant_display = str(participant_count)
+        if invited_count and participant_count != invited_count:
+            participant_display = f"{participant_count} <span style='color: #666; font-size: 0.9em;'>({invited_count} invited)</span>"
+
         # Format start time
         if isinstance(start_time, str):
             try:
@@ -494,7 +508,7 @@ class EmailSender:
             <p><strong>Meeting:</strong> {subject}</p>
             <p><strong>Organizer:</strong> {organizer}</p>
             <p><strong>Date:</strong> {start_time_formatted}</p>
-            <p><strong>Duration:</strong> {duration} minutes</p>
+            <p><strong>Duration:</strong> {duration_display}</p>
         </div>
 
         <!-- FEATURE 2: Meeting Statistics -->
@@ -504,7 +518,7 @@ class EmailSender:
                 <div class="stat-label">Minutes</div>
             </div>
             <div class="stat">
-                <div class="stat-value">{participant_count}</div>
+                <div class="stat-value">{participant_display}</div>
                 <div class="stat-label">Participants</div>
             </div>
             <div class="stat">
@@ -534,6 +548,49 @@ class EmailSender:
             html += f'            <a href="{join_url}" class="button">📝 View Meeting in Teams</a>\n'
 
         html += """        </div>
+
+"""
+
+        # v2.1: Speaker Breakdown (from transcript stats)
+        speaker_details = transcript_stats.get("speaker_details", []) if transcript_stats else []
+        if speaker_details and len(speaker_details) > 0:
+            html += """        <div class="speaker-breakdown" style="background: #f5f5f5; padding: 15px; margin: 25px 0; border-radius: 4px;">
+            <h3 style="margin-top: 0;">🎤 Speaker Breakdown</h3>
+            <div style="max-height: 300px; overflow-y: auto;">
+                <table style="width: 100%; border-collapse: collapse;">
+                    <thead>
+                        <tr style="background: #e0e0e0; text-align: left;">
+                            <th style="padding: 8px;">Speaker</th>
+                            <th style="padding: 8px; text-align: right;">Time</th>
+                            <th style="padding: 8px; text-align: right;">Words</th>
+                            <th style="padding: 8px; text-align: right;">Share</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+"""
+            # Show top 10 speakers
+            for speaker in speaker_details[:10]:
+                name = speaker.get('name', 'Unknown')
+                duration_min = speaker.get('duration_minutes', 0)
+                words = speaker.get('words', 0)
+                percentage = speaker.get('percentage', 0)
+
+                html += f"""                        <tr style="border-bottom: 1px solid #ddd;">
+                            <td style="padding: 8px;">{name}</td>
+                            <td style="padding: 8px; text-align: right;">{duration_min} min</td>
+                            <td style="padding: 8px; text-align: right;">{words:,}</td>
+                            <td style="padding: 8px; text-align: right;">{percentage}%</td>
+                        </tr>
+"""
+
+            html += """                    </tbody>
+                </table>
+            </div>
+"""
+            if len(speaker_details) > 10:
+                html += f"""            <p style="font-size: 12px; color: #666; margin-top: 10px; font-style: italic;">Showing top 10 of {len(speaker_details)} speakers</p>
+"""
+            html += """        </div>
 
 """
 

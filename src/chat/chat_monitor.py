@@ -98,8 +98,12 @@ class ChatMonitor:
                 message_text = message.get("body", {}).get("content", "")
                 created_at = message.get("createdDateTime", "")
 
-                # Get sender info
-                sender = message.get("from", {})
+                # Get sender info (sender can be None for system messages)
+                sender = message.get("from")
+                if not sender:
+                    logger.debug(f"Skipping message {message_id} with no sender (system message)")
+                    continue
+
                 user_identity = sender.get("user", {})
                 user_email = user_identity.get("userPrincipalName", "")
                 user_name = user_identity.get("displayName", "Unknown")

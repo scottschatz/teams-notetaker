@@ -30,7 +30,7 @@ def get_db() -> DatabaseManager:
         DatabaseManager instance
     """
     config = get_config()
-    return DatabaseManager(config.database)
+    return DatabaseManager(config.database.connection_string)
 
 
 def get_auth_manager(db: DatabaseManager = Depends(get_db)) -> AuthManager:

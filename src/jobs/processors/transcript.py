@@ -116,11 +116,57 @@ class TranscriptProcessor(BaseProcessor):
 
             # Try to find transcript by matching meeting start time
             # (Calendar meeting IDs don't match transcript meeting IDs)
-            transcript_metadata = self.transcript_fetcher.find_transcript_by_time(
-                organizer_user_id=organizer_user_id,
-                meeting_start_time=meeting.start_time,
-                tolerance_minutes=30
-            )
+            transcript_metadata = None
+            user_id_for_transcript = organizer_user_id
+
+            try:
+                transcript_metadata = self.transcript_fetcher.find_transcript_by_time(
+                    organizer_user_id=organizer_user_id,
+                    meeting_start_time=meeting.start_time,
+                    tolerance_minutes=30
+                )
+            except Exception as e:
+                # If 403 error accessing organizer's transcripts, try using a pilot user's ID
+                if "403" in str(e) or "not allowed" in str(e).lower():
+                    self._log_progress(
+                        job,
+                        f"Cannot access organizer's transcripts (403), trying pilot user fallback",
+                        "warning"
+                    )
+
+                    # Get a pilot user ID as fallback (someone who attended the meeting)
+                    with self.db.get_session() as session:
+                        from src.core.database import MeetingParticipant
+                        pilot_participant = session.query(MeetingParticipant).filter(
+                            MeetingParticipant.meeting_id == meeting_id,
+                            MeetingParticipant.is_pilot_user == True,
+                            MeetingParticipant.email != meeting.organizer_email
+                        ).first()
+
+                        if pilot_participant:
+                            # Get user ID for pilot participant
+                            from src.graph.meetings import MeetingDiscovery
+                            discovery = MeetingDiscovery(self.graph_client)
+                            pilot_user_id = discovery._get_user_id(pilot_participant.email)
+
+                            if pilot_user_id:
+                                self._log_progress(
+                                    job,
+                                    f"Trying to access transcript via pilot user {pilot_participant.email}",
+                                    "info"
+                                )
+                                transcript_metadata = self.transcript_fetcher.find_transcript_by_time(
+                                    organizer_user_id=pilot_user_id,
+                                    meeting_start_time=meeting.start_time,
+                                    tolerance_minutes=30
+                                )
+                                user_id_for_transcript = pilot_user_id
+                            else:
+                                raise e
+                        else:
+                            raise e
+                else:
+                    raise e
 
             if not transcript_metadata:
                 # No transcript found
@@ -129,8 +175,9 @@ class TranscriptProcessor(BaseProcessor):
                 )
 
             # Download the transcript content (for AI processing)
+            # Use the user_id_for_transcript (might be organizer or pilot user fallback)
             vtt_content = self.transcript_fetcher.download_transcript_content(
-                organizer_user_id=organizer_user_id,
+                organizer_user_id=user_id_for_transcript,
                 meeting_id=transcript_metadata.get('meetingId'),
                 transcript_id=transcript_metadata.get('id')
             )
@@ -138,16 +185,22 @@ class TranscriptProcessor(BaseProcessor):
             # Get SharePoint URL for transcript (for secure user access)
             transcript_sharepoint_url = transcript_metadata.get('transcriptContentUrl', '')
 
-            self._log_progress(
-                job,
-                f"Downloaded {len(vtt_content)} chars of VTT content, got SharePoint URL"
-            )
+            if user_id_for_transcript != organizer_user_id:
+                self._log_progress(
+                    job,
+                    f"Downloaded {len(vtt_content)} chars via pilot user fallback, got SharePoint URL"
+                )
+            else:
+                self._log_progress(
+                    job,
+                    f"Downloaded {len(vtt_content)} chars of VTT content, got SharePoint URL"
+                )
 
             # Get recording SharePoint URL (if available)
             recording_sharepoint_url = None
             try:
                 recording_sharepoint_url = self.transcript_fetcher.get_recording_sharepoint_url(
-                    organizer_user_id=organizer_user_id,
+                    organizer_user_id=user_id_for_transcript,
                     meeting_id=transcript_metadata.get('meetingId')
                 )
                 if recording_sharepoint_url:
@@ -183,11 +236,18 @@ class TranscriptProcessor(BaseProcessor):
             word_count = metadata["word_count"]
             duration_seconds = metadata["total_duration_seconds"]
 
+            # Extract detailed speaker stats (v2.1 feature)
+            from src.utils.transcript_stats import extract_transcript_stats
+
+            detailed_stats = extract_transcript_stats(vtt_content)
+            actual_duration_minutes = detailed_stats.get('actual_duration_minutes', 0)
+            speaker_details = detailed_stats.get('speakers', [])
+
             self._log_progress(
                 job,
                 f"Parsed transcript: {len(parsed_segments)} segments, "
                 f"{speaker_count} speakers, {word_count} words, "
-                f"{duration_seconds}s duration"
+                f"{actual_duration_minutes} min actual duration"
             )
 
             # Save to database
@@ -226,7 +286,10 @@ class TranscriptProcessor(BaseProcessor):
                 speaker_count=speaker_count,
                 word_count=word_count,
                 duration_seconds=duration_seconds,
-                segment_count=len(parsed_segments)
+                segment_count=len(parsed_segments),
+                # v2.1: Detailed speaker stats from transcript
+                actual_duration_minutes=actual_duration_minutes,
+                speaker_details=speaker_details  # List of {name, duration_minutes, percentage, words}
             )
 
         except TranscriptNotFoundError as e:

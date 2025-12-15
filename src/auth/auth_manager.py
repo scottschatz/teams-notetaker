@@ -43,7 +43,7 @@ class AuthManager:
 
     def login(
         self, email: str, password: Optional[str] = None, ip_address: Optional[str] = None, user_agent: Optional[str] = None
-    ) -> Optional[str]:
+    ) -> Dict[str, str]:
         """
         Authenticate user and create session.
 
@@ -57,7 +57,12 @@ class AuthManager:
             user_agent: User agent string
 
         Returns:
-            JWT session token if successful, None otherwise
+            Dictionary with session info:
+            {
+                'session_token': str,
+                'email': str,
+                'role': str
+            }
 
         Raises:
             AuthenticationError: If authentication fails
@@ -100,7 +105,11 @@ class AuthManager:
             )
 
             self.logger.info(f"User logged in: {email} (role: {user_role})")
-            return session_token
+            return {
+                "session_token": session_token,
+                "email": email,
+                "role": user_role
+            }
 
         except Exception as e:
             self.logger.error(f"Failed to create session: {e}")
@@ -127,7 +136,7 @@ class AuthManager:
         """
         try:
             # Decode JWT
-            payload = jwt.decode(self.jwt_secret, session_token, algorithms=["HS256"])
+            payload = jwt.decode(session_token, self.jwt_secret, algorithms=["HS256"])
 
             email = payload.get("email")
             exp = payload.get("exp")

@@ -264,22 +264,59 @@ class MeetingDiscovery:
         join_url = online_meeting.get("joinUrl", "")
         chat_id = self._extract_chat_id_from_url(join_url) if join_url else None
 
-        return {
-            "meeting_id": online_meeting.get("id", event["id"]),
-            "event_id": event["id"],
-            "subject": event.get("subject", "No Subject"),
-            "organizer_email": organizer_email,
-            "organizer_name": organizer.get("name", ""),
-            "organizer_user_id": organizer_user_id,
-            "start_time": start_time,
-            "end_time": end_time,
-            "duration_minutes": duration_minutes,
-            "participant_count": len(participants),
-            "participants": participants,
-            "join_url": join_url,
-            "chat_id": chat_id,
-            "has_transcript": None,  # Unknown until we check
-        }
+        # Try to get actual meeting stats from call records (v2.1 feature)
+        call_record = self.get_call_record(start_time, organizer_user_id) if start_time and organizer_user_id else None
+
+        # Use actual stats if available, otherwise use scheduled
+        if call_record:
+            actual_start = call_record["start_time"]
+            actual_end = call_record["end_time"]
+            actual_duration = call_record["duration_minutes"]
+            actual_participants = call_record["participants"]
+            actual_count = call_record["participant_count"]
+
+            logger.info(f"Using actual stats: {actual_duration} min (scheduled: {duration_minutes}), "
+                       f"{actual_count} joined (invited: {len(participants)})")
+
+            return {
+                "meeting_id": online_meeting.get("id", event["id"]),
+                "event_id": event["id"],
+                "subject": event.get("subject", "No Subject"),
+                "organizer_email": organizer_email,
+                "organizer_name": organizer.get("name", ""),
+                "organizer_user_id": organizer_user_id,
+                "start_time": actual_start,  # Actual
+                "end_time": actual_end,  # Actual
+                "duration_minutes": actual_duration,  # Actual
+                "participant_count": actual_count,  # Actual
+                "participants": actual_participants,  # Actual attendees
+                "invited_participants": participants,  # Keep original for reference
+                "invited_count": len(participants),  # Keep scheduled count
+                "scheduled_duration": duration_minutes,  # Keep scheduled duration
+                "join_url": join_url,
+                "chat_id": chat_id,
+                "has_transcript": None,
+                "call_record_id": call_record.get("call_record_id"),
+            }
+        else:
+            logger.debug("No call record found, using scheduled stats")
+
+            return {
+                "meeting_id": online_meeting.get("id", event["id"]),
+                "event_id": event["id"],
+                "subject": event.get("subject", "No Subject"),
+                "organizer_email": organizer_email,
+                "organizer_name": organizer.get("name", ""),
+                "organizer_user_id": organizer_user_id,
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration_minutes": duration_minutes,
+                "participant_count": len(participants),
+                "participants": participants,
+                "join_url": join_url,
+                "chat_id": chat_id,
+                "has_transcript": None,
+            }
 
     def _parse_online_meeting(self, meeting: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -313,6 +350,7 @@ class MeetingDiscovery:
     def _get_user_id(self, email: str) -> Optional[str]:
         """
         Get user ID from email address.
+        Tries multiple email formats if initial lookup fails.
 
         Args:
             email: User's email address
@@ -320,14 +358,43 @@ class MeetingDiscovery:
         Returns:
             User ID (GUID) or None if not found
         """
-        try:
-            endpoint = f"/users/{email}"
-            params = {'$select': 'id,displayName'}
-            user = self.client.get(endpoint, params=params)
-            return user.get('id')
-        except Exception as e:
-            logger.error(f"Failed to get user ID for {email}: {e}")
-            return None
+        # Try original email (lowercased)
+        normalized_email = email.lower()
+
+        # Generate alternate email formats to try
+        # Example: "Scott.Schatz@domain.com" -> "sschatz@domain.com"
+        alternate_emails = [normalized_email]
+
+        if '.' in normalized_email.split('@')[0]:
+            # Try without the dot: "scott.schatz@domain.com" -> "sschatz@domain.com"
+            local_part, domain = normalized_email.split('@')
+            parts = local_part.split('.')
+            if len(parts) == 2:
+                # Take first letter of first name + last name
+                alternate = f"{parts[0][0]}{parts[1]}@{domain}"
+                alternate_emails.append(alternate)
+
+        # Try each email format
+        for attempt_email in alternate_emails:
+            try:
+                endpoint = f"/users/{attempt_email}"
+                params = {'$select': 'id,displayName,userPrincipalName'}
+                user = self.client.get(endpoint, params=params)
+                user_id = user.get('id')
+
+                if user_id:
+                    upn = user.get('userPrincipalName', attempt_email)
+                    if attempt_email != normalized_email:
+                        logger.info(f"Found user ID for {email} using alternate format: {upn}")
+                    return user_id
+            except Exception as e:
+                # Try next format
+                if attempt_email == alternate_emails[-1]:
+                    # Last attempt failed
+                    logger.error(f"Failed to get user ID for {email} (tried {len(alternate_emails)} formats): {e}")
+                continue
+
+        return None
 
     def _parse_datetime(self, dt_string: Optional[str]) -> Optional[datetime]:
         """
@@ -381,3 +448,227 @@ class MeetingDiscovery:
             logger.warning(f"Failed to extract chat_id from URL: {e}")
 
         return None
+
+    def get_call_record(self, meeting_start_time: datetime, organizer_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get call record for a meeting using time-based matching.
+
+        Since call records don't have direct links to meetings, we match by:
+        - Meeting start time (±5 minute window)
+        - Organizer user ID (from sessions)
+
+        Call records provide:
+        - Actual start/end times (when people joined/left)
+        - List of participants who actually joined (including silent attendees)
+        - Individual participant session durations
+
+        Requires: CallRecords.Read.All permission
+
+        Args:
+            meeting_start_time: Scheduled meeting start time
+            organizer_id: Microsoft Graph user ID of meeting organizer
+
+        Returns:
+            Dictionary with call record data:
+            {
+                'start_time': datetime,
+                'end_time': datetime,
+                'duration_minutes': int,
+                'participants': List[Dict],  # Who actually joined
+                'participant_count': int,
+                'match_confidence': str  # 'high', 'medium', 'low'
+            }
+            Returns None if no call record found.
+        """
+        try:
+            if not meeting_start_time or not organizer_id:
+                return None
+
+            logger.debug(f"Searching for call record matching meeting at {meeting_start_time}...")
+
+            # Get recent call records
+            # Note: Call Records API doesn't support filtering
+            # We'll search through recent records
+            endpoint = "/communications/callRecords"
+
+            try:
+                response = self.client.get(endpoint)
+            except GraphAPIError as e:
+                if "404" in str(e) or "NotFound" in str(e):
+                    logger.debug(f"No call records found (may not have started yet)")
+                    return None
+                elif "401" in str(e) or "403" in str(e):
+                    logger.warning(f"Permission denied accessing call records - ensure CallRecords.Read.All is granted")
+                    return None
+                else:
+                    raise
+
+            records = response.get("value", [])
+
+            if not records:
+                logger.debug("No call records found")
+                return None
+
+            # Match by time window (±5 minutes)
+            TIME_WINDOW_SECONDS = 300  # 5 minutes
+
+            # Ensure meeting_start_time is timezone-aware
+            if meeting_start_time.tzinfo is None:
+                from datetime import timezone
+                meeting_start_time = meeting_start_time.replace(tzinfo=timezone.utc)
+
+            logger.debug(f"Searching {len(records)} call records for match within {TIME_WINDOW_SECONDS/60} min of {meeting_start_time}")
+
+            best_match = None
+            best_time_diff = float('inf')
+            best_participant_overlap = 0
+            match_confidence = 'low'
+
+            for record in records:
+                record_start_str = record.get('startDateTime')
+                if not record_start_str:
+                    continue
+
+                # Parse call record start time
+                record_start = datetime.fromisoformat(record_start_str.replace('Z', '+00:00'))
+
+                # Calculate time difference
+                time_diff_seconds = abs((record_start - meeting_start_time).total_seconds())
+
+                # Within time window?
+                if time_diff_seconds <= TIME_WINDOW_SECONDS:
+                    # Fetch sessions to check participant overlap
+                    participant_overlap_score = 0
+                    try:
+                        call_record_id = record.get('id')
+                        if call_record_id:
+                            sessions_response = self.client.get(f"/communications/callRecords/{call_record_id}/sessions")
+                            sessions = sessions_response.get("value", [])
+
+                            # Extract participant IDs from call record
+                            call_participant_ids = set()
+                            for session in sessions:
+                                for participant in [session.get('caller'), session.get('callee')]:
+                                    if participant:
+                                        user = participant.get('identity', {}).get('user', {})
+                                        user_id = user.get('id')
+                                        if user_id:
+                                            call_participant_ids.add(user_id)
+
+                            # Check overlap with organizer (most reliable check)
+                            if organizer_id in call_participant_ids:
+                                participant_overlap_score = 100  # Organizer match is strong signal
+                            elif len(call_participant_ids) > 0:
+                                participant_overlap_score = 50  # Has participants but organizer not found
+                    except Exception as e:
+                        logger.debug(f"Could not verify participants for call record: {e}")
+                        participant_overlap_score = 0
+
+                    # Score this match based on time proximity + participant overlap
+                    # Better time = higher score, participant match = bonus
+                    match_score = (300 - time_diff_seconds) + participant_overlap_score
+
+                    # Check if this is the best match so far
+                    best_score = (300 - best_time_diff) + best_participant_overlap if best_match else 0
+
+                    if match_score > best_score:
+                        best_match = record
+                        best_time_diff = time_diff_seconds
+                        best_participant_overlap = participant_overlap_score
+
+                        # Determine confidence based on time difference AND participant overlap
+                        if participant_overlap_score >= 100:
+                            # Organizer match + good time = high confidence
+                            if time_diff_seconds < 180:
+                                match_confidence = 'high'
+                            else:
+                                match_confidence = 'medium'
+                        elif time_diff_seconds < 60:  # Within 1 minute but no participant check
+                            match_confidence = 'medium'
+                        elif time_diff_seconds < 180:  # Within 3 minutes but no participant check
+                            match_confidence = 'low'
+                        else:
+                            match_confidence = 'low'
+
+            if not best_match:
+                logger.debug(f"No call record found within {TIME_WINDOW_SECONDS/60} min window")
+                return None
+
+            call_record = best_match
+
+            # Log match details
+            organizer_matched = "✓ organizer matched" if best_participant_overlap >= 100 else "organizer not verified"
+            logger.info(f"Found call record match (confidence: {match_confidence}, time diff: {int(best_time_diff)}s, {organizer_matched})")
+
+            # Extract actual times
+            start_time_str = call_record.get("startDateTime")
+            end_time_str = call_record.get("endDateTime")
+
+            if not start_time_str or not end_time_str:
+                logger.warning("Call record missing start/end times")
+                return None
+
+            # Parse ISO timestamps
+            start_time = datetime.fromisoformat(start_time_str.replace('Z', '+00:00'))
+            end_time = datetime.fromisoformat(end_time_str.replace('Z', '+00:00'))
+
+            # Calculate actual duration
+            duration = end_time - start_time
+            duration_minutes = int(duration.total_seconds() / 60)
+
+            # Fetch sessions separately (since $expand not allowed)
+            call_record_id = call_record.get("id")
+            participants = []
+            unique_participant_ids = set()
+
+            if call_record_id:
+                try:
+                    sessions_endpoint = f"/communications/callRecords/{call_record_id}/sessions"
+                    sessions_response = self.client.get(sessions_endpoint)
+                    sessions = sessions_response.get("value", [])
+
+                    for session in sessions:
+                        caller = session.get("caller", {})
+                        callee = session.get("callee", {})
+
+                        for participant in [caller, callee]:
+                            if not participant:
+                                continue
+
+                            identity = participant.get("identity", {})
+                            user_info = identity.get("user", {})
+
+                            if not user_info:
+                                continue
+
+                            user_id = user_info.get("id")
+                            if user_id and user_id not in unique_participant_ids:
+                                unique_participant_ids.add(user_id)
+
+                                participants.append({
+                                    "id": user_id,
+                                    "display_name": user_info.get("displayName", "Unknown"),
+                                    "email": user_info.get("userPrincipalName", ""),
+                                })
+                except Exception as e:
+                    logger.warning(f"Could not fetch sessions for call record: {e}")
+                    # Continue without participant details
+
+            logger.info(f"✓ Call record found: {duration_minutes} min, {len(participants)} participants (confidence: {match_confidence})")
+
+            return {
+                "start_time": start_time,
+                "end_time": end_time,
+                "duration_minutes": duration_minutes,
+                "participants": participants,
+                "participant_count": len(participants),
+                "call_record_id": call_record.get("id"),
+                "match_confidence": match_confidence,
+            }
+
+        except GraphAPIError as e:
+            logger.warning(f"Error fetching call record: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error fetching call record: {e}", exc_info=True)
+            return None

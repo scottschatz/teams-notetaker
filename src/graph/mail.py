@@ -520,18 +520,10 @@ class EmailSender:
         <div class="buttons">
 """
 
-        # Prefer SharePoint URLs (secure, permission-respecting)
-        recording_link = recording_sharepoint_url or recording_url
-        if recording_link:
-            html += f'            <a href="{recording_link}" class="button">🎥 Watch Recording</a>\n'
-
-        if transcript_sharepoint_url:
-            html += f'            <a href="{transcript_sharepoint_url}" class="button">📄 View Transcript (Teams)</a>\n'
-        elif dashboard_url:
-            html += f'            <a href="{dashboard_url}" class="button button-secondary">📄 View Full Transcript</a>\n'
-
-        if dashboard_url:
-            html += f'            <a href="{dashboard_url}" class="button button-secondary">📊 Full Dashboard</a>\n'
+        # Link to Teams meeting - users can access transcript & recording through meeting recap
+        if join_url:
+            html += f'            <a href="{join_url}" class="button">📝 View Meeting in Teams</a>\n'
+            html += f'            <p style="font-size: 12px; color: #666; margin-top: 8px;">Access transcript, recording, and chat through Teams meeting recap</p>\n'
 
         html += """        </div>
 

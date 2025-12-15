@@ -114,7 +114,7 @@ class DistributionProcessor(BaseProcessor):
                 f"Found {len(participant_emails)} participant email(s)"
             )
 
-            # Build meeting metadata
+            # Build meeting metadata with SharePoint URLs
             meeting_metadata = {
                 "meeting_id": meeting.id,
                 "subject": meeting.subject,
@@ -126,7 +126,28 @@ class DistributionProcessor(BaseProcessor):
                 "participant_count": meeting.participant_count,
                 "join_url": meeting.join_url or "",
                 "recording_url": meeting.recording_url or "",
+                "recording_sharepoint_url": meeting.recording_sharepoint_url or "",
                 "chat_id": meeting.chat_id or ""
+            }
+
+            # Get transcript with SharePoint URL
+            transcript_obj = session.query(Transcript).filter_by(meeting_id=meeting_id).first()
+            if transcript_obj and transcript_obj.transcript_sharepoint_url:
+                meeting_metadata["transcript_sharepoint_url"] = transcript_obj.transcript_sharepoint_url
+
+            # Prepare enhanced summary data
+            enhanced_summary_data = {
+                "action_items": summary.action_items_json or [],
+                "decisions": summary.decisions_json or [],
+                "topics": summary.topics_json or [],
+                "highlights": summary.highlights_json or [],
+                "mentions": summary.mentions_json or []
+            }
+
+            # Build transcript stats
+            transcript_stats = {
+                "word_count": transcript_obj.word_count if transcript_obj else 0,
+                "speaker_count": transcript_obj.speaker_count if transcript_obj else 0
             }
 
             distribution_results = []
@@ -135,22 +156,67 @@ class DistributionProcessor(BaseProcessor):
             email_message_id = None
             chat_message_id = None
 
-            # Send email (if enabled)
+            # POST TO CHAT FIRST (chat-first strategy)
+            if self.config.app.teams_chat_enabled and meeting.chat_id:
+                try:
+                    self._log_progress(job, "Posting summary to Teams meeting chat")
+
+                    chat_message_id = self.chat_poster.post_meeting_summary(
+                        chat_id=meeting.chat_id,
+                        summary_markdown=summary.summary_text,
+                        meeting_metadata=meeting_metadata,
+                        enhanced_summary_data=enhanced_summary_data,
+                        include_header=True
+                    )
+
+                    chat_sent = True
+
+                    self._log_progress(job, f"✓ Posted to Teams chat (message_id: {chat_message_id})")
+
+                    # Create distribution record
+                    dist = Distribution(
+                        meeting_id=meeting_id,
+                        summary_id=summary.id,
+                        distribution_type="teams_chat",
+                        recipient=f"chat:{meeting.chat_id}",
+                        status="sent",
+                        message_id=chat_message_id,
+                        sent_at=datetime.now()
+                    )
+                    session.add(dist)
+                    distribution_results.append("teams_chat")
+
+                except TeamsChatPostError as e:
+                    self._log_progress(job, f"Teams chat posting failed: {e}", "error")
+                    # Don't raise - continue with email
+                    chat_sent = False
+
+            else:
+                if not self.config.app.teams_chat_enabled:
+                    self._log_progress(job, "Teams chat distribution disabled in config", "info")
+                elif not meeting.chat_id:
+                    self._log_progress(job, "No Teams chat ID found for meeting", "warning")
+
+            # THEN send email (if enabled)
             if self.config.app.email_enabled:
                 try:
                     self._log_progress(job, f"Sending email to {len(participant_emails)} recipients")
 
                     from_email = self.config.app.email_from or "noreply@townsquaremedia.com"
 
-                    # Get transcript for attachment
-                    transcript_obj = session.query(Transcript).filter_by(meeting_id=meeting_id).first()
-                    transcript_content = transcript_obj.parsed_content if transcript_obj else None
+                    # TODO: Check user preferences before sending
+                    # For now, send to all participants
+                    # In Sprint 4, we'll add: email_recipients = self._filter_by_preferences(participant_emails)
 
-                    # Build transcript stats
-                    transcript_stats = {
-                        "word_count": transcript_obj.word_count if transcript_obj else 0,
-                        "speaker_count": transcript_obj.speaker_count if transcript_obj else 0
-                    }
+                    # Format participants list for email template
+                    participants_dict = [
+                        {
+                            "email": p.email,
+                            "display_name": p.display_name,
+                            "role": p.role
+                        }
+                        for p in participants
+                    ]
 
                     email_message_id = self.email_sender.send_meeting_summary(
                         from_email=from_email,
@@ -158,8 +224,9 @@ class DistributionProcessor(BaseProcessor):
                         subject=f"Meeting Summary: {meeting.subject}",
                         summary_markdown=summary.summary_text,
                         meeting_metadata=meeting_metadata,
-                        transcript_content=transcript_content,
-                        participants=participants,
+                        enhanced_summary_data=enhanced_summary_data,  # NEW: Enhanced data
+                        transcript_content=None,  # REMOVED: Using SharePoint links instead
+                        participants=participants_dict,
                         transcript_stats=transcript_stats,
                         include_footer=True
                     )
@@ -202,67 +269,6 @@ class DistributionProcessor(BaseProcessor):
 
             else:
                 self._log_progress(job, "Email distribution disabled in config", "info")
-
-            # Post to Teams chat (if enabled)
-            if self.config.app.teams_chat_enabled:
-                try:
-                    self._log_progress(job, "Posting summary to Teams meeting chat")
-
-                    # Get meeting chat ID
-                    # This requires the meeting to have chat info
-                    # For now, attempt to get it from Graph API
-                    chat_id = self.chat_poster.get_meeting_chat_id(
-                        meeting_id=meeting.meeting_id,  # Graph API meeting ID
-                        user_id=meeting.organizer_email
-                    )
-
-                    if chat_id:
-                        chat_message_id = self.chat_poster.post_meeting_summary(
-                            chat_id=chat_id,
-                            summary_markdown=summary.summary_text,
-                            meeting_metadata=meeting_metadata,
-                            include_header=True
-                        )
-
-                        chat_sent = True
-
-                        self._log_progress(job, f"✓ Posted to Teams chat (message_id: {chat_message_id})")
-
-                        # Create distribution record
-                        dist = Distribution(
-                            meeting_id=meeting_id,
-                            summary_id=summary.id,
-                            distribution_type="teams_chat",
-                            recipient=f"chat:{chat_id}",
-                            status="sent",
-                            message_id=chat_message_id,
-                            sent_at=datetime.now()
-                        )
-                        session.add(dist)
-                        distribution_results.append("teams_chat")
-
-                    else:
-                        self._log_progress(job, "No Teams chat found for meeting", "warning")
-
-                except TeamsChatPostError as e:
-                    self._log_progress(job, f"Teams chat posting failed: {e}", "error")
-
-                    # Create failed distribution record
-                    dist = Distribution(
-                        meeting_id=meeting_id,
-                        summary_id=summary.id,
-                        distribution_type="teams_chat",
-                        recipient=f"meeting:{meeting.meeting_id}",
-                        status="failed",
-                        error_message=str(e)
-                    )
-                    session.add(dist)
-
-                    # Don't raise - distribution partially succeeded
-                    chat_sent = False
-
-            else:
-                self._log_progress(job, "Teams chat distribution disabled in config", "info")
 
             # Update meeting status
             meeting.has_distribution = True

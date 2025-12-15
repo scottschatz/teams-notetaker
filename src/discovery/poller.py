@@ -17,6 +17,7 @@ from ..core.config import AppConfig
 from ..jobs.queue import JobQueueManager
 from ..discovery.filters import MeetingFilter
 from ..core.exceptions import GraphAPIError
+from ..chat import ChatMonitor, ChatCommandParser
 
 
 logger = logging.getLogger(__name__)
@@ -68,9 +69,13 @@ class MeetingPoller:
         self.queue = JobQueueManager(self.db)
         self.filter = MeetingFilter(self.db, config)
 
+        # Initialize chat monitoring components (Sprint 4)
+        self.chat_parser = ChatCommandParser()
+        self.chat_monitor = ChatMonitor(self.graph_client, self.db, self.chat_parser)
+
         logger.info(
             f"MeetingPoller initialized (pilot_mode: {config.app.pilot_mode_enabled}, "
-            f"lookback: {config.app.lookback_hours}h)"
+            f"lookback: {config.app.lookback_hours}h, chat_monitoring: enabled)"
         )
 
     def run_discovery(self, dry_run: bool = False) -> Dict[str, Any]:
@@ -97,7 +102,9 @@ class MeetingPoller:
             "new": 0,
             "queued": 0,
             "skipped": 0,
-            "errors": 0
+            "errors": 0,
+            "commands_found": 0,
+            "commands_queued": 0
         }
 
         try:
@@ -148,6 +155,12 @@ class MeetingPoller:
                     logger.error(f"Error processing meeting: {e}", exc_info=True)
                     stats["errors"] += 1
 
+            # Monitor chats for commands (Sprint 4)
+            if not dry_run:
+                chat_stats = self._monitor_chats()
+                stats["commands_found"] = chat_stats.get("commands_found", 0)
+                stats["commands_queued"] = chat_stats.get("commands_queued", 0)
+
             # Save processing run audit
             if not dry_run:
                 self._save_processing_run(start_time, stats)
@@ -158,6 +171,8 @@ class MeetingPoller:
                 f"Discovery cycle complete ({duration:.1f}s): "
                 f"{stats['discovered']} discovered, {stats['new']} new, "
                 f"{stats['queued']} queued, {stats['skipped']} skipped, "
+                f"{stats['commands_found']} commands found, "
+                f"{stats['commands_queued']} commands queued, "
                 f"{stats['errors']} errors"
             )
 
@@ -317,3 +332,122 @@ class MeetingPoller:
             )
             session.add(run)
             session.commit()
+
+    def _monitor_chats(self) -> Dict[str, int]:
+        """
+        Monitor meeting chats for bot commands (Sprint 4).
+
+        Checks recent meetings with chat_id for new commands,
+        parses them, and creates jobs to process them.
+
+        Returns:
+            Dictionary with stats:
+                - commands_found: Number of commands detected
+                - commands_queued: Number of command jobs created
+        """
+        stats = {"commands_found": 0, "commands_queued": 0}
+
+        try:
+            logger.debug("Starting chat monitoring cycle")
+
+            # Get meetings with chat_id from last 7 days
+            lookback_days = 7
+            cutoff_date = datetime.now() - timedelta(days=lookback_days)
+
+            with self.db.get_session() as session:
+                # Query meetings with chat_id and recent start time
+                recent_meetings = session.query(Meeting).filter(
+                    Meeting.chat_id.isnot(None),
+                    Meeting.chat_id != "",
+                    Meeting.start_time >= cutoff_date
+                ).all()
+
+                logger.info(
+                    f"Monitoring {len(recent_meetings)} meetings with chats "
+                    f"(last {lookback_days} days)"
+                )
+
+                # Check each meeting's chat for commands
+                for meeting in recent_meetings:
+                    try:
+                        # Determine when to check from
+                        # Use last_chat_check if available, otherwise use discovered_at
+                        since = meeting.last_chat_check or meeting.discovered_at
+
+                        # Don't check chats older than 7 days
+                        if since and since < cutoff_date:
+                            since = cutoff_date
+
+                        # Check for commands in this chat
+                        commands = self.chat_monitor.check_for_commands(
+                            chat_id=meeting.chat_id,
+                            since=since,
+                            limit=50
+                        )
+
+                        stats["commands_found"] += len(commands)
+
+                        # Create jobs for each command
+                        for command in commands:
+                            self._queue_chat_command(command, meeting)
+                            stats["commands_queued"] += 1
+
+                        # Update last check time
+                        meeting.last_chat_check = datetime.now()
+
+                    except Exception as e:
+                        logger.error(
+                            f"Error monitoring chat for meeting {meeting.id}: {e}",
+                            exc_info=True
+                        )
+                        continue
+
+                # Commit all last_chat_check updates
+                session.commit()
+
+            if stats["commands_found"] > 0:
+                logger.info(
+                    f"✓ Chat monitoring found {stats['commands_found']} commands, "
+                    f"queued {stats['commands_queued']} jobs"
+                )
+            else:
+                logger.debug("Chat monitoring found no new commands")
+
+            return stats
+
+        except Exception as e:
+            logger.error(f"Chat monitoring cycle failed: {e}", exc_info=True)
+            return stats
+
+    def _queue_chat_command(self, command, meeting: Meeting):
+        """
+        Create job to process chat command.
+
+        Args:
+            command: Command object from parser
+            meeting: Meeting associated with command
+        """
+        try:
+            # Create job for command processing
+            job = self.queue.create_job(
+                job_type="process_chat_command",
+                input_data={
+                    "command_type": command.command_type.value,
+                    "meeting_id": meeting.id,
+                    "message_id": command.message_id,
+                    "chat_id": command.chat_id,
+                    "user_email": command.user_email,
+                    "user_name": command.user_name,
+                    "parameters": command.parameters,
+                    "raw_message": command.raw_message
+                },
+                priority=8  # Higher priority than normal processing
+            )
+
+            logger.info(
+                f"Queued chat command job: {command.command_type.value} "
+                f"from {command.user_email} (job_id: {job.id})"
+            )
+
+        except Exception as e:
+            logger.error(f"Error queueing chat command: {e}", exc_info=True)

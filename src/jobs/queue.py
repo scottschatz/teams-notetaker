@@ -295,8 +295,8 @@ class JobQueueManager:
                 strategy = get_retry_strategy(job.job_type)
                 job.next_retry_at = calculate_next_retry(
                     retry_count=job.retry_count,
-                    base_delay=strategy["base_delay"],
-                    max_delay=strategy["max_delay"],
+                    base_delay=strategy["base_delay_seconds"],
+                    max_delay=strategy["max_delay_seconds"],
                     jitter=True
                 )
 

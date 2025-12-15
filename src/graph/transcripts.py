@@ -323,3 +323,155 @@ class TranscriptFetcher:
         except Exception as e:
             logger.error(f"Error finding transcript by thread ID: {e}")
             return None
+
+    def get_transcript_sharepoint_url(
+        self,
+        organizer_user_id: str,
+        meeting_id: str
+    ) -> Optional[str]:
+        """
+        Get SharePoint URL for transcript (respects permissions).
+
+        This URL points to the transcript stored in SharePoint/OneDrive
+        and automatically respects Teams meeting permissions.
+
+        Args:
+            organizer_user_id: User ID of the meeting organizer
+            meeting_id: The onlineMeeting ID
+
+        Returns:
+            SharePoint URL string if found, None otherwise
+        """
+        try:
+            transcript = self.get_transcript_for_meeting(organizer_user_id, meeting_id)
+            if not transcript:
+                return None
+
+            url = transcript.get('transcriptContentUrl')
+            if url:
+                logger.info(f"Retrieved transcript SharePoint URL for meeting {meeting_id}")
+            else:
+                logger.warning(f"No transcriptContentUrl found for meeting {meeting_id}")
+
+            return url
+
+        except Exception as e:
+            logger.error(f"Error getting transcript SharePoint URL: {e}")
+            return None
+
+    def get_all_recordings_for_organizer(
+        self,
+        organizer_user_id: str,
+        since_hours: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get ALL recordings for meetings organized by a specific user.
+
+        Args:
+            organizer_user_id: User ID of the meeting organizer
+            since_hours: Only return recordings from last N hours (optional)
+
+        Returns:
+            List of recording metadata dictionaries
+
+        Raises:
+            GraphAPIError: If request fails
+        """
+        try:
+            endpoint = f"/users/{organizer_user_id}/onlineMeetings/getAllRecordings(meetingOrganizerUserId='{organizer_user_id}')"
+
+            logger.debug(f"Getting all recordings for organizer {organizer_user_id}")
+
+            result = self.client.get(endpoint)
+            recordings = result.get('value', [])
+
+            # Filter by time if requested
+            if since_hours and recordings:
+                from datetime import timezone
+                cutoff = datetime.now(timezone.utc) - timedelta(hours=since_hours)
+                recordings = [
+                    r for r in recordings
+                    if datetime.fromisoformat(r.get('createdDateTime', '').replace('Z', '+00:00')) > cutoff
+                ]
+
+            logger.info(f"Found {len(recordings)} recordings for organizer {organizer_user_id}")
+            return recordings
+
+        except Exception as e:
+            logger.error(f"Failed to get recordings for organizer {organizer_user_id}: {e}")
+            raise GraphAPIError(f"Failed to get organizer recordings: {e}")
+
+    def get_recording_for_meeting(
+        self,
+        organizer_user_id: str,
+        meeting_id: str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get the recording for a specific meeting.
+
+        Args:
+            organizer_user_id: User ID of the meeting organizer
+            meeting_id: The onlineMeeting ID
+
+        Returns:
+            Recording metadata dict if found, None otherwise
+        """
+        try:
+            # Get all recordings for this organizer (last 72 hours)
+            all_recordings = self.get_all_recordings_for_organizer(
+                organizer_user_id,
+                since_hours=72
+            )
+
+            # Find recording(s) matching this meeting ID
+            matching = [r for r in all_recordings if r.get('meetingId') == meeting_id]
+
+            if not matching:
+                logger.info(f"No recording found for meeting {meeting_id}")
+                return None
+
+            # Return the most recent recording if multiple exist
+            matching.sort(key=lambda r: r.get('createdDateTime', ''), reverse=True)
+            recording = matching[0]
+
+            logger.info(f"Found recording {recording.get('id')} for meeting {meeting_id}")
+            return recording
+
+        except Exception as e:
+            logger.error(f"Error getting recording for meeting {meeting_id}: {e}")
+            return None
+
+    def get_recording_sharepoint_url(
+        self,
+        organizer_user_id: str,
+        meeting_id: str
+    ) -> Optional[str]:
+        """
+        Get SharePoint URL for recording (respects permissions).
+
+        This URL points to the recording stored in SharePoint/OneDrive
+        and automatically respects Teams meeting permissions.
+
+        Args:
+            organizer_user_id: User ID of the meeting organizer
+            meeting_id: The onlineMeeting ID
+
+        Returns:
+            SharePoint URL string if found, None otherwise
+        """
+        try:
+            recording = self.get_recording_for_meeting(organizer_user_id, meeting_id)
+            if not recording:
+                return None
+
+            url = recording.get('recordingContentUrl')
+            if url:
+                logger.info(f"Retrieved recording SharePoint URL for meeting {meeting_id}")
+            else:
+                logger.warning(f"No recordingContentUrl found for meeting {meeting_id}")
+
+            return url
+
+        except Exception as e:
+            logger.error(f"Error getting recording SharePoint URL: {e}")
+            return None

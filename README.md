@@ -4,14 +4,38 @@ AI-powered meeting summary and distribution system for Microsoft Teams. Automati
 
 ## Features
 
+### Core Features
+
 - 🔍 **Automatic Discovery**: Polls Microsoft Teams every 5 minutes for new meetings
-- 🤖 **AI Summarization**: Uses Claude API to generate concise, actionable summaries
-- 📧 **Email Distribution**: Sends HTML-formatted summaries to all meeting participants
-- 💬 **Teams Chat Integration**: Posts summaries directly to meeting chat threads
+- 🤖 **Enhanced AI Summarization**: Multi-stage Claude AI extraction for structured insights
+  - ✅ Action items with assignees, deadlines, and timestamps
+  - 🎯 Key decisions with reasoning and impact
+  - 📋 Topic segmentation (meeting chapters)
+  - ⭐ Highlights with recording timestamps
+  - 👤 @Mention tracking (who mentioned whom)
+- 📧 **Smart Email Distribution**:
+  - **Standard emails** to all participants (auto-sent)
+  - **Personalized emails** with user-specific mentions and action items (on-demand)
+  - User preference management (opt-in/opt-out)
+- 💬 **Teams Chat Integration**:
+  - Posts summaries directly to meeting chat threads (chat-first approach)
+  - Interactive bot commands for email requests and preferences
+- 🔗 **SharePoint Links**: Permission-respecting links to transcripts and recordings (no downloads)
 - 🎯 **Pilot Mode**: Test with selected users before organization-wide rollout
 - 🖥️ **Web Dashboard**: Monitor processing status, manage users, view analytics
 - 🔒 **Secure Authentication**: Supports both password and Azure AD SSO
 - ⚙️ **Job Queue System**: Asynchronous processing with retry logic and error handling
+
+### Chat Commands
+
+Users can interact with the bot directly in Teams meeting chats:
+
+- `@meeting notetaker email me` - Get personalized email with your mentions and action items
+- `@meeting notetaker email all` - (Organizer only) Send summary to all participants
+- `@meeting notetaker no emails` - Opt out of automatic email summaries
+- `@meeting notetaker summarize again [instructions]` - Regenerate summary with custom focus
+
+Example: `@meeting notetaker summarize again focus on engineering decisions`
 
 ## Architecture
 
@@ -118,9 +142,14 @@ createdb teams_notetaker
 # Initialize schema
 python -m src.main db init
 
+# Run migrations for enhanced features (v2.0)
+psql -h localhost -U postgres -d teams_notetaker -f migrations/add_enhanced_features.sql
+
 # Seed default configuration
 python -m src.main db seed-config
 ```
+
+**Note**: If upgrading from v1.x, run the migration script to add SharePoint links, enhanced summaries, and chat command features.
 
 ### 6. Test Connections
 
@@ -295,14 +324,42 @@ For LAN access:
 Editable via web dashboard or manually:
 
 ```yaml
+# Polling
 polling_interval_minutes: 5       # How often to poll for meetings
 lookback_hours: 48                # How far back to search
+
+# Operating Mode
 pilot_mode_enabled: true          # Only process pilot user meetings
+
+# Job Processing
 max_concurrent_jobs: 5            # Concurrent job processing
 job_timeout_minutes: 10           # Max time per job
+
+# Distribution
 email_enabled: true               # Send email summaries
 teams_chat_enabled: true          # Post to Teams chat
 minimum_meeting_duration_minutes: 5  # Skip short meetings
+
+# Chat Commands (v2.0)
+chat_monitoring_enabled: true     # Monitor chats for bot commands
+chat_check_interval_minutes: 2    # How often to check chats
+chat_lookback_days: 7             # How far back to monitor
+
+# Email Preferences (v2.0)
+default_email_preference: true    # Users receive emails by default
+allow_chat_preferences: true      # Allow preference management via chat
+
+# Enhanced AI Features (v2.0)
+enable_action_items: true         # Extract action items
+enable_decisions: true            # Extract key decisions
+enable_topic_segmentation: true   # Segment into topics
+enable_highlights: true           # Identify key moments
+enable_mentions: true             # Track @mentions
+max_highlights: 5                 # Limit highlights
+
+# SharePoint Links (v2.0)
+use_sharepoint_links: true        # Use SharePoint URLs (secure)
+sharepoint_link_expiration_days: 90  # Track expiration
 ```
 
 ### Pilot Mode
@@ -340,14 +397,17 @@ teams-notetaker/
 │   ├── core/          # Database models, configuration
 │   ├── auth/          # Authentication (password + SSO)
 │   ├── graph/         # Microsoft Graph API integration
-│   ├── ai/            # Claude API integration
+│   ├── ai/            # Claude API integration (prompts, summarizer)
 │   ├── jobs/          # Job queue and worker
-│   ├── discovery/     # Meeting polling
+│   │   └── processors/  # Job processors (transcript, summary, distribution, chat_command)
+│   ├── discovery/     # Meeting polling and chat monitoring
+│   ├── chat/          # Chat command parsing and monitoring (v2.0)
+│   ├── preferences/   # User preference management (v2.0)
 │   ├── web/           # FastAPI dashboard
 │   └── utils/         # Utilities (VTT parser, etc.)
 ├── tests/             # Unit and integration tests
 ├── deployment/        # Systemd service files
-└── migrations/        # Alembic database migrations
+└── migrations/        # Database migrations (SQL scripts)
 ```
 
 ### Running Tests
@@ -495,26 +555,37 @@ Proprietary - Townsquare Media
 
 ## Roadmap
 
-### Phase 1 ✅ (Current)
+### Phase 1 ✅ (Completed)
 - Core infrastructure
 - Database and authentication
 - Graph API integration
 
-### Phase 2 (In Progress)
+### Phase 2 ✅ (Completed)
 - Job queue and worker
 - AI summarization
 - Distribution system
 
-### Phase 3 (Coming Soon)
+### Phase 3 ✅ (Completed)
 - Web dashboard
 - Analytics and reporting
 - Production deployment
 
+### Version 2.0 ✅ (Completed - Current)
+- **Enhanced AI Summarization**: Multi-stage extraction with structured data
+  - Action items, decisions, topics, highlights, mentions
+- **SharePoint Links**: Permission-respecting URLs for transcripts and recordings
+- **Chat Commands**: Interactive bot for personalized emails and preferences
+- **User Preference Management**: Opt-in/opt-out via Teams chat
+- **Summary Versioning**: Re-summarization with custom instructions
+- **Personalized Emails**: User-specific mentions and action items
+
 ### Future Enhancements
 - Real-time WebSocket updates
 - Custom summary templates per team
-- Meeting recording integration
+- Meeting recording clips (video highlights)
 - Export to CSV/Excel
 - Mobile-responsive dashboard
 - Multi-language support
 - Advanced analytics and insights
+- Slack integration
+- Microsoft Planner integration (auto-create tasks from action items)

@@ -105,8 +105,12 @@ class Meeting(Base):
 
     # Teams meeting URLs and IDs
     join_url = Column(String(1000))  # Teams meeting join URL
-    recording_url = Column(String(1000))  # Recording URL (if available)
+    recording_url = Column(String(1000))  # Recording URL (if available) - DEPRECATED, use recording_sharepoint_url
+    recording_sharepoint_url = Column(String(1000))  # SharePoint recording URL (NEW - respects permissions)
     chat_id = Column(String(255))  # Teams chat thread ID
+
+    # Chat monitoring (NEW)
+    last_chat_check = Column(DateTime)  # When we last checked chat for commands
 
     # Discovery metadata
     discovered_at = Column(DateTime, default=func.now(), index=True)
@@ -141,7 +145,7 @@ class Meeting(Base):
     # Relationships
     participants = relationship("MeetingParticipant", back_populates="meeting", cascade="all, delete-orphan")
     transcript = relationship("Transcript", back_populates="meeting", uselist=False, cascade="all, delete-orphan")
-    summary = relationship("Summary", back_populates="meeting", uselist=False, cascade="all, delete-orphan")
+    summaries = relationship("Summary", back_populates="meeting", cascade="all, delete-orphan")  # Changed to plural for versioning
     distributions = relationship("Distribution", back_populates="meeting", cascade="all, delete-orphan")
     jobs = relationship("JobQueue", back_populates="meeting", cascade="all, delete-orphan")
 
@@ -258,6 +262,10 @@ class Transcript(Base):
     vtt_content = Column(Text)  # Full VTT file content
     vtt_url = Column(String(1000))  # Graph API URL (may expire)
 
+    # SharePoint links (NEW - for secure sharing)
+    transcript_sharepoint_url = Column(String(1000))  # SharePoint URL (respects permissions)
+    transcript_expires_at = Column(DateTime)  # Track URL expiration if applicable
+
     # Parsed transcript
     parsed_content = Column(JSONB)  # Array of {speaker, timestamp, text} objects
     speaker_count = Column(Integer)
@@ -278,12 +286,24 @@ class Summary(Base):
     __tablename__ = "summaries"
 
     id = Column(Integer, primary_key=True)
-    meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="CASCADE"), unique=True, nullable=False, index=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True)  # Changed: not unique (for versioning)
     transcript_id = Column(Integer, ForeignKey("transcripts.id", ondelete="CASCADE"), nullable=False)
 
     # Summary content
     summary_text = Column(Text, nullable=False)
     summary_html = Column(Text)  # Formatted version with markdown
+
+    # Enhanced summary data (NEW - structured extractions)
+    action_items_json = Column(JSONB)  # List of {description, assignee, deadline, context, timestamp}
+    decisions_json = Column(JSONB)  # List of {decision, participants, reasoning, impact, timestamp}
+    topics_json = Column(JSONB)  # List of {topic, duration, speakers, summary, key_points}
+    highlights_json = Column(JSONB)  # List of {title, timestamp, why_important, type}
+    mentions_json = Column(JSONB)  # List of {person, mentioned_by, context, timestamp, type}
+
+    # Versioning (NEW - for re-summarization)
+    version = Column(Integer, default=1, nullable=False, index=True)
+    custom_instructions = Column(Text)  # User-provided instructions for custom summaries
+    superseded_by = Column(Integer, ForeignKey("summaries.id"))  # Points to newer version
 
     # AI metadata
     model = Column(String(100), default="claude-sonnet-4-20250514")
@@ -299,9 +319,13 @@ class Summary(Base):
     confidence_score = Column(DECIMAL(3, 2))  # 0.00-1.00
 
     # Relationships
-    meeting = relationship("Meeting", back_populates="summary")
+    meeting = relationship("Meeting", back_populates="summaries")  # Changed to plural for multiple versions
     transcript = relationship("Transcript", back_populates="summary")
     distributions = relationship("Distribution", back_populates="summary", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index("idx_summaries_meeting_version", "meeting_id", "version"),
+    )
 
 
 # ============================================================================
@@ -455,6 +479,48 @@ class SystemHealthCheck(Base):
     response_time_ms = Column(Integer)
     error_message = Column(Text)
     details = Column(JSONB)
+
+
+class UserPreference(Base):
+    """
+    User email preferences for meeting summaries.
+
+    Allows users to manage whether they receive meeting summary emails,
+    and tracks preference changes via chat commands or organizer settings.
+    """
+    __tablename__ = "user_preferences"
+
+    user_email = Column(String(255), primary_key=True)
+    receive_emails = Column(Boolean, default=True, nullable=False)
+    email_preference = Column(String(20), default='all')  # 'all', 'opt_in', 'disabled'
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+    updated_by = Column(String(50))  # 'user' or 'organizer'
+
+    def __repr__(self):
+        return f"<UserPreference(email='{self.user_email}', receive={self.receive_emails})>"
+
+
+class ProcessedChatMessage(Base):
+    """
+    Tracking for processed chat commands.
+
+    Prevents duplicate processing of chat commands by storing message IDs
+    that have already been handled.
+    """
+    __tablename__ = "processed_chat_messages"
+
+    message_id = Column(String(255), primary_key=True)
+    chat_id = Column(String(255), nullable=False, index=True)
+    command_type = Column(String(50))  # 'email_me', 'email_all', 'no_emails', 'summarize_again'
+    processed_at = Column(DateTime, default=func.now(), index=True)
+    result = Column(Text)  # Success/error message
+
+    __table_args__ = (
+        Index("idx_processed_messages_chat", "chat_id", "processed_at"),
+    )
+
+    def __repr__(self):
+        return f"<ProcessedChatMessage(id='{self.message_id}', type='{self.command_type}')>"
 
 
 # ============================================================================

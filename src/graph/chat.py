@@ -52,6 +52,7 @@ class TeamsChatPoster:
         chat_id: str,
         summary_markdown: str,
         meeting_metadata: Dict[str, Any],
+        enhanced_summary_data: Optional[Dict[str, Any]] = None,
         include_header: bool = True
     ) -> str:
         """
@@ -72,12 +73,21 @@ class TeamsChatPoster:
         try:
             logger.info(f"Posting meeting summary to chat {chat_id}")
 
-            # Build message content
-            if include_header:
-                header = self._build_chat_header(meeting_metadata)
-                full_message = f"{header}\n\n{summary_markdown}"
+            # Build message content with enhanced data if available
+            if enhanced_summary_data:
+                full_message = self._build_enhanced_chat_message(
+                    summary_markdown,
+                    meeting_metadata,
+                    enhanced_summary_data,
+                    include_header
+                )
             else:
-                full_message = summary_markdown
+                # Fallback to basic format
+                if include_header:
+                    header = self._build_chat_header(meeting_metadata)
+                    full_message = f"{header}\n\n{summary_markdown}"
+                else:
+                    full_message = summary_markdown
 
             # Post message
             message_id = self.post_message(chat_id, full_message)
@@ -305,6 +315,121 @@ class TeamsChatPoster:
 """
 
         return header
+
+    def _build_enhanced_chat_message(
+        self,
+        summary_markdown: str,
+        meeting_metadata: Dict[str, Any],
+        enhanced_summary_data: Dict[str, Any],
+        include_header: bool = True
+    ) -> str:
+        """
+        Build enhanced chat message with action items, decisions, and links.
+
+        Args:
+            summary_markdown: Summary text
+            meeting_metadata: Meeting details
+            enhanced_summary_data: Enhanced summary with structured data
+            include_header: Include meeting header
+
+        Returns:
+            Formatted markdown message for Teams chat
+        """
+        # Extract enhanced data
+        action_items = enhanced_summary_data.get("action_items", [])
+        decisions = enhanced_summary_data.get("decisions", [])
+        highlights = enhanced_summary_data.get("highlights", [])
+
+        # Get SharePoint links
+        transcript_url = meeting_metadata.get("transcript_sharepoint_url", "")
+        recording_url = meeting_metadata.get("recording_sharepoint_url", "") or meeting_metadata.get("recording_url", "")
+
+        # Build message
+        message = ""
+
+        if include_header:
+            message += self._build_chat_header(meeting_metadata)
+
+        # Links section
+        message += "\n**🔗 Resources:**\n"
+        if recording_url:
+            message += f"- [🎥 Watch Recording]({recording_url})\n"
+        if transcript_url:
+            message += f"- [📄 View Transcript (Teams)]({transcript_url})\n"
+        message += "\n"
+
+        # Action items section
+        if action_items:
+            message += "## ✅ Action Items\n\n"
+            for item in action_items[:10]:  # Limit to 10 for chat readability
+                description = item.get("description", "")
+                assignee = item.get("assignee", "")
+                deadline = item.get("deadline", "")
+
+                message += f"- [ ] **{description}**"
+                if assignee and assignee != "Unassigned":
+                    message += f" (@{assignee})"
+                if deadline and deadline != "Not specified":
+                    message += f" - Due: {deadline}"
+                message += "\n"
+
+            if len(action_items) > 10:
+                message += f"\n_...and {len(action_items) - 10} more action items_\n"
+            message += "\n"
+
+        # Decisions section
+        if decisions:
+            message += "## 🎯 Key Decisions\n\n"
+            for decision in decisions[:5]:  # Limit to 5 for chat readability
+                decision_text = decision.get("decision", "")
+                reasoning = decision.get("reasoning", "")
+
+                message += f"- **{decision_text}**"
+                if reasoning:
+                    message += f"\n  - _Why:_ {reasoning}"
+                message += "\n"
+
+            if len(decisions) > 5:
+                message += f"\n_...and {len(decisions) - 5} more decisions_\n"
+            message += "\n"
+
+        # Highlights section
+        if highlights:
+            message += "## ⭐ Key Moments\n\n"
+            for highlight in highlights[:5]:  # Limit to 5
+                title = highlight.get("title", "")
+                timestamp = highlight.get("timestamp", "")
+
+                # Create timestamped link if recording URL available
+                if recording_url and timestamp:
+                    try:
+                        parts = timestamp.split(":")
+                        seconds = int(parts[0]) * 60 + int(parts[1])
+                        message += f"- [{title}]({recording_url}#t={seconds}) ({timestamp})\n"
+                    except:
+                        message += f"- {title} ({timestamp})\n"
+                else:
+                    message += f"- {title}"
+                    if timestamp:
+                        message += f" ({timestamp})"
+                    message += "\n"
+
+            if len(highlights) > 5:
+                message += f"\n_...and {len(highlights) - 5} more highlights_\n"
+            message += "\n"
+
+        # Full summary
+        message += "## 📝 Full Summary\n\n"
+        message += summary_markdown
+        message += "\n\n---\n\n"
+
+        # Commands footer
+        message += "**💬 Chat Commands:**\n"
+        message += "- Reply `@meeting notetaker email me` to get a personalized summary\n"
+        message += "- Reply `@meeting notetaker no emails` to opt out of future email summaries\n"
+        message += "- Reply `@meeting notetaker summarize again [your instructions]` to regenerate with custom focus\n"
+
+        return message
 
     def send_test_message(self, chat_id: str) -> bool:
         """

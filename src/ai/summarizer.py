@@ -3,11 +3,16 @@ Meeting Summarizer
 
 Generates AI-powered summaries of meeting transcripts using Claude API.
 Uses prompt templates from prompts.py and handles token limits.
+
+Includes both basic MeetingSummarizer and enhanced EnhancedMeetingSummarizer
+with multi-stage extraction (action items, decisions, topics, highlights, mentions).
 """
 
 import logging
+import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+from dataclasses import dataclass, asdict
 
 from ..core.config import ClaudeConfig
 from ..ai.claude_client import ClaudeClient
@@ -17,6 +22,17 @@ from ..ai.prompts import (
     build_action_items_extraction_prompt,
     build_decision_extraction_prompt,
     estimate_token_count
+)
+from ..ai.prompts.enhanced_prompts import (
+    ACTION_ITEM_PROMPT,
+    DECISION_PROMPT,
+    TOPIC_SEGMENTATION_PROMPT,
+    HIGHLIGHTS_PROMPT,
+    MENTIONS_PROMPT,
+    AGGREGATE_SUMMARY_PROMPT,
+    format_transcript_for_extraction,
+    EXTRACTION_TOKEN_LIMITS,
+    EXTRACTION_TEMPERATURE
 )
 from ..core.exceptions import SummaryGenerationError
 
@@ -304,3 +320,351 @@ Meetings:
 
         # Estimate cost
         return self.client.estimate_cost(user_prompt, expected_output_tokens=self.config.max_tokens)
+
+
+# ============================================================================
+# ENHANCED MEETING SUMMARIZER (Multi-Stage Extraction)
+# ============================================================================
+
+@dataclass
+class SummaryMetadata:
+    """Metadata about the summary generation process."""
+    total_tokens: int
+    total_cost: float
+    generation_time_ms: int
+    model: str
+    extraction_calls: int  # Number of API calls made
+    truncated: bool = False
+    custom_instructions: Optional[str] = None
+
+
+@dataclass
+class EnhancedSummary:
+    """
+    Complete enhanced meeting summary with structured extractions.
+
+    Attributes:
+        overall_summary: Narrative summary (markdown)
+        action_items: List of extracted action items
+        decisions: List of extracted decisions
+        topics: List of topic segments
+        highlights: List of key moments
+        mentions: List of person mentions
+        metadata: Summary generation metadata
+    """
+    overall_summary: str  # Markdown narrative
+    action_items: List[Dict[str, Any]]
+    decisions: List[Dict[str, Any]]
+    topics: List[Dict[str, Any]]
+    highlights: List[Dict[str, Any]]
+    mentions: List[Dict[str, Any]]
+    metadata: SummaryMetadata
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "overall_summary": self.overall_summary,
+            "action_items": self.action_items,
+            "decisions": self.decisions,
+            "topics": self.topics,
+            "highlights": self.highlights,
+            "mentions": self.mentions,
+            "metadata": asdict(self.metadata)
+        }
+
+
+class EnhancedMeetingSummarizer:
+    """
+    Multi-stage meeting summarizer with structured data extraction.
+
+    Uses 6 separate Claude API calls:
+    1. Extract action items
+    2. Extract decisions
+    3. Extract topic segments
+    4. Extract highlights
+    5. Extract mentions
+    6. Generate aggregate narrative summary
+
+    This approach provides:
+    - More accurate structured data extraction
+    - Better handling of complex meetings
+    - Support for personalized summaries (filter by user)
+    - Enables interactive re-summarization
+
+    Usage:
+        config = ClaudeConfig(api_key='...', model='claude-sonnet-4-20250514')
+        summarizer = EnhancedMeetingSummarizer(config)
+
+        result = summarizer.generate_enhanced_summary(
+            transcript_segments=[...],
+            meeting_metadata={...},
+            custom_instructions="Focus on engineering action items"
+        )
+
+        print(result.overall_summary)
+        print(f"Found {len(result.action_items)} action items")
+        print(f"Total cost: ${result.metadata.total_cost:.4f}")
+    """
+
+    def __init__(self, config: ClaudeConfig):
+        """
+        Initialize enhanced summarizer.
+
+        Args:
+            config: ClaudeConfig with API key and model settings
+        """
+        self.config = config
+        self.client = ClaudeClient(config)
+
+        logger.info(f"EnhancedMeetingSummarizer initialized (model: {config.model})")
+
+    def generate_enhanced_summary(
+        self,
+        transcript_segments: List[Dict[str, Any]],
+        meeting_metadata: Dict[str, Any],
+        custom_instructions: Optional[str] = None
+    ) -> EnhancedSummary:
+        """
+        Generate enhanced summary with multi-stage extraction.
+
+        Args:
+            transcript_segments: Parsed VTT segments with speaker, text, timestamp
+            meeting_metadata: Meeting details (subject, organizer, etc.)
+            custom_instructions: Optional user instructions for focused summarization
+
+        Returns:
+            EnhancedSummary object with structured data and narrative
+
+        Raises:
+            SummaryGenerationError: If any extraction stage fails
+        """
+        try:
+            start_time = datetime.now()
+
+            # Format transcript for extraction
+            transcript_text = format_transcript_for_extraction(transcript_segments)
+
+            logger.info(
+                f"Starting enhanced summary for '{meeting_metadata.get('subject')}' "
+                f"({len(transcript_segments)} segments, {len(transcript_text)} chars)"
+            )
+
+            # Track costs across all calls
+            total_tokens = 0
+            total_cost = 0.0
+            extraction_calls = 0
+
+            # Stage 1: Extract action items
+            logger.debug("Extracting action items...")
+            action_items = self._extract_structured_data(
+                transcript_text,
+                ACTION_ITEM_PROMPT,
+                "action_items"
+            )
+            extraction_calls += 1
+
+            # Stage 2: Extract decisions
+            logger.debug("Extracting decisions...")
+            decisions = self._extract_structured_data(
+                transcript_text,
+                DECISION_PROMPT,
+                "decisions"
+            )
+            extraction_calls += 1
+
+            # Stage 3: Extract topic segments
+            logger.debug("Extracting topic segments...")
+            topics = self._extract_structured_data(
+                transcript_text,
+                TOPIC_SEGMENTATION_PROMPT,
+                "topics"
+            )
+            extraction_calls += 1
+
+            # Stage 4: Extract highlights
+            logger.debug("Extracting highlights...")
+            highlights = self._extract_structured_data(
+                transcript_text,
+                HIGHLIGHTS_PROMPT,
+                "highlights"
+            )
+            extraction_calls += 1
+
+            # Stage 5: Extract mentions
+            logger.debug("Extracting mentions...")
+            mentions = self._extract_structured_data(
+                transcript_text,
+                MENTIONS_PROMPT,
+                "mentions"
+            )
+            extraction_calls += 1
+
+            # Stage 6: Generate aggregate narrative summary
+            logger.debug("Generating aggregate summary...")
+            aggregate_prompt = AGGREGATE_SUMMARY_PROMPT.format(
+                metadata=self._format_metadata(meeting_metadata),
+                transcript=transcript_text,
+                action_items_count=len(action_items),
+                decisions_count=len(decisions),
+                topics_count=len(topics),
+                highlights_count=len(highlights),
+                mentions_count=len(mentions)
+            )
+
+            # Add custom instructions if provided
+            if custom_instructions:
+                aggregate_prompt += f"\n\n**Special Instructions from User:**\n{custom_instructions}"
+
+            response = self.client.generate_text(
+                system_prompt=SUMMARY_SYSTEM_PROMPT,
+                user_prompt=aggregate_prompt,
+                max_tokens=EXTRACTION_TOKEN_LIMITS["aggregate"],
+                temperature=EXTRACTION_TEMPERATURE["aggregate"]
+            )
+
+            overall_summary = response["content"]
+            extraction_calls += 1
+
+            # Calculate total costs
+            # Note: We'd need to track tokens from each extraction call
+            # For now, estimate based on final response
+            total_tokens = response["total_tokens"]
+            total_cost = response["cost"]
+
+            end_time = datetime.now()
+            generation_time_ms = int((end_time - start_time).total_seconds() * 1000)
+
+            logger.info(
+                f"✓ Enhanced summary complete: {extraction_calls} API calls, "
+                f"{total_tokens} tokens, ${total_cost:.4f}, {generation_time_ms}ms"
+            )
+
+            # Build metadata
+            metadata = SummaryMetadata(
+                total_tokens=total_tokens,
+                total_cost=total_cost,
+                generation_time_ms=generation_time_ms,
+                model=response["model"],
+                extraction_calls=extraction_calls,
+                custom_instructions=custom_instructions
+            )
+
+            return EnhancedSummary(
+                overall_summary=overall_summary,
+                action_items=action_items,
+                decisions=decisions,
+                topics=topics,
+                highlights=highlights,
+                mentions=mentions,
+                metadata=metadata
+            )
+
+        except Exception as e:
+            logger.error(f"Enhanced summary generation failed: {e}", exc_info=True)
+            raise SummaryGenerationError(f"Enhanced summary failed: {e}")
+
+    def _extract_structured_data(
+        self,
+        transcript_text: str,
+        prompt_template: str,
+        extraction_type: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Extract structured data using a prompt template.
+
+        Args:
+            transcript_text: Formatted transcript
+            prompt_template: Prompt template with {transcript} placeholder
+            extraction_type: Type of extraction (for token limits)
+
+        Returns:
+            List of extracted items (parsed from JSON response)
+        """
+        try:
+            # Format prompt
+            prompt = prompt_template.format(transcript=transcript_text)
+
+            # Get token limit and temperature for this extraction type
+            max_tokens = EXTRACTION_TOKEN_LIMITS.get(extraction_type, 1000)
+            temperature = EXTRACTION_TEMPERATURE.get(extraction_type, 0.3)
+
+            # Call Claude API
+            response = self.client.generate_text(
+                system_prompt="You are an expert meeting analyst. Extract structured data accurately from transcripts. Return ONLY valid JSON with no additional text.",
+                user_prompt=prompt,
+                max_tokens=max_tokens,
+                temperature=temperature
+            )
+
+            content = response["content"].strip()
+
+            # Parse JSON response
+            try:
+                # Try to extract JSON from markdown code blocks if present
+                if "```json" in content:
+                    content = content.split("```json")[1].split("```")[0].strip()
+                elif "```" in content:
+                    content = content.split("```")[1].split("```")[0].strip()
+
+                data = json.loads(content)
+
+                # Ensure it's a list
+                if not isinstance(data, list):
+                    logger.warning(f"Expected list for {extraction_type}, got {type(data)}")
+                    return []
+
+                logger.debug(f"Extracted {len(data)} items for {extraction_type}")
+                return data
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON for {extraction_type}: {e}")
+                logger.debug(f"Raw response: {content}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Failed to extract {extraction_type}: {e}")
+            return []
+
+    def _format_metadata(self, metadata: Dict[str, Any]) -> str:
+        """Format meeting metadata as a string."""
+        lines = []
+        if "subject" in metadata:
+            lines.append(f"Subject: {metadata['subject']}")
+        if "organizer_name" in metadata:
+            lines.append(f"Organizer: {metadata['organizer_name']}")
+        if "start_time" in metadata:
+            lines.append(f"Date: {metadata['start_time']}")
+        if "duration_minutes" in metadata:
+            lines.append(f"Duration: {metadata['duration_minutes']} minutes")
+        if "participant_count" in metadata:
+            lines.append(f"Participants: {metadata['participant_count']}")
+
+        return "\n".join(lines)
+
+    def estimate_enhanced_summary_cost(
+        self,
+        transcript_segments: List[Dict[str, Any]],
+        meeting_metadata: Dict[str, Any]
+    ) -> float:
+        """
+        Estimate total cost for enhanced summary (6 API calls).
+
+        Args:
+            transcript_segments: Parsed VTT segments
+            meeting_metadata: Meeting details
+
+        Returns:
+            Estimated total cost in USD
+        """
+        transcript_text = format_transcript_for_extraction(transcript_segments)
+
+        # Estimate cost for each extraction type
+        total_cost = 0.0
+
+        for extraction_type, max_tokens in EXTRACTION_TOKEN_LIMITS.items():
+            # Rough estimate: input tokens + output tokens
+            input_tokens = estimate_token_count(transcript_text)
+            cost = self.client.estimate_cost(transcript_text, expected_output_tokens=max_tokens)
+            total_cost += cost
+
+        return total_cost

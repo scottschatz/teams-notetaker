@@ -32,15 +32,19 @@ class TranscriptProcessor(BaseProcessor):
         - success: bool
         - transcript_id: Database transcript ID
         - vtt_url: URL where VTT was downloaded from
+        - transcript_sharepoint_url: SharePoint URL for transcript (respects permissions)
+        - recording_sharepoint_url: SharePoint URL for recording (if available)
         - speaker_count: Number of unique speakers
         - word_count: Total word count
         - duration_seconds: Transcript duration
+        - segment_count: Number of parsed segments
         - message: Status message
 
     Updates:
         - meetings.has_transcript = True
         - meetings.status = 'processing'
-        - Creates transcript record in database
+        - meetings.recording_sharepoint_url (if recording available)
+        - Creates transcript record in database with SharePoint URLs
 
     Errors:
         - TranscriptNotFoundError: No transcript available
@@ -124,27 +128,45 @@ class TranscriptProcessor(BaseProcessor):
                     f"No transcript found for meeting organized by {meeting.organizer_name}"
                 )
 
-            # Download the transcript content
+            # Download the transcript content (for AI processing)
             vtt_content = self.transcript_fetcher.download_transcript_content(
                 organizer_user_id=organizer_user_id,
                 meeting_id=transcript_metadata.get('meetingId'),
                 transcript_id=transcript_metadata.get('id')
             )
 
+            # Get SharePoint URL for transcript (for secure user access)
+            transcript_sharepoint_url = transcript_metadata.get('transcriptContentUrl', '')
+
+            self._log_progress(
+                job,
+                f"Downloaded {len(vtt_content)} chars of VTT content, got SharePoint URL"
+            )
+
+            # Get recording SharePoint URL (if available)
+            recording_sharepoint_url = None
+            try:
+                recording_sharepoint_url = self.transcript_fetcher.get_recording_sharepoint_url(
+                    organizer_user_id=organizer_user_id,
+                    meeting_id=transcript_metadata.get('meetingId')
+                )
+                if recording_sharepoint_url:
+                    self._log_progress(job, "✓ Found recording SharePoint URL")
+            except Exception as e:
+                self._log_progress(job, f"No recording URL available: {e}", "info")
+
             # Build transcript data structure
             transcript_data = {
                 'id': transcript_metadata.get('id'),
                 'meetingId': transcript_metadata.get('meetingId'),
                 'createdDateTime': transcript_metadata.get('createdDateTime'),
-                'contentUrl': transcript_metadata.get('transcriptContentUrl'),
+                'contentUrl': transcript_sharepoint_url,
                 'content': vtt_content
             }
 
             vtt_content = transcript_data["content"]
             vtt_url = transcript_data.get("contentUrl", "")
             graph_transcript_id = transcript_data.get("id", "")
-
-            self._log_progress(job, f"Downloaded {len(vtt_content)} chars of VTT content")
 
             # Parse VTT content
             self._log_progress(job, "Parsing VTT transcript")
@@ -176,16 +198,19 @@ class TranscriptProcessor(BaseProcessor):
                     vtt_url=vtt_url,
                     parsed_content=parsed_segments,  # Store as JSONB
                     speaker_count=speaker_count,
-                    word_count=word_count
+                    word_count=word_count,
+                    transcript_sharepoint_url=transcript_sharepoint_url  # NEW: SharePoint URL
                 )
                 session.add(transcript)
                 session.flush()
 
                 transcript_id = transcript.id
 
-                # Update meeting
+                # Update meeting with recording URL
                 meeting.has_transcript = True
                 meeting.status = "processing"
+                if recording_sharepoint_url:
+                    meeting.recording_sharepoint_url = recording_sharepoint_url
 
                 session.commit()
 
@@ -196,6 +221,8 @@ class TranscriptProcessor(BaseProcessor):
                 message=f"Transcript fetched and parsed successfully ({word_count} words, {speaker_count} speakers)",
                 transcript_id=transcript_id,
                 vtt_url=vtt_url,
+                transcript_sharepoint_url=transcript_sharepoint_url,  # NEW: SharePoint URL
+                recording_sharepoint_url=recording_sharepoint_url,  # NEW: Recording URL
                 speaker_count=speaker_count,
                 word_count=word_count,
                 duration_seconds=duration_seconds,

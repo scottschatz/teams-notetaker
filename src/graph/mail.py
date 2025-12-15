@@ -317,6 +317,7 @@ class EmailSender:
         start_time = meeting_metadata.get("start_time", "")
         duration = meeting_metadata.get("duration_minutes", 0)
         join_url = meeting_metadata.get("join_url", "")
+        chat_id = meeting_metadata.get("chat_id", "")
         recording_url = meeting_metadata.get("recording_url", "")
         recording_sharepoint_url = meeting_metadata.get("recording_sharepoint_url", "")
         transcript_sharepoint_url = meeting_metadata.get("transcript_sharepoint_url", "")
@@ -520,10 +521,17 @@ class EmailSender:
         <div class="buttons">
 """
 
-        # Link to Teams meeting - users can access transcript & recording through meeting recap
-        if join_url:
+        # Link to Teams chat - users can access transcript, recording, files, and recap
+        if chat_id:
+            # Construct Teams deep link to meeting chat (not join URL)
+            import urllib.parse
+            encoded_chat_id = urllib.parse.quote(chat_id)
+            chat_url = f"https://teams.microsoft.com/l/chat/{encoded_chat_id}/0"
+            html += f'            <a href="{chat_url}" class="button">💬 Open Meeting Chat in Teams</a>\n'
+            html += f'            <p style="font-size: 12px; color: #666; margin-top: 8px;">Access transcript, recording, files, and meeting recap in Teams</p>\n'
+        elif join_url:
+            # Fallback to join URL if no chat_id
             html += f'            <a href="{join_url}" class="button">📝 View Meeting in Teams</a>\n'
-            html += f'            <p style="font-size: 12px; color: #666; margin-top: 8px;">Access transcript, recording, and chat through Teams meeting recap</p>\n'
 
         html += """        </div>
 

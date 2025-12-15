@@ -215,7 +215,7 @@ class EmailSender:
                 "saveToSentItems": True
             }
 
-            self.client.post(endpoint, data=payload)
+            self.client.post(endpoint, json=payload)
 
             logger.info(f"Email sent from {from_email} to {len(to_emails)} recipient(s)")
 

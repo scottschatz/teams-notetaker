@@ -8,7 +8,8 @@ Handles user calendar queries and online meeting metadata retrieval.
 import logging
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
-from urllib.parse import quote
+from urllib.parse import quote, unquote
+import re
 
 from ..graph.client import GraphAPIClient
 from ..core.exceptions import GraphAPIError, MeetingNotFoundError
@@ -259,6 +260,10 @@ class MeetingDiscovery:
             except Exception as e:
                 logger.warning(f"Could not get user ID for organizer {organizer_email}: {e}")
 
+        # Extract chat_id from join_url (v2.0 feature for chat posting)
+        join_url = online_meeting.get("joinUrl", "")
+        chat_id = self._extract_chat_id_from_url(join_url) if join_url else None
+
         return {
             "meeting_id": online_meeting.get("id", event["id"]),
             "event_id": event["id"],
@@ -271,7 +276,8 @@ class MeetingDiscovery:
             "duration_minutes": duration_minutes,
             "participant_count": len(participants),
             "participants": participants,
-            "join_url": online_meeting.get("joinUrl", ""),
+            "join_url": join_url,
+            "chat_id": chat_id,
             "has_transcript": None,  # Unknown until we check
         }
 
@@ -345,3 +351,33 @@ class MeetingDiscovery:
         except Exception as e:
             logger.warning(f"Failed to parse datetime '{dt_string}': {e}")
             return None
+
+    def _extract_chat_id_from_url(self, join_url: str) -> Optional[str]:
+        """
+        Extract Teams chat ID from meeting join URL.
+
+        Args:
+            join_url: Teams meeting join URL
+
+        Returns:
+            Chat ID (e.g., "19:meeting_xxx@thread.v2") or None
+
+        Note: Graph API doesn't always return chatId in onlineMeeting object,
+        but we can extract it from the joinUrl for v2.0 chat posting feature.
+        """
+        if not join_url:
+            return None
+
+        try:
+            # Pattern: meetup-join/{encoded_chat_id}/
+            match = re.search(r'meetup-join/([^/]+)', join_url)
+            if match:
+                encoded_chat_id = match.group(1)
+                # URL decode it
+                chat_id = unquote(encoded_chat_id)
+                logger.debug(f"Extracted chat_id from join URL: {chat_id}")
+                return chat_id
+        except Exception as e:
+            logger.warning(f"Failed to extract chat_id from URL: {e}")
+
+        return None

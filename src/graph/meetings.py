@@ -7,7 +7,7 @@ Handles user calendar queries and online meeting metadata retrieval.
 
 import logging
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from urllib.parse import quote
 
 from ..graph.client import GraphAPIClient
@@ -72,8 +72,8 @@ class MeetingDiscovery:
         """
         logger.info(f"Discovering meetings from last {hours_back} hours")
 
-        start_time = datetime.now() - timedelta(hours=hours_back)
-        start_time_iso = start_time.isoformat() + "Z"
+        start_time = datetime.now(timezone.utc) - timedelta(hours=hours_back)
+        start_time_iso = start_time.isoformat()
 
         meetings = []
 
@@ -118,7 +118,7 @@ class MeetingDiscovery:
             List of meeting dictionaries
         """
         if end_time is None:
-            end_time = datetime.now().isoformat() + "Z"
+            end_time = datetime.now(timezone.utc).isoformat()
 
         logger.debug(f"Fetching meetings for {user_email} from {start_time} to {end_time}")
 

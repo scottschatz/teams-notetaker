@@ -1,6 +1,6 @@
 # Teams Meeting Transcript Summarizer
 
-AI-powered meeting summary and distribution system for Microsoft Teams. Automatically discovers meetings, generates summaries using Claude AI, and distributes via email and Teams chat.
+AI-powered meeting summary and distribution system for Microsoft Teams. Automatically discovers meetings, generates summaries using Claude AI, and distributes via email.
 
 ## Features
 
@@ -13,29 +13,31 @@ AI-powered meeting summary and distribution system for Microsoft Teams. Automati
   - 📋 Topic segmentation (meeting chapters)
   - ⭐ Highlights with recording timestamps
   - 👤 @Mention tracking (who mentioned whom)
-- 📧 **Smart Email Distribution**:
-  - **Standard emails** to all participants (auto-sent)
-  - **Personalized emails** with user-specific mentions and action items (on-demand)
-  - User preference management (opt-in/opt-out)
-- 💬 **Teams Chat Integration**:
-  - Posts summaries directly to meeting chat threads (chat-first approach)
-  - Interactive bot commands for email requests and preferences
-- 🔗 **SharePoint Links**: Permission-respecting links to transcripts and recordings (no downloads)
+- 📧 **Email Distribution**:
+  - HTML emails with enhanced formatting
+  - Action items, decisions, and key outcomes highlighted
+  - Deep link to Teams meeting chat for easy access to transcript/recording
+  - Sent to all meeting participants automatically
+- 🔗 **Teams Integration**: Emails include deep links to meeting chat where users can access:
+  - Meeting transcript
+  - Recording
+  - Chat messages
+  - Files shared during meeting
+  - Meeting notes and recap
 - 🎯 **Pilot Mode**: Test with selected users before organization-wide rollout
-- 🖥️ **Web Dashboard**: Monitor processing status, manage users, view analytics
+- 🖥️ **Web Dashboard**: Monitor processing status, manage users, view summaries
 - 🔒 **Secure Authentication**: Supports both password and Azure AD SSO
 - ⚙️ **Job Queue System**: Asynchronous processing with retry logic and error handling
 
-### Chat Commands
+### ⚠️ Known Limitations
 
-Users can interact with the bot directly in Teams meeting chats:
+**Chat Posting Not Supported**: Due to Microsoft Graph API restrictions, the system cannot post messages directly to Teams chats using application-only authentication. This means:
+- ❌ No automatic summary posts to meeting chats
+- ❌ No interactive chat commands
+- ✅ Email distribution works perfectly
+- ✅ Emails contain deep links to Teams chats for easy access
 
-- `@meeting notetaker email me` - Get personalized email with your mentions and action items
-- `@meeting notetaker email all` - (Organizer only) Send summary to all participants
-- `@meeting notetaker no emails` - Opt out of automatic email summaries
-- `@meeting notetaker summarize again [instructions]` - Regenerate summary with custom focus
-
-Example: `@meeting notetaker summarize again focus on engineering decisions`
+See `DEPLOYMENT_LESSONS_2025-12-15.md` for technical details on this limitation.
 
 ## Architecture
 
@@ -59,11 +61,12 @@ Discovery (5min poll) → Job Queue → Worker (5-10 concurrent jobs) → Distri
 - Python 3.11 or higher
 - PostgreSQL 12 or higher (running in WSL)
 - Azure AD application registration with application permissions:
-  - `OnlineMeetings.Read.All`
-  - `OnlineMeetingTranscript.Read.All`
-  - `Mail.Send`
-  - `Chat.ReadWrite.All`
-  - `User.Read.All`
+  - `OnlineMeetings.Read.All` - Discover meetings
+  - `OnlineMeetingTranscript.Read.All` - Download transcripts
+  - `OnlineMeetingRecording.Read.All` - Access recording metadata
+  - `Calendars.Read` - Query user calendars
+  - `Mail.Send` - Send email summaries
+  - `User.Read.All` - Get user information
 - Claude API key from Anthropic
 
 ## Installation

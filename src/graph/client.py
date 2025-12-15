@@ -175,13 +175,21 @@ class GraphAPIClient:
 
             # Handle authentication errors (401)
             if response.status_code == 401:
+                # Log the actual error message from Microsoft
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("error", {}).get("message", response.text)
+                    logger.error(f"401 Unauthorized: {error_msg}")
+                except:
+                    logger.error(f"401 Unauthorized: {response.text}")
+
                 if retry_count < max_retries:
                     logger.warning(f"Authentication failed (401), refreshing token and retrying {retry_count + 1}/{max_retries}")
                     self._access_token = None  # Force token refresh
                     self._token_expires_at = None
                     return self._request(method, endpoint, params, json, data, headers, retry_count + 1, max_retries)
                 else:
-                    raise AuthenticationError(f"Authentication failed after {max_retries} retries")
+                    raise AuthenticationError(f"Authentication failed after {max_retries} retries: {error_msg if 'error_msg' in locals() else response.text}")
 
             # Handle server errors (500-599) with exponential backoff
             if 500 <= response.status_code < 600:

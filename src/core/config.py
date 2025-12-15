@@ -113,6 +113,27 @@ class AppConfig:
     # Worker configuration
     worker_heartbeat_interval_seconds: int = 30
 
+    # Chat Command Settings (v2.0)
+    chat_monitoring_enabled: bool = True
+    chat_check_interval_minutes: int = 2
+    chat_lookback_days: int = 7
+
+    # Email Preference Defaults (v2.0)
+    default_email_preference: bool = True
+    allow_chat_preferences: bool = True
+
+    # Enhanced Summary Settings (v2.0)
+    enable_action_items: bool = True
+    enable_decisions: bool = True
+    enable_topic_segmentation: bool = True
+    enable_highlights: bool = True
+    enable_mentions: bool = True
+    max_highlights: int = 5
+
+    # SharePoint Links (v2.0)
+    use_sharepoint_links: bool = True
+    sharepoint_link_expiration_days: int = 90
+
 
 class ConfigManager:
     """Central configuration manager.

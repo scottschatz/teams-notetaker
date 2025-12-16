@@ -595,7 +595,7 @@ class EnhancedMeetingSummarizer:
 
             # Call Claude API
             response = self.client.generate_text(
-                system_prompt="You are an expert meeting analyst. Extract structured data accurately from transcripts. Return ONLY valid JSON with no additional text.",
+                system_prompt="You are an expert meeting analyst. Extract structured data accurately from transcripts. You MUST return ONLY valid, well-formed JSON. Ensure all strings are properly quoted and terminated. Ensure all JSON objects have matching braces. Double-check your JSON syntax before responding. Return NOTHING except the JSON array.",
                 user_prompt=prompt,
                 max_tokens=max_tokens,
                 temperature=temperature

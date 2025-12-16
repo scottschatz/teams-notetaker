@@ -121,53 +121,31 @@ Do NOT include any text before or after the JSON array. Start your response with
 
 
 TOPIC_SEGMENTATION_PROMPT = """
-Break this meeting into distinct topics or discussion segments.
+Break this meeting into 3-5 main discussion topics.
 
-Identify when the conversation shifts to a new subject. Create a structured agenda view.
+For each topic provide ONLY:
+- **topic**: Brief topic name (3-5 words max)
+- **duration**: Start-end time (format: "MM:SS - MM:SS")
+- **summary**: One sentence summary (max 20 words)
 
-For each topic:
-- **topic**: Name of the discussion topic (concise, 3-7 words)
-- **duration**: Start and end timestamps (format: "MM:SS - MM:SS")
-- **speakers**: Primary speakers for this topic (names)
-- **summary**: 2-3 sentence summary of the discussion
-- **key_points**: Bulleted list of main points (3-5 points)
-
-**Important Guidelines:**
-1. Look for natural conversation boundaries (topic changes, transitions)
-2. Combine related sub-topics into one segment (don't over-segment)
-3. Typical meetings have 3-8 main topics
-4. Include opening/closing segments if substantive
+Keep responses SHORT and focused. Limit to 5 topics maximum.
 
 **Output Format:**
 You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
 
 Each array element must be a complete JSON object with curly braces {{}}.
 
-Example:
+Example (SHORT format):
 [
   {{
-    "topic": "Project Status Update - Q4 Goals",
+    "topic": "Q4 Project Status",
     "duration": "00:00 - 08:30",
-    "speakers": "Sarah Johnson, Mike Chen",
-    "summary": "Reviewed progress on Q4 deliverables. On track for most milestones but API integration is 2 weeks behind schedule. Team discussed mitigation strategies.",
-    "key_points": [
-      "Mobile app launch completed successfully last week",
-      "API integration delayed due to third-party dependency issues",
-      "Marketing campaign ready to launch pending API completion",
-      "Proposed adding contractor resources to accelerate API work"
-    ]
+    "summary": "Reviewed deliverables, API integration behind schedule"
   }},
   {{
-    "topic": "Budget Planning for Q1 2025",
+    "topic": "Budget Planning",
     "duration": "08:31 - 18:45",
-    "speakers": "John Smith, Finance Team",
-    "summary": "Discussed Q1 budget allocation priorities. Agreed to increase engineering headcount and invest in infrastructure. Marketing budget to remain flat.",
-    "key_points": [
-      "Request for 3 additional engineering hires approved",
-      "Infrastructure upgrade budgeted at $50K",
-      "Marketing to focus on organic growth strategies",
-      "Travel budget reduced by 20%"
-    ]
+    "summary": "Approved hiring and infrastructure spending"
   }}
 ]
 
@@ -238,27 +216,16 @@ Do NOT include any text before or after the JSON array. Start your response with
 
 
 MENTIONS_PROMPT = """
-Identify all @mentions or direct references to specific people in this meeting.
+Identify up to 10 key mentions of specific people in this meeting.
 
-A mention is when someone:
-- Directly addresses or refers to another person by name
-- Assigns them a task or responsibility
-- Asks them a question
-- Gives them recognition or feedback
-- Discusses their work or contributions
+For each mention provide ONLY:
+- **person**: Person's name
+- **mentioned_by**: Who mentioned them
+- **context**: What was said (max 15 words)
+- **timestamp**: When (MM:SS)
+- **type**: One of: question, action_assignment, recognition, other
 
-For each mention:
-- **person**: Full name of person mentioned
-- **mentioned_by**: Who mentioned them (speaker name)
-- **context**: What was said about them (1-2 sentences, be specific)
-- **timestamp**: When mentioned (format: MM:SS)
-- **type**: Category (use one of: question, action_assignment, recognition, feedback, discussion, other)
-
-**Important Guidelines:**
-1. Only include DIRECT mentions (explicit name references)
-2. Capture the exact context - this will be used for personalized summaries
-3. Include both positive mentions (recognition) and neutral mentions (questions, assignments)
-4. Skip generic references like "the team" or "everyone"
+Focus on the MOST IMPORTANT mentions only. Limit to 10 mentions maximum. Keep context brief.
 
 **Output Format:**
 You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
@@ -435,11 +402,11 @@ def format_transcript_for_extraction(segments: list) -> str:
 
 # Token limits for different extraction types
 EXTRACTION_TOKEN_LIMITS = {
-    "action_items": 1000,      # Expect 5-20 action items
-    "decisions": 800,          # Expect 3-10 decisions
-    "topics": 1200,            # Expect 3-8 topics with details
+    "action_items": 1500,      # Expect 5-20 action items (increased to prevent truncation)
+    "decisions": 1000,         # Expect 3-10 decisions (increased for safety)
+    "topics": 800,             # Expect 3-5 topics with short summaries
     "highlights": 800,         # Expect 3-5 highlights
-    "mentions": 1500,          # Could be many mentions
+    "mentions": 1000,          # Expect up to 10 mentions
     "aggregate": 2000          # Full summary
 }
 

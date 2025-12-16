@@ -455,52 +455,57 @@ class EnhancedMeetingSummarizer:
             extraction_calls = 0
 
             # Stage 1: Extract action items
-            logger.debug("Extracting action items...")
+            logger.info("Stage 1/6: Extracting action items...")
             action_items = self._extract_structured_data(
                 transcript_text,
                 ACTION_ITEM_PROMPT,
                 "action_items"
             )
             extraction_calls += 1
+            logger.info(f"Stage 1/6 complete: {len(action_items)} action items")
 
             # Stage 2: Extract decisions
-            logger.debug("Extracting decisions...")
+            logger.info("Stage 2/6: Extracting decisions...")
             decisions = self._extract_structured_data(
                 transcript_text,
                 DECISION_PROMPT,
                 "decisions"
             )
             extraction_calls += 1
+            logger.info(f"Stage 2/6 complete: {len(decisions)} decisions")
 
             # Stage 3: Extract topic segments
-            logger.debug("Extracting topic segments...")
+            logger.info("Stage 3/6: Extracting topic segments...")
             topics = self._extract_structured_data(
                 transcript_text,
                 TOPIC_SEGMENTATION_PROMPT,
                 "topics"
             )
             extraction_calls += 1
+            logger.info(f"Stage 3/6 complete: {len(topics)} topics")
 
             # Stage 4: Extract highlights
-            logger.debug("Extracting highlights...")
+            logger.info("Stage 4/6: Extracting highlights...")
             highlights = self._extract_structured_data(
                 transcript_text,
                 HIGHLIGHTS_PROMPT,
                 "highlights"
             )
             extraction_calls += 1
+            logger.info(f"Stage 4/6 complete: {len(highlights)} highlights")
 
             # Stage 5: Extract mentions
-            logger.debug("Extracting mentions...")
+            logger.info("Stage 5/6: Extracting mentions...")
             mentions = self._extract_structured_data(
                 transcript_text,
                 MENTIONS_PROMPT,
                 "mentions"
             )
             extraction_calls += 1
+            logger.info(f"Stage 5/6 complete: {len(mentions)} mentions")
 
             # Stage 6: Generate aggregate narrative summary
-            logger.debug("Generating aggregate summary...")
+            logger.info("Stage 6/6: Generating aggregate summary...")
             aggregate_prompt = AGGREGATE_SUMMARY_PROMPT.format(
                 metadata=self._format_metadata(meeting_metadata),
                 transcript=transcript_text,
@@ -598,6 +603,9 @@ class EnhancedMeetingSummarizer:
 
             content = response["content"].strip()
 
+            # Log the raw response for debugging
+            logger.info(f"Claude response for {extraction_type} (first 500 chars): {content[:500]}")
+
             # Parse JSON response
             try:
                 # Try to extract JSON from markdown code blocks if present
@@ -606,6 +614,18 @@ class EnhancedMeetingSummarizer:
                 elif "```" in content:
                     content = content.split("```")[1].split("```")[0].strip()
 
+                # Remove any leading text before the JSON array
+                # Claude sometimes adds "Here are the action items:" before the JSON
+                if content and not content.startswith('['):
+                    # Find the first '[' character
+                    bracket_index = content.find('[')
+                    if bracket_index != -1:
+                        content = content[bracket_index:]
+                    else:
+                        logger.error(f"NO JSON ARRAY found in response for {extraction_type}")
+                        logger.info(f"Raw response (first 1000 chars): {content[:1000]}")
+                        return []
+
                 data = json.loads(content)
 
                 # Ensure it's a list
@@ -613,16 +633,16 @@ class EnhancedMeetingSummarizer:
                     logger.warning(f"Expected list for {extraction_type}, got {type(data)}")
                     return []
 
-                logger.debug(f"Extracted {len(data)} items for {extraction_type}")
+                logger.info(f"✓ Extracted {len(data)} items for {extraction_type}")
                 return data
 
             except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse JSON for {extraction_type}: {e}")
-                logger.debug(f"Raw response: {content}")
+                logger.error(f"JSON PARSE ERROR for {extraction_type}: {e}")
+                logger.info(f"Raw response (first 1000 chars): {content[:1000]}")
                 return []
 
         except Exception as e:
-            logger.error(f"Failed to extract {extraction_type}: {e}")
+            logger.error(f"EXTRACTION FAILED for {extraction_type}: {e}", exc_info=True)
             return []
 
     def _format_metadata(self, metadata: Dict[str, Any]) -> str:

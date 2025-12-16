@@ -35,26 +35,31 @@ For each action item, provide:
 5. Do NOT include hypothetical or conditional tasks ("if we decide to...")
 
 **Output Format:**
-Return ONLY a valid JSON array with no additional text or markdown formatting:
+You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
 
+Each array element must be a complete JSON object with curly braces {{}}.
+
+Example:
 [
-  {
+  {{
     "description": "Review Q4 budget proposal and provide feedback",
     "assignee": "Sarah Johnson",
     "deadline": "Friday, December 15",
     "context": "Budget needs approval before EOQ planning session next week",
     "timestamp": "12:34"
-  },
-  {
+  }},
+  {{
     "description": "Schedule follow-up meeting with engineering team",
     "assignee": "John Smith",
     "deadline": "This week",
     "context": "Need to discuss API integration timeline and resource allocation",
     "timestamp": "23:45"
-  }
+  }}
 ]
 
-If there are NO action items, return an empty array: []
+If there are NO action items, return exactly: []
+
+Do NOT include any text before or after the JSON array. Start your response with [ and end with ].
 
 **Transcript:**
 {transcript}
@@ -84,26 +89,31 @@ For each decision, provide:
 4. If a decision was reversed or changed, include the FINAL decision only
 
 **Output Format:**
-Return ONLY a valid JSON array with no additional text or markdown formatting:
+You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
 
+Each array element must be a complete JSON object with curly braces {{}}.
+
+Example:
 [
-  {
+  {{
     "decision": "Migrate to microservices architecture for user authentication service",
     "participants": "Sarah Johnson, Mike Chen, Development Team",
     "reasoning": "Current monolith is causing deployment bottlenecks and the auth service is independently scalable",
     "impact": "Will require 6-week refactor but enables faster feature releases and better fault isolation",
     "timestamp": "15:23"
-  },
-  {
+  }},
+  {{
     "decision": "Weekly standup meetings will move to Tuesdays at 10am",
     "participants": "Team consensus",
     "reasoning": "Monday mornings conflict with sprint planning, Tuesday works better for everyone",
     "impact": "Improved attendance and more productive discussions",
     "timestamp": "42:10"
-  }
+  }}
 ]
 
-If there are NO decisions, return an empty array: []
+If there are NO decisions, return exactly: []
+
+Do NOT include any text before or after the JSON array. Start your response with [ and end with ].
 
 **Transcript:**
 {transcript}
@@ -129,10 +139,13 @@ For each topic:
 4. Include opening/closing segments if substantive
 
 **Output Format:**
-Return ONLY a valid JSON array with no additional text or markdown formatting:
+You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
 
+Each array element must be a complete JSON object with curly braces {{}}.
+
+Example:
 [
-  {
+  {{
     "topic": "Project Status Update - Q4 Goals",
     "duration": "00:00 - 08:30",
     "speakers": "Sarah Johnson, Mike Chen",
@@ -143,8 +156,8 @@ Return ONLY a valid JSON array with no additional text or markdown formatting:
       "Marketing campaign ready to launch pending API completion",
       "Proposed adding contractor resources to accelerate API work"
     ]
-  },
-  {
+  }},
+  {{
     "topic": "Budget Planning for Q1 2025",
     "duration": "08:31 - 18:45",
     "speakers": "John Smith, Finance Team",
@@ -155,8 +168,10 @@ Return ONLY a valid JSON array with no additional text or markdown formatting:
       "Marketing to focus on organic growth strategies",
       "Travel budget reduced by 20%"
     ]
-  }
+  }}
 ]
+
+Do NOT include any text before or after the JSON array. Start your response with [ and end with ].
 
 **Transcript:**
 {transcript}
@@ -189,28 +204,33 @@ For each highlight:
 4. Balance positive and negative highlights
 
 **Output Format:**
-Return ONLY a valid JSON array with no additional text or markdown formatting:
+You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
 
+Each array element must be a complete JSON object with curly braces {{}}.
+
+Example:
 [
-  {
+  {{
     "title": "Critical Security Vulnerability Discovered in Payment System",
     "timestamp": "12:45",
     "why_important": "Requires immediate attention to prevent potential data breach. All hands meeting scheduled for tomorrow.",
     "type": "concern"
-  },
-  {
+  }},
+  {{
     "title": "Q4 Revenue Target Exceeded by 23%",
     "timestamp": "03:15",
     "why_important": "Company achieved record quarterly revenue, enabling increased investment in product development.",
     "type": "milestone"
-  },
-  {
+  }},
+  {{
     "title": "Decision to Acquire CompetitorCo Announced",
     "timestamp": "28:30",
     "why_important": "Strategic acquisition will expand market share by 40% and add 50 enterprise customers.",
     "type": "decision"
-  }
+  }}
 ]
+
+Do NOT include any text before or after the JSON array. Start your response with [ and end with ].
 
 **Transcript:**
 {transcript}
@@ -241,33 +261,38 @@ For each mention:
 4. Skip generic references like "the team" or "everyone"
 
 **Output Format:**
-Return ONLY a valid JSON array with no additional text or markdown formatting:
+You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
 
+Each array element must be a complete JSON object with curly braces {{}}.
+
+Example:
 [
-  {
+  {{
     "person": "Sarah Johnson",
     "mentioned_by": "John Smith",
     "context": "Asked to review the Q4 budget proposal by Friday and provide feedback on the infrastructure spending section.",
     "timestamp": "12:34",
     "type": "action_assignment"
-  },
-  {
+  }},
+  {{
     "person": "Mike Chen",
     "mentioned_by": "Sarah Johnson",
     "context": "Recognized for exceptional work on the mobile app launch, which came in ahead of schedule and under budget.",
     "timestamp": "05:20",
     "type": "recognition"
-  },
-  {
+  }},
+  {{
     "person": "Alex Rodriguez",
     "mentioned_by": "John Smith",
     "context": "Asked about the timeline for completing the API integration and whether additional resources are needed.",
     "timestamp": "15:45",
     "type": "question"
-  }
+  }}
 ]
 
-If there are NO mentions, return an empty array: []
+If there are NO mentions, return exactly: []
+
+Do NOT include any text before or after the JSON array. Start your response with [ and end with ].
 
 **Transcript:**
 {transcript}

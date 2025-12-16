@@ -106,6 +106,8 @@ class AppConfig:
     email_enabled: bool = True
     email_from: str = "noreply@townsquaremedia.com"
     teams_chat_enabled: bool = True
+    debug_mode: bool = False  # Debug mode: only send to specific test recipients
+    debug_email_recipients: list = None  # List of emails to send to in debug mode
 
     # Filtering
     minimum_meeting_duration_minutes: int = 5

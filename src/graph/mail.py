@@ -352,12 +352,16 @@ class EmailSender:
 
         # Format start time
         if isinstance(start_time, str):
-            try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                start_time_formatted = dt.strftime("%B %d, %Y at %I:%M %p")
-            except:
+            # If already formatted with timezone (contains EST/EDT), use as-is
+            if " EST" in start_time or " EDT" in start_time:
                 start_time_formatted = start_time
+            else:
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    start_time_formatted = dt.strftime("%B %d, %Y at %I:%M %p")
+                except:
+                    start_time_formatted = start_time
         else:
             start_time_formatted = str(start_time)
 
@@ -466,6 +470,10 @@ class EmailSender:
         .summary li {{
             margin: 8px 0;
         }}
+        .summary strong {{
+            color: #0078d4;
+            font-weight: 700;
+        }}
         .participants {{
             background: #f5f5f5;
             padding: 15px;
@@ -515,20 +523,12 @@ class EmailSender:
         <!-- FEATURE 2: Meeting Statistics -->
         <div class="stats-box">
             <div class="stat">
-                <div class="stat-value">{duration}</div>
-                <div class="stat-label">Minutes</div>
-            </div>
-            <div class="stat">
-                <div class="stat-value">{participant_display}</div>
-                <div class="stat-label">Participants</div>
-            </div>
-            <div class="stat">
                 <div class="stat-value">{speaker_count}</div>
                 <div class="stat-label">Speakers</div>
             </div>
             <div class="stat">
                 <div class="stat-value">{word_count:,}</div>
-                <div class="stat-label">Words</div>
+                <div class="stat-label">Words Spoken</div>
             </div>
         </div>
 
@@ -552,77 +552,90 @@ class EmailSender:
 
 """
 
-        # v2.1: Speaker Breakdown (from transcript stats)
+        # v2.1: Attendees & Participation (merged speaker breakdown + participants)
         speaker_details = transcript_stats.get("speaker_details", []) if transcript_stats else []
-        if speaker_details and len(speaker_details) > 0:
-            html += """        <div class="speaker-breakdown" style="background: #f5f5f5; padding: 15px; margin: 25px 0; border-radius: 4px;">
-            <h3 style="margin-top: 0;">🎤 Speaker Breakdown</h3>
-            <div style="max-height: 300px; overflow-y: auto;">
-                <table style="width: 100%; border-collapse: collapse;">
-                    <thead>
-                        <tr style="background: #e0e0e0; text-align: left;">
-                            <th style="padding: 8px;">Speaker</th>
-                            <th style="padding: 8px; text-align: right;">Time</th>
-                            <th style="padding: 8px; text-align: right;">Words</th>
-                            <th style="padding: 8px; text-align: right;">Share</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-"""
-            # Show top 10 speakers
-            for speaker in speaker_details[:10]:
-                name = speaker.get('name', 'Unknown')
-                duration_min = speaker.get('duration_minutes', 0)
-                words = speaker.get('words', 0)
-                percentage = speaker.get('percentage', 0)
 
-                html += f"""                        <tr style="border-bottom: 1px solid #ddd;">
-                            <td style="padding: 8px;">{name}</td>
-                            <td style="padding: 8px; text-align: right;">{duration_min} min</td>
-                            <td style="padding: 8px; text-align: right;">{words:,}</td>
-                            <td style="padding: 8px; text-align: right;">{percentage}%</td>
-                        </tr>
-"""
+        # Create speaker lookup for quick access
+        speaker_map = {}
+        for speaker in speaker_details:
+            name = speaker.get('name', '').strip()
+            speaker_map[name.lower()] = speaker
 
-            html += """                    </tbody>
-                </table>
+        if participants and len(participants) > 0:
+            html += """        <div class="attendees-section" style="background: #f5f5f5; padding: 15px; margin: 25px 0; border-radius: 4px;">
+            <h3 style="margin-top: 0;">👥 Attendees & Participation</h3>
+"""
+            organizer_email = meeting_metadata.get("organizer_email", "")
+            for p in participants:
+                email = p.get("email", "")
+                name = p.get("display_name", email)
+                is_org = email.lower() == organizer_email.lower()
+                role = " (Organizer)" if is_org else ""
+
+                # Check if this person spoke
+                speaker_data = speaker_map.get(name.lower())
+
+                # Skip people who didn't speak (filter non-attendees)
+                if not speaker_data:
+                    continue
+
+                # Show speaker with bold name
+                html += f"""            <div style="margin-bottom: 10px;">
+                <strong style="color: #0078d4; font-weight: 700;">{name}{role}</strong><br>
+"""
+                duration_min = speaker_data.get('duration_minutes', 0)
+                words = speaker_data.get('words', 0)
+                percentage = speaker_data.get('percentage', 0)
+                html += f"""                <span style="color: #666; font-size: 0.9em;">🎤 Spoke: {duration_min} min ({percentage}% of meeting) | {words:,} words</span>
             </div>
-"""
-            if len(speaker_details) > 10:
-                html += f"""            <p style="font-size: 12px; color: #666; margin-top: 10px; font-style: italic;">Showing top 10 of {len(speaker_details)} speakers</p>
 """
             html += """        </div>
 
 """
 
-        # FEATURE 5: Enhanced Action Items with Structured Data
+        # FEATURE 5: Enhanced Action Items with Structured Data (Grouped by Person)
         if action_items:
+            # Group action items by assignee
+            from collections import defaultdict
+            items_by_person = defaultdict(list)
+            for item in action_items:
+                assignee = item.get("assignee", "Unassigned")
+                items_by_person[assignee].append(item)
+
             html += """        <div class="action-items-callout">
             <h3>✅ Action Items</h3>
-            <ul>
 """
-            for item in action_items:
-                description = item.get("description", "")
-                assignee = item.get("assignee", "Unassigned")
-                deadline = item.get("deadline", "Not specified")
-                timestamp = item.get("timestamp", "")
+            # Display items grouped by person
+            for assignee, items in items_by_person.items():
+                # Person header with bold and color
+                if assignee and assignee != "Unassigned":
+                    html += f"""            <h4 style="color: #0078d4; font-weight: 700; margin-top: 15px; margin-bottom: 8px;">👤 {assignee}</h4>
+            <ul style="margin-top: 0;">
+"""
+                else:
+                    html += """            <h4 style="color: #666; font-weight: 700; margin-top: 15px; margin-bottom: 8px;">👤 Unassigned</h4>
+            <ul style="margin-top: 0;">
+"""
 
-                html += f"""                <li>
+                for item in items:
+                    description = item.get("description", "")
+                    deadline = item.get("deadline", "Not specified")
+                    timestamp = item.get("timestamp", "")
+
+                    html += f"""                <li>
                     <strong>{description}</strong><br>
 """
-                if assignee and assignee != "Unassigned":
-                    html += f"""                    👤 Assigned to: {assignee}<br>
+                    if deadline and deadline != "Not specified":
+                        html += f"""                    📅 Due: {deadline}<br>
 """
-                if deadline and deadline != "Not specified":
-                    html += f"""                    📅 Due: {deadline}<br>
+                    if timestamp:
+                        html += f"""                    🕐 Mentioned at: {timestamp}<br>
 """
-                if timestamp:
-                    html += f"""                    🕐 Mentioned at: {timestamp}<br>
+                    html += """                </li>
 """
-                html += """                </li>
+                html += """            </ul>
 """
-            html += """            </ul>
-        </div>
+            html += """        </div>
 
 """
         elif action_items_html and "None recorded" not in action_items_html:
@@ -653,9 +666,15 @@ class EmailSender:
                     html += f"""                    <em>Why: {reasoning}</em><br>
 """
                 if participants_str:
-                    html += f"""                    👥 Participants: {participants_str}<br>
+                    # Bold and color participant names
+                    import re
+                    # Split by comma and apply styling to each name
+                    names = [name.strip() for name in participants_str.split(',')]
+                    styled_names = [f'<span style="font-weight: 700; color: #0078d4;">{name}</span>' for name in names]
+                    participants_styled = ', '.join(styled_names)
+                    html += f"""                    👥 Participants: {participants_styled}<br>
 """
-                if timestamp:
+                if timestamp and timestamp.upper() != "N/A":
                     html += f"""                    🕐 {timestamp}<br>
 """
                 html += """                </li>
@@ -690,8 +709,13 @@ class EmailSender:
                 else:
                     timestamp_link = timestamp
 
+                # Only show timestamp if available
+                title_with_timestamp = f"<strong>{title}</strong>"
+                if timestamp_link:
+                    title_with_timestamp += f" ({timestamp_link})"
+
                 html += f"""                <li>
-                    <strong>{title}</strong> ({timestamp_link})<br>
+                    {title_with_timestamp}<br>
                     <em>{why_important}</em>
                 </li>
 """
@@ -700,10 +724,10 @@ class EmailSender:
 
 """
 
-        # NEW: Meeting Topics/Agenda Section
+        # NEW: Meeting Topics Section
         if topics:
             html += """        <div class="topics-section" style="background: #f3e5f5; border-left: 4px solid #9c27b0; padding: 15px; margin: 25px 0; border-radius: 4px;">
-            <h3 style="margin-top: 0; color: #6a1b9a;">📋 Meeting Agenda</h3>
+            <h3 style="margin-top: 0; color: #6a1b9a;">📋 Discussion Topics</h3>
 """
             for topic in topics:
                 topic_name = topic.get("topic", "")
@@ -715,7 +739,11 @@ class EmailSender:
                 <strong>{topic_name}</strong> <span style="color: #666;">({duration})</span><br>
 """
                 if speakers:
-                    html += f"""                <small>Speakers: {speakers}</small><br>
+                    # Bold and color speaker names
+                    names = [name.strip() for name in speakers.split(',')]
+                    styled_names = [f'<span style="font-weight: 700; color: #0078d4;">{name}</span>' for name in names]
+                    speakers_styled = ', '.join(styled_names)
+                    html += f"""                <small>Speakers: {speakers_styled}</small><br>
 """
                 if summary_text:
                     html += f"""                <p style="margin: 5px 0;">{summary_text}</p>
@@ -732,29 +760,74 @@ class EmailSender:
         </div>
 """
 
-        # FEATURE 6: Participant List
-        if participants and len(participants) > 0:
-            html += """        <div class="participants">
-            <h3>👥 Participants</h3>
-"""
-            organizer_email = meeting_metadata.get("organizer_email", "")
-            for p in participants:
-                email = p.get("email", "")
-                name = p.get("display_name", email)
-                is_org = email.lower() == organizer_email.lower()
-                role = "Organizer" if is_org else p.get("role", "Attendee")
-                css_class = "organizer" if is_org else ""
-                html += f'            <div class="participant {css_class}">{name} ({role})</div>\n'
-
-            html += """        </div>
-"""
-
         if include_footer:
             html += """        <div class="footer">
             <p>This summary was automatically generated by AI.</p>
             <p>🔗 Access transcript and recording via SharePoint links above (respects Teams permissions)</p>
-            <p>💬 <strong>Manage your preferences:</strong> Reply "@meeting notetaker no emails" in the Teams chat to opt out</p>
-            <p style="color: #999; font-size: 10px;">
+
+            <!-- Email Preferences Section -->
+            <div style="border-top: 2px solid #e0e0e0; margin-top: 40px; padding-top: 25px;
+                        background: #f9f9f9; padding: 20px; border-radius: 4px; font-size: 0.9em;">
+
+                <h3 style="margin-top: 0; color: #333; font-size: 1.1em;">
+                    📧 Email Preferences
+                </h3>
+
+                <div style="margin-bottom: 15px;">
+                    <strong style="color: #0078d4;">For this meeting:</strong><br>
+                    <span style="color: #555;">
+                        Don't want summaries for this meeting? Type in the meeting chat:<br>
+                        <code style="background: white; padding: 2px 6px; border: 1px solid #ddd;
+                                    border-radius: 3px; font-family: monospace; font-size: 0.95em;">
+                            no emails
+                        </code>
+                    </span>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <strong style="color: #0078d4;">For all meetings:</strong><br>
+                    <span style="color: #555;">
+                        Stop receiving all summaries - type in any meeting chat:<br>
+                        <code style="background: white; padding: 2px 6px; border: 1px solid #ddd;
+                                    border-radius: 3px; font-family: monospace; font-size: 0.95em;">
+                            no emails for all meetings
+                        </code>
+                    </span>
+                </div>
+
+                <div style="margin-bottom: 15px;">
+                    <strong style="color: #0078d4;">Changed your mind?</strong><br>
+                    <span style="color: #555;">
+                        Start receiving summaries again - type in any meeting chat:<br>
+                        <code style="background: white; padding: 2px 6px; border: 1px solid #ddd;
+                                    border-radius: 3px; font-family: monospace; font-size: 0.95em;">
+                            enable emails
+                        </code>
+                    </span>
+                </div>
+
+                <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
+
+                <div style="font-size: 0.85em; color: #666;">
+                    <strong>For Meeting Organizers:</strong><br>
+                    <span style="color: #777;">
+                        Disable distribution for a meeting:<br>
+                        <code style="background: white; padding: 2px 6px; border: 1px solid #ddd;
+                                    border-radius: 3px; font-family: monospace; font-size: 0.95em;">
+                            @meeting notetaker disable distribution
+                        </code>
+                    </span>
+                </div>
+
+                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;
+                            font-size: 0.8em; color: #999;">
+                    Questions? Type <code style="background: white; padding: 1px 4px; border: 1px solid #ddd;">
+                    @meeting notetaker help</code> in any meeting chat.
+                </div>
+
+            </div>
+
+            <p style="color: #999; font-size: 10px; margin-top: 20px;">
                 🤖 Generated with <a href="https://claude.com/claude-code">Claude Code</a> | Powered by Teams Meeting Notetaker
             </p>
         </div>
@@ -889,12 +962,16 @@ class EmailSender:
 
         # Format start time
         if isinstance(start_time, str):
-            try:
-                from datetime import datetime
-                dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                start_time_formatted = dt.strftime("%B %d, %Y at %I:%M %p")
-            except:
+            # If already formatted with timezone (contains EST/EDT), use as-is
+            if " EST" in start_time or " EDT" in start_time:
                 start_time_formatted = start_time
+            else:
+                try:
+                    from datetime import datetime
+                    dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+                    start_time_formatted = dt.strftime("%B %d, %Y at %I:%M %p")
+                except:
+                    start_time_formatted = start_time
         else:
             start_time_formatted = str(start_time)
 
@@ -988,8 +1065,11 @@ class EmailSender:
                 timestamp = mention.get("timestamp", "")
                 mention_type = mention.get("type", "")
 
+                # Only show timestamp if available
+                timestamp_display = f" at {timestamp}" if timestamp else ""
+
                 html += f"""                <li>
-                    <strong>{mentioned_by}</strong> at {timestamp}:<br>
+                    <span style="font-weight: 700; color: #000;">{mentioned_by}</span>{timestamp_display}:<br>
                     "{context}"
 """
                 if mention_type == "action_assignment":
@@ -1069,7 +1149,7 @@ class EmailSender:
 
         <div class="footer" style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #e1e1e1; font-size: 12px; color: #666; text-align: center;">
             <p>This personalized summary was generated just for you.</p>
-            <p>💬 Reply "@meeting notetaker no emails" in Teams to opt out of future summaries</p>
+            
             <p style="color: #999; font-size: 10px;">
                 🤖 Generated with Claude Code | Powered by Teams Meeting Notetaker
             </p>

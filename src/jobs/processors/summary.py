@@ -67,9 +67,25 @@ class SummaryProcessor(BaseProcessor):
         """
         super().__init__(db, config)
 
-        # Initialize Claude client and enhanced summarizer
+        # Initialize Claude client
         self.claude_client = ClaudeClient(config.claude)
-        self.summarizer = EnhancedMeetingSummarizer(config.claude)
+
+        # ALL-SONNET APPROACH: Use Sonnet 4.5 for all 6 calls (extraction + aggregate)
+        # Prioritizes QUALITY over cost savings for accurate, detailed summaries
+        # Cost: ~$0.12/meeting vs $0.055/meeting hybrid (but much better quality)
+
+        from ...core.config import ClaudeConfig
+
+        # Use Sonnet 4.5 for both extraction and aggregate
+        sonnet_config = ClaudeConfig(
+            api_key=config.claude.api_key,
+            model="claude-sonnet-4-5-20250929",  # Frontier model for best quality
+            max_tokens=config.claude.max_tokens,
+            temperature=config.claude.temperature
+        )
+
+        # Initialize enhanced summarizer with Sonnet 4.5 for all calls
+        self.summarizer = EnhancedMeetingSummarizer(sonnet_config, sonnet_config)
 
     async def process(self, job) -> Dict[str, Any]:
         """

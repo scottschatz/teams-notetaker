@@ -16,6 +16,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     CheckConstraint,
+    UniqueConstraint,
     DECIMAL,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -111,6 +112,11 @@ class Meeting(Base):
 
     # Chat monitoring (NEW)
     last_chat_check = Column(DateTime)  # When we last checked chat for commands
+
+    # Distribution control (NEW - Opt-in/opt-out system)
+    distribution_enabled = Column(Boolean, default=True)  # Organizer can disable email distribution
+    distribution_disabled_by = Column(String(255))  # Email of person who disabled distribution
+    distribution_disabled_at = Column(DateTime)  # When distribution was disabled
 
     # Discovery metadata
     discovered_at = Column(DateTime, default=func.now(), index=True)
@@ -498,6 +504,34 @@ class UserPreference(Base):
 
     def __repr__(self):
         return f"<UserPreference(email='{self.user_email}', receive={self.receive_emails})>"
+
+
+class MeetingPreference(Base):
+    """
+    Per-meeting email preferences for users.
+
+    Allows users to opt in/out of specific meetings while maintaining their
+    global preference. Per-meeting preferences override global preferences.
+    """
+    __tablename__ = "meeting_preferences"
+
+    id = Column(Integer, primary_key=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_email = Column(String(255), nullable=False, index=True)
+    receive_emails = Column(Boolean, nullable=False)
+    updated_by = Column(String(50), default="user")  # 'user', 'organizer', or 'system'
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('meeting_id', 'user_email', name='uq_meeting_user_pref'),
+        Index('idx_meeting_prefs_meeting', 'meeting_id'),
+        Index('idx_meeting_prefs_email', 'user_email'),
+        Index('idx_meeting_prefs_lookup', 'meeting_id', 'user_email'),
+    )
+
+    def __repr__(self):
+        return f"<MeetingPreference(meeting_id={self.meeting_id}, email='{self.user_email}', receive={self.receive_emails})>"
 
 
 class ProcessedChatMessage(Base):

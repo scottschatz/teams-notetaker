@@ -19,7 +19,11 @@ class CommandType(Enum):
     """Supported command types."""
     EMAIL_ME = "email_me"  # Send personalized email to requesting user
     EMAIL_ALL = "email_all"  # Send standard email to all participants (organizer only)
-    NO_EMAILS = "no_emails"  # Opt out of email summaries
+    NO_EMAILS = "no_emails"  # Opt out of THIS meeting (per-meeting preference)
+    NO_EMAILS_GLOBAL = "no_emails_global"  # Opt out of ALL meetings (global preference)
+    ENABLE_EMAILS = "enable_emails"  # Re-enable emails globally (opt back in)
+    DISABLE_DISTRIBUTION = "disable_distribution"  # Organizer disables distribution for meeting
+    ENABLE_DISTRIBUTION = "enable_distribution"  # Organizer re-enables distribution for meeting
     SUMMARIZE_AGAIN = "summarize_again"  # Re-generate summary with custom instructions
     EMOJI_REACTION = "emoji_reaction"  # 📧 emoji reaction
     UNKNOWN = "unknown"  # Unrecognized command
@@ -88,6 +92,7 @@ class ChatCommandParser:
     ]
 
     # Command patterns
+    # IMPORTANT: Order matters! Check more specific patterns first (NO_EMAILS_GLOBAL before NO_EMAILS)
     COMMAND_PATTERNS = {
         CommandType.EMAIL_ME: [
             r"email\s+me",
@@ -101,12 +106,45 @@ class ChatCommandParser:
             r"send\s+to\s+all",
             r"send\s+everyone",
         ],
+        # Global opt-out (check BEFORE NO_EMAILS)
+        CommandType.NO_EMAILS_GLOBAL: [
+            r"no\s+emails?\s+(all\s+meetings?|globally?|forever)",
+            r"global\s+opt\s+out",
+            r"opt\s+out\s+(all|globally?|forever)",
+            r"stop\s+all\s+emails?",
+            r"unsubscribe\s+(from\s+)?(all|everything|globally?)",
+        ],
+        # Per-meeting opt-out (default behavior)
         CommandType.NO_EMAILS: [
-            r"no\s+emails?",
-            r"opt\s+out",
-            r"unsubscribe",
-            r"stop\s+emails?",
-            r"don'?t\s+email\s+me",
+            r"no\s+emails?(?!\s+(all|globally?|forever))",  # Negative lookahead
+            r"opt\s+out(?!\s+(all|globally?))",
+            r"stop\s+emails?(?!\s+(all|globally?))",
+            r"unsubscribe(?!\s+(all|everything|globally?))",
+            r"don'?t\s+(send\s+me\s+)?(email|emails?)",
+        ],
+        # Global opt-in (re-enable emails)
+        CommandType.ENABLE_EMAILS: [
+            r"enable\s+emails?",
+            r"opt\s+in",
+            r"start\s+emails?",
+            r"subscribe",
+            r"re-?enable\s+emails?",
+            r"turn\s+on\s+emails?",
+        ],
+        # Organizer: disable distribution for entire meeting
+        CommandType.DISABLE_DISTRIBUTION: [
+            r"disable\s+distribution",
+            r"no\s+emails?\s+for\s+(anyone|everyone|this\s+meeting)",
+            r"stop\s+distribution",
+            r"disable\s+auto\s+send",
+            r"no\s+auto\s+emails?",
+        ],
+        # Organizer: re-enable distribution for meeting
+        CommandType.ENABLE_DISTRIBUTION: [
+            r"enable\s+distribution",
+            r"start\s+distribution",
+            r"re-?enable\s+auto\s+send",
+            r"turn\s+on\s+distribution",
         ],
         CommandType.SUMMARIZE_AGAIN: [
             r"summarize\s+again",
@@ -367,10 +405,14 @@ class ChatCommandParser:
 - Or react with 📧 emoji to any summary message
 
 **Manage Email Preferences:**
-- `@meeting notetaker no emails` - Opt out of automatic email summaries
+- `@meeting notetaker no emails` - Opt out of THIS meeting's emails
+- `@meeting notetaker no emails all meetings` - Opt out of ALL meeting emails
+- `@meeting notetaker enable emails` - Re-enable meeting emails globally
 
 **Organizer Commands:**
 - `@meeting notetaker email all` - Send summary to all participants
+- `@meeting notetaker disable distribution` - Disable emails for entire meeting
+- `@meeting notetaker enable distribution` - Re-enable emails for meeting
 
 **Re-Summarize Meeting:**
 - `@meeting notetaker summarize again [instructions]`

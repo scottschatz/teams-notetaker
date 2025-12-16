@@ -38,13 +38,17 @@ class ClaudeClient:
         )
     """
 
-    # Model pricing (per million tokens) - as of Jan 2025
-    # Source: https://www.anthropic.com/api-pricing
+    # Model pricing (per million tokens) - as of Dec 2025
+    # Source: https://platform.claude.com/docs/en/about-claude/models/overview
     MODEL_PRICING = {
-        "claude-opus-4-20250514": {"input": 15.00, "output": 75.00},
+        # Latest Claude 4.5 models
+        "claude-sonnet-4-5-20250929": {"input": 3.00, "output": 15.00},
+        "claude-haiku-4-5-20251001": {"input": 1.00, "output": 5.00},
+        "claude-opus-4-5-20251101": {"input": 5.00, "output": 25.00},
+        # Legacy models
         "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
+        "claude-3-5-haiku-20241022": {"input": 0.80, "output": 4.00},
         "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
-        "claude-haiku-4-20250301": {"input": 0.80, "output": 4.00},
     }
 
     def __init__(self, config: ClaudeConfig):
@@ -65,10 +69,11 @@ class ClaudeClient:
         user_prompt: str,
         max_tokens: Optional[int] = None,
         temperature: float = 1.0,
-        stop_sequences: Optional[List[str]] = None
+        stop_sequences: Optional[List[str]] = None,
+        cache_prefix: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Generate text completion using Claude API.
+        Generate text completion using Claude API with optional prompt caching.
 
         Args:
             system_prompt: System prompt (role/instructions)
@@ -76,6 +81,10 @@ class ClaudeClient:
             max_tokens: Maximum tokens to generate (default from config)
             temperature: Sampling temperature (0.0-1.0, default 1.0)
             stop_sequences: Optional stop sequences
+            cache_prefix: Optional prefix to cache (e.g., transcript). If provided,
+                         user_prompt will be split into: [cache_prefix] + [remaining].
+                         The cache_prefix will be marked for caching (5min TTL).
+                         Saves 90% on input costs for subsequent calls.
 
         Returns:
             Dictionary with:
@@ -84,8 +93,10 @@ class ClaudeClient:
                 - output_tokens: Number of output tokens
                 - total_tokens: Total tokens used
                 - model: Model used
-                - cost: Estimated cost in USD
+                - cost: Estimated cost in USD (accounts for cache savings)
                 - stop_reason: Why generation stopped
+                - cache_creation_tokens: Tokens written to cache (first call)
+                - cache_read_tokens: Tokens read from cache (subsequent calls)
 
         Raises:
             ClaudeAPIError: If API request fails
@@ -96,7 +107,33 @@ class ClaudeClient:
             if max_tokens is None:
                 max_tokens = self.config.max_tokens
 
-            logger.info(f"Generating text with {self.config.model} (max_tokens: {max_tokens}, temp: {temperature})")
+            # Build messages array with optional caching
+            if cache_prefix:
+                # Split prompt: cacheable prefix + dynamic suffix
+                # The prefix (transcript) gets cached, suffix (instructions) doesn't
+                suffix = user_prompt.replace(cache_prefix, "", 1).strip()
+
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": cache_prefix,
+                                "cache_control": {"type": "ephemeral"}  # Cache for 5 min
+                            },
+                            {
+                                "type": "text",
+                                "text": suffix
+                            }
+                        ]
+                    }
+                ]
+                logger.info(f"Generating with PROMPT CACHING (prefix: {len(cache_prefix)} chars)")
+            else:
+                # No caching - simple string message
+                messages = [{"role": "user", "content": user_prompt}]
+                logger.info(f"Generating text with {self.config.model} (max_tokens: {max_tokens}, temp: {temperature})")
 
             # Make API request
             start_time = datetime.now()
@@ -105,9 +142,7 @@ class ClaudeClient:
                 max_tokens=max_tokens,
                 temperature=temperature,
                 system=system_prompt,
-                messages=[
-                    {"role": "user", "content": user_prompt}
-                ],
+                messages=messages,
                 stop_sequences=stop_sequences
             )
             duration_ms = int((datetime.now() - start_time).total_seconds() * 1000)
@@ -119,13 +154,37 @@ class ClaudeClient:
             total_tokens = input_tokens + output_tokens
             stop_reason = response.stop_reason
 
-            # Calculate cost
-            cost = self._calculate_cost(input_tokens, output_tokens, self.config.model)
+            # Extract cache usage stats (if available)
+            cache_creation_tokens = getattr(response.usage, 'cache_creation_input_tokens', 0)
+            cache_read_tokens = getattr(response.usage, 'cache_read_input_tokens', 0)
 
-            logger.info(
-                f"✓ Generated {output_tokens} tokens in {duration_ms}ms "
-                f"(input: {input_tokens}, total: {total_tokens}, cost: ${cost:.4f}, stop: {stop_reason})"
+            # Calculate cost (accounting for cache savings)
+            cost = self._calculate_cost(
+                input_tokens,
+                output_tokens,
+                self.config.model,
+                cache_creation_tokens=cache_creation_tokens,
+                cache_read_tokens=cache_read_tokens
             )
+
+            # Log with cache stats if applicable
+            if cache_read_tokens > 0:
+                logger.info(
+                    f"✓ Generated {output_tokens} tokens in {duration_ms}ms "
+                    f"(input: {input_tokens}, cached: {cache_read_tokens}, "
+                    f"cost: ${cost:.4f}, stop: {stop_reason}) [CACHE HIT]"
+                )
+            elif cache_creation_tokens > 0:
+                logger.info(
+                    f"✓ Generated {output_tokens} tokens in {duration_ms}ms "
+                    f"(input: {input_tokens}, cached: {cache_creation_tokens}, "
+                    f"cost: ${cost:.4f}, stop: {stop_reason}) [CACHE WRITE]"
+                )
+            else:
+                logger.info(
+                    f"✓ Generated {output_tokens} tokens in {duration_ms}ms "
+                    f"(input: {input_tokens}, total: {total_tokens}, cost: ${cost:.4f}, stop: {stop_reason})"
+                )
 
             return {
                 "content": content,
@@ -135,7 +194,9 @@ class ClaudeClient:
                 "model": self.config.model,
                 "cost": cost,
                 "stop_reason": stop_reason,
-                "generation_time_ms": duration_ms
+                "generation_time_ms": duration_ms,
+                "cache_creation_tokens": cache_creation_tokens,
+                "cache_read_tokens": cache_read_tokens
             }
 
         except AnthropicRateLimitError as e:
@@ -235,22 +296,48 @@ class ClaudeClient:
             logger.error(f"Unexpected error in streaming: {e}", exc_info=True)
             raise ClaudeAPIError(f"Streaming error: {e}")
 
-    def _calculate_cost(self, input_tokens: int, output_tokens: int, model: str) -> float:
+    def _calculate_cost(
+        self,
+        input_tokens: int,
+        output_tokens: int,
+        model: str,
+        cache_creation_tokens: int = 0,
+        cache_read_tokens: int = 0
+    ) -> float:
         """
-        Calculate estimated cost in USD.
+        Calculate estimated cost in USD, accounting for prompt caching.
 
         Args:
-            input_tokens: Number of input tokens
+            input_tokens: Number of regular input tokens
             output_tokens: Number of output tokens
             model: Model name
+            cache_creation_tokens: Tokens written to cache (same price as input)
+            cache_read_tokens: Tokens read from cache (90% discount)
 
         Returns:
             Cost in USD
+
+        Notes:
+            Prompt caching pricing (as of Dec 2025):
+            - Cache writes: Same as regular input ($3.00/MTok for Sonnet 4.5)
+            - Cache reads: 90% discount ($0.30/MTok for Sonnet 4.5)
+            - Cache TTL: 5 minutes
         """
         pricing = self.MODEL_PRICING.get(model, {"input": 3.00, "output": 15.00})
-        input_cost = (input_tokens / 1_000_000) * pricing["input"]
+
+        # Regular input tokens
+        regular_input_cost = (input_tokens / 1_000_000) * pricing["input"]
+
+        # Cache creation (writes) - same price as input
+        cache_write_cost = (cache_creation_tokens / 1_000_000) * pricing["input"]
+
+        # Cache reads - 90% discount (10% of normal price)
+        cache_read_cost = (cache_read_tokens / 1_000_000) * (pricing["input"] * 0.10)
+
+        # Output tokens - always full price
         output_cost = (output_tokens / 1_000_000) * pricing["output"]
-        return input_cost + output_cost
+
+        return regular_input_cost + cache_write_cost + cache_read_cost + output_cost
 
     def count_tokens(self, text: str) -> int:
         """

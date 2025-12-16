@@ -406,17 +406,27 @@ class EnhancedMeetingSummarizer:
         print(f"Total cost: ${result.metadata.total_cost:.4f}")
     """
 
-    def __init__(self, config: ClaudeConfig):
+    def __init__(self, config: ClaudeConfig, aggregate_config: Optional[ClaudeConfig] = None):
         """
         Initialize enhanced summarizer.
 
         Args:
-            config: ClaudeConfig with API key and model settings
+            config: ClaudeConfig for extraction tasks (action items, decisions, etc.)
+            aggregate_config: Optional separate config for aggregate summary (if None, uses same as config)
         """
         self.config = config
-        self.client = ClaudeClient(config)
+        self.extraction_client = ClaudeClient(config)
 
-        logger.info(f"EnhancedMeetingSummarizer initialized (model: {config.model})")
+        # Use separate config for aggregate summary if provided (hybrid approach)
+        if aggregate_config:
+            self.aggregate_client = ClaudeClient(aggregate_config)
+            logger.info(
+                f"EnhancedMeetingSummarizer initialized (HYBRID MODE: "
+                f"extraction={config.model}, aggregate={aggregate_config.model})"
+            )
+        else:
+            self.aggregate_client = self.extraction_client
+            logger.info(f"EnhancedMeetingSummarizer initialized (model: {config.model})")
 
     def generate_enhanced_summary(
         self,
@@ -520,7 +530,8 @@ class EnhancedMeetingSummarizer:
             if custom_instructions:
                 aggregate_prompt += f"\n\n**Special Instructions from User:**\n{custom_instructions}"
 
-            response = self.client.generate_text(
+            # Use aggregate client (may be different model in hybrid mode)
+            response = self.aggregate_client.generate_text(
                 system_prompt=SUMMARY_SYSTEM_PROMPT,
                 user_prompt=aggregate_prompt,
                 max_tokens=EXTRACTION_TOKEN_LIMITS["aggregate"],
@@ -575,7 +586,7 @@ class EnhancedMeetingSummarizer:
         extraction_type: str
     ) -> List[Dict[str, Any]]:
         """
-        Extract structured data using a prompt template.
+        Extract structured data using a prompt template with prompt caching.
 
         Args:
             transcript_text: Formatted transcript
@@ -584,21 +595,33 @@ class EnhancedMeetingSummarizer:
 
         Returns:
             List of extracted items (parsed from JSON response)
+
+        Notes:
+            Uses prompt caching to reduce costs by 90% for calls 2-6.
+            The transcript (static, ~34K tokens) is cached, while extraction
+            instructions (dynamic, ~500 tokens) are not cached.
         """
         try:
-            # Format prompt
-            prompt = prompt_template.format(transcript=transcript_text)
+            # Extract instructions from template (everything except {transcript})
+            # Most templates have format: INSTRUCTIONS + "**Transcript:**\n{transcript}"
+            instructions = prompt_template.replace("{transcript}", "").strip()
+
+            # Build prompt with transcript FIRST (required for caching)
+            # Structure: [TRANSCRIPT - CACHED] + [INSTRUCTIONS - NOT CACHED]
+            cache_prefix = f"**Meeting Transcript:**\n\n{transcript_text}\n\n"
+            user_prompt = cache_prefix + f"**Task:**\n\n{instructions}"
 
             # Get token limit and temperature for this extraction type
             max_tokens = EXTRACTION_TOKEN_LIMITS.get(extraction_type, 1000)
             temperature = EXTRACTION_TEMPERATURE.get(extraction_type, 0.3)
 
-            # Call Claude API
-            response = self.client.generate_text(
+            # Call Claude API with prompt caching
+            response = self.extraction_client.generate_text(
                 system_prompt="You are an expert meeting analyst. Extract structured data accurately from transcripts. You MUST return ONLY valid, well-formed JSON. Ensure all strings are properly quoted and terminated. Ensure all JSON objects have matching braces. Double-check your JSON syntax before responding. Return NOTHING except the JSON array.",
-                user_prompt=prompt,
+                user_prompt=user_prompt,
                 max_tokens=max_tokens,
-                temperature=temperature
+                temperature=temperature,
+                cache_prefix=cache_prefix  # Enable caching for transcript
             )
 
             content = response["content"].strip()
@@ -638,7 +661,26 @@ class EnhancedMeetingSummarizer:
 
             except json.JSONDecodeError as e:
                 logger.error(f"JSON PARSE ERROR for {extraction_type}: {e}")
-                logger.info(f"Raw response (first 1000 chars): {content[:1000]}")
+
+                # Try JSON repair - fix common issues
+                try:
+                    import re
+
+                    # Log the problematic content
+                    logger.info(f"Attempting JSON repair...")
+                    logger.info(f"Problematic content (first 2000 chars): {content[:2000]}")
+
+                    # Try to fix unterminated strings by closing the array
+                    if content.startswith('[') and not content.rstrip().endswith(']'):
+                        content_fixed = content.rstrip().rstrip(',') + ']'
+                        data = json.loads(content_fixed)
+                        logger.info(f"✓ JSON repaired by closing array - extracted {len(data)} items")
+                        return data if isinstance(data, list) else []
+
+                except Exception as repair_error:
+                    logger.error(f"JSON repair failed: {repair_error}")
+
+                logger.info(f"Returning empty list for {extraction_type}")
                 return []
 
         except Exception as e:

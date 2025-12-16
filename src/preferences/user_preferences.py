@@ -9,7 +9,7 @@ import logging
 from typing import Optional, List
 from datetime import datetime
 
-from ..core.database import DatabaseManager, UserPreference
+from ..core.database import DatabaseManager, UserPreference, MeetingPreference, Meeting
 
 
 logger = logging.getLogger(__name__)
@@ -298,3 +298,176 @@ class PreferenceManager:
         except Exception as e:
             logger.error(f"Error deleting preference for {email}: {e}", exc_info=True)
             return False
+
+    # ========================================================================
+    # MEETING-SPECIFIC PREFERENCES (NEW - Opt-in/opt-out system)
+    # ========================================================================
+
+    def get_meeting_preference(self, email: str, meeting_id: int) -> Optional[bool]:
+        """
+        Get user's preference for a specific meeting.
+
+        Args:
+            email: User email address
+            meeting_id: Meeting database ID
+
+        Returns:
+            True if user wants emails for this meeting
+            False if user opted out of this meeting
+            None if no per-meeting preference set (use global preference)
+
+        Per-meeting preferences override global preferences.
+        """
+        try:
+            email = email.lower().strip()
+
+            with self.db.get_session() as session:
+                pref = session.query(MeetingPreference).filter_by(
+                    user_email=email,
+                    meeting_id=meeting_id
+                ).first()
+
+                if pref:
+                    logger.debug(
+                        f"Per-meeting preference for {email} in meeting {meeting_id}: "
+                        f"receive_emails={pref.receive_emails}"
+                    )
+                    return pref.receive_emails
+
+                logger.debug(f"No per-meeting preference for {email} in meeting {meeting_id}")
+                return None  # No per-meeting preference set
+
+        except Exception as e:
+            logger.error(f"Error getting meeting preference for {email} in meeting {meeting_id}: {e}")
+            return None
+
+    def set_meeting_preference(
+        self,
+        email: str,
+        meeting_id: int,
+        receive_emails: bool,
+        updated_by: str = "user"
+    ) -> bool:
+        """
+        Set user's preference for a specific meeting.
+
+        Args:
+            email: User email address
+            meeting_id: Meeting database ID
+            receive_emails: True to receive emails, False to opt out
+            updated_by: Who updated the preference ('user', 'organizer', 'system')
+
+        Returns:
+            True if successfully saved
+
+        Creates new preference record if one doesn't exist, updates if it does.
+        Per-meeting preferences override global preferences.
+        """
+        try:
+            email = email.lower().strip()
+
+            with self.db.get_session() as session:
+                pref = session.query(MeetingPreference).filter_by(
+                    user_email=email,
+                    meeting_id=meeting_id
+                ).first()
+
+                if pref:
+                    # Update existing preference
+                    pref.receive_emails = receive_emails
+                    pref.updated_by = updated_by
+                    pref.updated_at = datetime.now()
+
+                    logger.info(
+                        f"Updated per-meeting preference for {email} in meeting {meeting_id}: "
+                        f"receive_emails={receive_emails} (by {updated_by})"
+                    )
+                else:
+                    # Create new preference
+                    pref = MeetingPreference(
+                        meeting_id=meeting_id,
+                        user_email=email,
+                        receive_emails=receive_emails,
+                        updated_by=updated_by
+                    )
+                    session.add(pref)
+
+                    logger.info(
+                        f"Created per-meeting preference for {email} in meeting {meeting_id}: "
+                        f"receive_emails={receive_emails} (by {updated_by})"
+                    )
+
+                session.commit()
+                return True
+
+        except Exception as e:
+            logger.error(
+                f"Error setting meeting preference for {email} in meeting {meeting_id}: {e}",
+                exc_info=True
+            )
+            return False
+
+    def should_send_email(self, email: str, meeting_id: int) -> bool:
+        """
+        Determine if user should receive email for this meeting using priority logic.
+
+        Priority order (highest to lowest):
+        1. Meeting-level distribution control (organizer can disable for entire meeting)
+        2. Per-meeting user preference (user opts out of specific meeting)
+        3. Global user preference (user opts out of all meetings)
+        4. Default (opt-in - send emails)
+
+        Args:
+            email: User email address
+            meeting_id: Meeting database ID
+
+        Returns:
+            True if user should receive email, False otherwise
+
+        This is the main method to use when determining whether to send an email.
+        It checks all preference levels in the correct priority order.
+        """
+        try:
+            email = email.lower().strip()
+
+            # 1. Check if organizer disabled distribution for this meeting
+            with self.db.get_session() as session:
+                meeting = session.query(Meeting).filter_by(id=meeting_id).first()
+
+                if not meeting:
+                    logger.warning(f"Meeting {meeting_id} not found, defaulting to opt-in")
+                    return True
+
+                if not meeting.distribution_enabled:
+                    logger.info(
+                        f"Distribution disabled for meeting {meeting_id} by organizer "
+                        f"({meeting.distribution_disabled_by}), skipping {email}"
+                    )
+                    return False
+
+            # 2. Check per-meeting preference (highest user priority)
+            meeting_pref = self.get_meeting_preference(email, meeting_id)
+            if meeting_pref is not None:
+                logger.debug(
+                    f"Using per-meeting preference for {email} in meeting {meeting_id}: "
+                    f"{meeting_pref}"
+                )
+                return meeting_pref
+
+            # 3. Check global preference
+            global_pref = self.get_user_preference(email)
+            logger.debug(
+                f"Using global preference for {email}: {global_pref}"
+            )
+            return global_pref
+
+            # Note: get_user_preference() returns True by default if no preference set
+            # So we don't need an explicit "4. Default: opt-in" case
+
+        except Exception as e:
+            logger.error(
+                f"Error checking if should send email to {email} for meeting {meeting_id}: {e}",
+                exc_info=True
+            )
+            # On error, default to sending emails (fail-open)
+            return True

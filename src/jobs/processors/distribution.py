@@ -17,6 +17,7 @@ from ...core.database import (
     Distribution, Summary, Meeting, MeetingParticipant, Transcript
 )
 from ...core.exceptions import EmailSendError, TeamsChatPostError, DistributionError
+from ...preferences.user_preferences import PreferenceManager
 
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,9 @@ class DistributionProcessor(BaseProcessor):
         self.email_sender = EmailSender(self.graph_client)
         self.chat_poster = TeamsChatPoster(self.graph_client)
 
+        # Initialize preference manager (for opt-in/opt-out filtering)
+        self.pref_manager = PreferenceManager(db)
+
     async def process(self, job) -> Dict[str, Any]:
         """
         Process distribute job.
@@ -114,14 +118,52 @@ class DistributionProcessor(BaseProcessor):
                 f"Found {len(participant_emails)} participant email(s)"
             )
 
+            # Filter by preferences using priority logic (opt-in/opt-out system)
+            filtered_emails = []
+            for email in participant_emails:
+                if self.pref_manager.should_send_email(email, meeting_id):
+                    filtered_emails.append(email)
+                else:
+                    logger.debug(f"Skipping {email} based on preferences")
+
+            participant_emails = filtered_emails
+
+            self._log_progress(
+                job,
+                f"After filtering preferences: {len(participant_emails)} opted-in recipient(s)"
+            )
+
+            if not participant_emails:
+                self._log_progress(
+                    job,
+                    "No opted-in participants, skipping email distribution",
+                    "warning"
+                )
+                # Note: Still post to chat below, just don't send emails
+
             # Build meeting metadata with SharePoint URLs
+            # Convert times to Eastern timezone for display
+            import pytz
+            eastern = pytz.timezone('America/New_York')
+
+            start_time_eastern = ""
+            end_time_eastern = ""
+            if meeting.start_time:
+                # Database stores times as naive datetimes in UTC - add UTC timezone first
+                start_utc = meeting.start_time.replace(tzinfo=pytz.UTC) if meeting.start_time.tzinfo is None else meeting.start_time
+                start_time_eastern = start_utc.astimezone(eastern).strftime("%a, %b %d, %Y at %I:%M %p %Z")
+            if meeting.end_time:
+                # Database stores times as naive datetimes in UTC - add UTC timezone first
+                end_utc = meeting.end_time.replace(tzinfo=pytz.UTC) if meeting.end_time.tzinfo is None else meeting.end_time
+                end_time_eastern = end_utc.astimezone(eastern).strftime("%a, %b %d, %Y at %I:%M %p %Z")
+
             meeting_metadata = {
                 "meeting_id": meeting.id,
                 "subject": meeting.subject,
                 "organizer_name": meeting.organizer_name,
                 "organizer_email": meeting.organizer_email,
-                "start_time": meeting.start_time.isoformat() if meeting.start_time else "",
-                "end_time": meeting.end_time.isoformat() if meeting.end_time else "",
+                "start_time": start_time_eastern,
+                "end_time": end_time_eastern,
                 "duration_minutes": meeting.duration_minutes,
                 "participant_count": meeting.participant_count,
                 "join_url": meeting.join_url or "",
@@ -211,57 +253,88 @@ class DistributionProcessor(BaseProcessor):
             # THEN send email (if enabled)
             if self.config.app.email_enabled:
                 try:
-                    self._log_progress(job, f"Sending email to {len(participant_emails)} recipients")
+                    # DEBUG MODE: Filter recipients if debug_mode is enabled
+                    if hasattr(self.config.app, 'debug_mode') and self.config.app.debug_mode:
+                        if hasattr(self.config.app, 'debug_email_recipients') and self.config.app.debug_email_recipients:
+                            original_count = len(participant_emails)
+                            participant_emails = [
+                                email for email in participant_emails
+                                if email in self.config.app.debug_email_recipients
+                            ]
+                            self._log_progress(
+                                job,
+                                f"⚠️ DEBUG MODE: Filtered {original_count} recipients to {len(participant_emails)} debug recipients",
+                                "warning"
+                            )
+                        else:
+                            self._log_progress(job, "⚠️ DEBUG MODE enabled but no debug recipients configured, skipping email", "warning")
+                            participant_emails = []
 
-                    from_email = self.config.app.email_from or "noreply@townsquaremedia.com"
+                    if not participant_emails:
+                        self._log_progress(job, "No email recipients after filtering", "warning")
+                        email_sent = False
+                    else:
+                        self._log_progress(job, f"Sending email to {len(participant_emails)} recipients")
 
-                    # TODO: Check user preferences before sending
-                    # For now, send to all participants
-                    # In Sprint 4, we'll add: email_recipients = self._filter_by_preferences(participant_emails)
+                        from_email = self.config.app.email_from or "noreply@townsquaremedia.com"
 
-                    # Format participants list for email template (deduplicated by email)
-                    seen_emails = set()
-                    participants_dict = []
-                    for p in participants:
-                        email_lower = p.email.lower() if p.email else ""
-                        if email_lower and email_lower not in seen_emails:
-                            participants_dict.append({
-                                "email": p.email,
-                                "display_name": p.display_name,
-                                "role": p.role
-                            })
-                            seen_emails.add(email_lower)
+                        # Format participants list for email template (deduplicated by email)
+                        seen_emails = set()
+                        participants_dict = []
+                        for p in participants:
+                            email_lower = p.email.lower() if p.email else ""
+                            if email_lower and email_lower not in seen_emails:
+                                participants_dict.append({
+                                    "email": p.email,
+                                    "display_name": p.display_name,
+                                    "role": p.role
+                                })
+                                seen_emails.add(email_lower)
 
-                    email_message_id = self.email_sender.send_meeting_summary(
-                        from_email=from_email,
-                        to_emails=participant_emails,
-                        subject=f"Meeting Summary: {meeting.subject}",
-                        summary_markdown=summary.summary_text,
-                        meeting_metadata=meeting_metadata,
-                        enhanced_summary_data=enhanced_summary_data,  # NEW: Enhanced data
-                        transcript_content=None,  # REMOVED: Using SharePoint links instead
-                        participants=participants_dict,
-                        transcript_stats=transcript_stats,
-                        include_footer=True
-                    )
+                        # Format meeting time in Eastern timezone for subject
+                        import pytz
+                        eastern = pytz.timezone('America/New_York')
 
-                    email_sent = True
+                        # Convert UTC to Eastern
+                        if meeting.start_time:
+                            # Database stores times as naive datetimes in UTC - add UTC timezone first
+                            start_utc = meeting.start_time.replace(tzinfo=pytz.UTC) if meeting.start_time.tzinfo is None else meeting.start_time
+                            meeting_time_eastern = start_utc.astimezone(eastern)
+                            # Format: "Mon, Dec 16 at 10:00 AM EST"
+                            time_str = meeting_time_eastern.strftime("%a, %b %d at %I:%M %p %Z")
+                        else:
+                            time_str = "Unknown Time"
 
-                    self._log_progress(job, f"✓ Email sent successfully (message_id: {email_message_id})")
-
-                    # Create distribution records for each recipient
-                    for recipient_email in participant_emails:
-                        dist = Distribution(
-                            meeting_id=meeting_id,
-                            summary_id=summary.id,
-                            distribution_type="email",
-                            recipient=recipient_email,
-                            status="sent",
-                            message_id=email_message_id,
-                            sent_at=datetime.now()
+                        email_message_id = self.email_sender.send_meeting_summary(
+                            from_email=from_email,
+                            to_emails=participant_emails,
+                            subject=f"Meeting Summary: {meeting.subject} ({time_str})",
+                            summary_markdown=summary.summary_text,
+                            meeting_metadata=meeting_metadata,
+                            enhanced_summary_data=enhanced_summary_data,  # NEW: Enhanced data
+                            transcript_content=None,  # REMOVED: Using SharePoint links instead
+                            participants=participants_dict,
+                            transcript_stats=transcript_stats,
+                            include_footer=True
                         )
-                        session.add(dist)
-                        distribution_results.append("email")
+
+                        email_sent = True
+
+                        self._log_progress(job, f"✓ Email sent successfully (message_id: {email_message_id})")
+
+                        # Create distribution records for each recipient
+                        for recipient_email in participant_emails:
+                            dist = Distribution(
+                                meeting_id=meeting_id,
+                                summary_id=summary.id,
+                                distribution_type="email",
+                                recipient=recipient_email,
+                                status="sent",
+                                message_id=email_message_id,
+                                sent_at=datetime.now()
+                            )
+                            session.add(dist)
+                            distribution_results.append("email")
 
                 except EmailSendError as e:
                     self._log_progress(job, f"Email sending failed: {e}", "error")

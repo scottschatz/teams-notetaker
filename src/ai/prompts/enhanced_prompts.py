@@ -25,7 +25,7 @@ For each action item, provide:
 - **assignee**: Person responsible (full name if mentioned, or "Unassigned" if unclear)
 - **deadline**: Due date or timeframe (if mentioned, or "Not specified")
 - **context**: Why this task is needed (1-2 sentences of background)
-- **timestamp**: When it was mentioned in the meeting (format: MM:SS)
+- **timestamp**: When it was mentioned in the meeting (format: H:MM:SS)
 
 **Important Guidelines:**
 1. Only include EXPLICIT action items (not general discussions)
@@ -46,14 +46,14 @@ Example:
     "assignee": "Sarah Johnson",
     "deadline": "Friday, December 15",
     "context": "Budget needs approval before EOQ planning session next week",
-    "timestamp": "12:34"
+    "timestamp": "0:12:34"
   }},
   {{
     "description": "Schedule follow-up meeting with engineering team",
     "assignee": "John Smith",
     "deadline": "This week",
     "context": "Need to discuss API integration timeline and resource allocation",
-    "timestamp": "23:45"
+    "timestamp": "0:23:45"
   }}
 ]
 
@@ -100,14 +100,14 @@ Example:
     "participants": "Sarah Johnson, Mike Chen, Development Team",
     "reasoning": "Current monolith is causing deployment bottlenecks and the auth service is independently scalable",
     "impact": "Will require 6-week refactor but enables faster feature releases and better fault isolation",
-    "timestamp": "15:23"
+    "timestamp": "0:15:23"
   }},
   {{
     "decision": "Weekly standup meetings will move to Tuesdays at 10am",
     "participants": "Team consensus",
     "reasoning": "Monday mornings conflict with sprint planning, Tuesday works better for everyone",
     "impact": "Improved attendance and more productive discussions",
-    "timestamp": "42:10"
+    "timestamp": "0:42:10"
   }}
 ]
 
@@ -190,19 +190,19 @@ Example:
 [
   {{
     "title": "Critical Security Vulnerability Discovered in Payment System",
-    "timestamp": "12:45",
+    "timestamp": "0:12:45",
     "why_important": "Requires immediate attention to prevent potential data breach. All hands meeting scheduled for tomorrow.",
     "type": "concern"
   }},
   {{
     "title": "Q4 Revenue Target Exceeded by 23%",
-    "timestamp": "03:15",
+    "timestamp": "0:03:15",
     "why_important": "Company achieved record quarterly revenue, enabling increased investment in product development.",
     "type": "milestone"
   }},
   {{
     "title": "Decision to Acquire CompetitorCo Announced",
-    "timestamp": "28:30",
+    "timestamp": "0:28:30",
     "why_important": "Strategic acquisition will expand market share by 40% and add 50 enterprise customers.",
     "type": "decision"
   }}
@@ -238,21 +238,21 @@ Example:
     "person": "Sarah Johnson",
     "mentioned_by": "John Smith",
     "context": "Asked to review the Q4 budget proposal by Friday and provide feedback on the infrastructure spending section.",
-    "timestamp": "12:34",
+    "timestamp": "0:12:34",
     "type": "action_assignment"
   }},
   {{
     "person": "Mike Chen",
     "mentioned_by": "Sarah Johnson",
     "context": "Recognized for exceptional work on the mobile app launch, which came in ahead of schedule and under budget.",
-    "timestamp": "05:20",
+    "timestamp": "0:05:20",
     "type": "recognition"
   }},
   {{
     "person": "Alex Rodriguez",
     "mentioned_by": "John Smith",
     "context": "Asked about the timeline for completing the API integration and whether additional resources are needed.",
-    "timestamp": "15:45",
+    "timestamp": "0:15:45",
     "type": "question"
   }}
 ]
@@ -324,6 +324,7 @@ Create a markdown summary with these sections:
 - Be concise but specific (aim for 400-600 words total)
 - Use professional business language
 - Include specific names, numbers, and dates from the transcript
+- **IMPORTANT: Bold all participant names** using markdown syntax (e.g., **Scott Schatz**, **Joe Ainsworth**)
 - Reference the extracted data but don't just list it
 - Maintain an objective, factual tone
 
@@ -383,14 +384,15 @@ def format_transcript_for_extraction(segments: list) -> str:
     for segment in segments:
         speaker = segment.get("speaker", "Unknown")
         text = segment.get("text", "")
-        start_time = segment.get("start_time", 0)
+        start_seconds = segment.get("start_seconds", 0)  # VTT parser uses 'start_seconds'
 
-        # Convert seconds to MM:SS format
-        minutes = int(start_time / 60)
-        seconds = int(start_time % 60)
-        timestamp = f"{minutes:02d}:{seconds:02d}"
+        # Convert seconds to H:MM:SS format (matching transcript display)
+        hours = int(start_seconds / 3600)
+        minutes = int((start_seconds % 3600) / 60)
+        seconds = int(start_seconds % 60)
+        timestamp = f"{hours}:{minutes:02d}:{seconds:02d}"
 
-        # Format: [MM:SS] Speaker: Text
+        # Format: [H:MM:SS] Speaker: Text
         lines.append(f"[{timestamp}] {speaker}: {text}")
 
     return "\n".join(lines)
@@ -403,7 +405,7 @@ def format_transcript_for_extraction(segments: list) -> str:
 # Token limits for different extraction types
 EXTRACTION_TOKEN_LIMITS = {
     "action_items": 1500,      # Expect 5-20 action items (increased to prevent truncation)
-    "decisions": 1000,         # Expect 3-10 decisions (increased for safety)
+    "decisions": 1500,         # Expect 3-10 decisions (increased to prevent truncation)
     "topics": 800,             # Expect 3-5 topics with short summaries
     "highlights": 800,         # Expect 3-5 highlights
     "mentions": 1000,          # Expect up to 10 mentions
@@ -412,10 +414,10 @@ EXTRACTION_TOKEN_LIMITS = {
 
 # Temperature settings (lower = more focused, higher = more creative)
 EXTRACTION_TEMPERATURE = {
-    "action_items": 0.3,       # Very focused - we want accurate extraction
-    "decisions": 0.3,          # Very focused
-    "topics": 0.5,             # Slightly more creative for summarization
-    "highlights": 0.4,         # Focused but allow some judgment
+    "action_items": 0.2,       # Very focused - JSON compliance critical
+    "decisions": 0.2,          # Very focused - JSON compliance critical
+    "topics": 0.3,             # Focused for structured output
+    "highlights": 0.3,         # Focused for structured output
     "mentions": 0.2,           # Very focused - accuracy critical
     "aggregate": 0.7           # More creative for narrative writing
 }

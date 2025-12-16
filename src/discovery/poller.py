@@ -67,7 +67,7 @@ class MeetingPoller:
         # Initialize components
         self.discovery = MeetingDiscovery(self.graph_client)
         self.queue = JobQueueManager(self.db)
-        self.filter = MeetingFilter(self.db, config)
+        self.filter = MeetingFilter(self.db, config, self.graph_client)
 
         # Initialize chat monitoring components (Sprint 4)
         self.chat_parser = ChatCommandParser()

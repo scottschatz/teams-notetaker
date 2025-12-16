@@ -7,14 +7,16 @@ First processor in the job chain (fetch_transcript → generate_summary → dist
 
 import logging
 from typing import Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from ..processors.base import BaseProcessor, register_processor
 from ...graph.client import GraphAPIClient
 from ...graph.transcripts import TranscriptFetcher
 from ...utils.vtt_parser import parse_vtt, get_transcript_metadata, format_transcript_for_summary
-from ...core.database import Transcript
+from ...core.database import Transcript, Meeting, ProcessedChatMessage
 from ...core.exceptions import TranscriptNotFoundError, GraphAPIError
+from ...chat.command_parser import ChatCommandParser, CommandType
+from ...preferences.user_preferences import PreferenceManager
 
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,10 @@ class TranscriptProcessor(BaseProcessor):
         # Initialize Graph API client (use beta for getAllTranscripts)
         self.graph_client = GraphAPIClient(config.graph_api, use_beta=True)
         self.transcript_fetcher = TranscriptFetcher(self.graph_client)
+
+        # Initialize command parser and preference manager (for opt-in/opt-out system)
+        self.command_parser = ChatCommandParser()
+        self.pref_manager = PreferenceManager(db)
 
     async def process(self, job) -> Dict[str, Any]:
         """
@@ -276,6 +282,9 @@ class TranscriptProcessor(BaseProcessor):
 
             self._log_progress(job, f"✓ Transcript saved to database (id: {transcript_id})")
 
+            # Check chat for preference commands (opt-in/opt-out system)
+            await self._check_chat_for_commands(meeting)
+
             return self._create_output_data(
                 success=True,
                 message=f"Transcript fetched and parsed successfully ({word_count} words, {speaker_count} speakers)",
@@ -311,3 +320,266 @@ class TranscriptProcessor(BaseProcessor):
         except Exception as e:
             self._log_progress(job, f"Failed to fetch transcript: {e}", "error")
             raise
+
+    # ========================================================================
+    # COMMAND CHECKING (OPT-IN/OPT-OUT SYSTEM)
+    # ========================================================================
+
+    async def _check_chat_for_commands(self, meeting: Meeting):
+        """
+        Check meeting chat for preference commands.
+
+        Called after transcript is fetched, checks chat messages from last 48 hours
+        for opt-in/opt-out commands and processes them silently.
+
+        Args:
+            meeting: Meeting object with chat_id
+        """
+        if not meeting.chat_id:
+            logger.debug(f"No chat_id for meeting {meeting.id}, skipping command check")
+            return
+
+        try:
+            logger.info(f"Checking chat messages for commands in meeting {meeting.id}")
+
+            # Get recent messages from chat (last 48 hours to catch commands)
+            since = datetime.now() - timedelta(hours=48)
+
+            # Get chat messages using Graph API
+            messages = self._get_chat_messages(meeting.chat_id, since)
+
+            if not messages:
+                logger.debug(f"No chat messages found for meeting {meeting.id}")
+                return
+
+            logger.info(f"Found {len(messages)} chat messages to check for commands")
+
+            commands_processed = 0
+
+            for message in messages:
+                message_id = message.get("id")
+                if not message_id:
+                    continue
+
+                # Skip if already processed
+                if self._is_command_processed(message_id):
+                    continue
+
+                # Extract message details
+                body = message.get("body", {})
+                message_text = body.get("content", "")
+
+                # Skip empty messages
+                if not message_text or not message_text.strip():
+                    continue
+
+                sender = message.get("from", {})
+                user = sender.get("user", {})
+                user_email = user.get("userPrincipalName", "")
+                user_name = user.get("displayName", "Unknown")
+
+                # Skip messages with no user info
+                if not user_email:
+                    continue
+
+                # Parse command
+                command = self.command_parser.parse_command(
+                    message_text=message_text,
+                    message_id=message_id,
+                    chat_id=meeting.chat_id,
+                    user_email=user_email,
+                    user_name=user_name
+                )
+
+                if command and command.is_valid:
+                    # Process command immediately (inline, not queued)
+                    await self._process_command_inline(command, meeting)
+                    commands_processed += 1
+
+                    # Mark as processed
+                    self._mark_command_processed(
+                        message_id,
+                        meeting.chat_id,
+                        command.command_type.value
+                    )
+
+            if commands_processed > 0:
+                logger.info(
+                    f"Processed {commands_processed} preference command(s) for meeting {meeting.id}"
+                )
+
+        except Exception as e:
+            logger.error(f"Error checking chat for commands: {e}", exc_info=True)
+            # Don't fail the whole job if command checking fails
+            pass
+
+    def _get_chat_messages(self, chat_id: str, since: datetime) -> list:
+        """
+        Get chat messages from Teams chat.
+
+        Args:
+            chat_id: Teams chat thread ID
+            since: Only get messages after this datetime
+
+        Returns:
+            List of message objects from Graph API
+        """
+        try:
+            # Use Graph API to get chat messages
+            endpoint = f"/chats/{chat_id}/messages"
+
+            # Get messages (Graph API returns newest first)
+            messages = []
+            response = self.graph_client.get(endpoint)
+
+            if response and "value" in response:
+                for msg in response["value"]:
+                    # Check message timestamp
+                    created_str = msg.get("createdDateTime", "")
+                    if created_str:
+                        created_dt = datetime.fromisoformat(created_str.replace("Z", "+00:00"))
+                        if created_dt >= since:
+                            messages.append(msg)
+
+            return messages
+
+        except Exception as e:
+            logger.error(f"Error getting chat messages for {chat_id}: {e}", exc_info=True)
+            return []
+
+    async def _process_command_inline(self, command, meeting: Meeting):
+        """
+        Process command immediately without queuing.
+
+        Handles preference commands silently (no chat confirmations).
+
+        Args:
+            command: Parsed Command object
+            meeting: Meeting object
+        """
+        try:
+            if command.command_type == CommandType.NO_EMAILS:
+                # Per-meeting opt-out
+                self.pref_manager.set_meeting_preference(
+                    email=command.user_email,
+                    meeting_id=meeting.id,
+                    receive_emails=False,
+                    updated_by="user"
+                )
+                logger.info(
+                    f"User {command.user_email} opted out of meeting {meeting.id}"
+                )
+
+            elif command.command_type == CommandType.NO_EMAILS_GLOBAL:
+                # Global opt-out
+                self.pref_manager.set_user_preference(
+                    email=command.user_email,
+                    receive_emails=False,
+                    updated_by="user"
+                )
+                logger.info(
+                    f"User {command.user_email} globally opted out"
+                )
+
+            elif command.command_type == CommandType.ENABLE_EMAILS:
+                # Global opt-in
+                self.pref_manager.set_user_preference(
+                    email=command.user_email,
+                    receive_emails=True,
+                    updated_by="user"
+                )
+                logger.info(
+                    f"User {command.user_email} globally opted in"
+                )
+
+            elif command.command_type == CommandType.DISABLE_DISTRIBUTION:
+                # Organizer disables distribution
+                if command.user_email.lower() == meeting.organizer_email.lower():
+                    with self.db.get_session() as session:
+                        db_meeting = session.query(Meeting).filter_by(id=meeting.id).first()
+                        if db_meeting:
+                            db_meeting.distribution_enabled = False
+                            db_meeting.distribution_disabled_by = command.user_email
+                            db_meeting.distribution_disabled_at = datetime.now()
+                            session.commit()
+                    logger.info(
+                        f"Organizer {command.user_email} disabled distribution "
+                        f"for meeting {meeting.id}"
+                    )
+                else:
+                    logger.warning(
+                        f"Non-organizer {command.user_email} tried to disable distribution "
+                        f"for meeting {meeting.id} (organizer: {meeting.organizer_email})"
+                    )
+
+            elif command.command_type == CommandType.ENABLE_DISTRIBUTION:
+                # Organizer re-enables distribution
+                if command.user_email.lower() == meeting.organizer_email.lower():
+                    with self.db.get_session() as session:
+                        db_meeting = session.query(Meeting).filter_by(id=meeting.id).first()
+                        if db_meeting:
+                            db_meeting.distribution_enabled = True
+                            db_meeting.distribution_disabled_by = None
+                            db_meeting.distribution_disabled_at = None
+                            session.commit()
+                    logger.info(
+                        f"Organizer {command.user_email} re-enabled distribution "
+                        f"for meeting {meeting.id}"
+                    )
+                else:
+                    logger.warning(
+                        f"Non-organizer {command.user_email} tried to enable distribution "
+                        f"for meeting {meeting.id} (organizer: {meeting.organizer_email})"
+                    )
+
+        except Exception as e:
+            logger.error(f"Error processing command inline: {e}", exc_info=True)
+
+    def _is_command_processed(self, message_id: str) -> bool:
+        """
+        Check if chat message has already been processed.
+
+        Args:
+            message_id: Teams message ID
+
+        Returns:
+            True if already processed, False otherwise
+        """
+        try:
+            with self.db.get_session() as session:
+                exists = session.query(ProcessedChatMessage).filter_by(
+                    message_id=message_id
+                ).first()
+                return exists is not None
+        except Exception as e:
+            logger.error(f"Error checking if message processed: {e}")
+            return False
+
+    def _mark_command_processed(
+        self,
+        message_id: str,
+        chat_id: str,
+        command_type: str
+    ):
+        """
+        Mark chat message as processed to prevent duplicate processing.
+
+        Args:
+            message_id: Teams message ID
+            chat_id: Teams chat thread ID
+            command_type: Type of command that was processed
+        """
+        try:
+            with self.db.get_session() as session:
+                processed = ProcessedChatMessage(
+                    message_id=message_id,
+                    chat_id=chat_id,
+                    command_type=command_type,
+                    result="success",
+                    processed_at=datetime.now()
+                )
+                session.add(processed)
+                session.commit()
+                logger.debug(f"Marked message {message_id} as processed ({command_type})")
+        except Exception as e:
+            logger.error(f"Error marking message as processed: {e}", exc_info=True)

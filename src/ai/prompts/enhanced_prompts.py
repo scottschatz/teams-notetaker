@@ -33,6 +33,7 @@ For each action item, provide:
 3. If multiple people discuss the same task, choose the primary assignee
 4. Include both immediate tasks and follow-up items
 5. Do NOT include hypothetical or conditional tasks ("if we decide to...")
+6. **CRITICAL: Bold all participant names in the description and context fields using **Name** markdown syntax**
 
 **Output Format:**
 You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
@@ -42,17 +43,17 @@ Each array element must be a complete JSON object with curly braces {{}}.
 Example:
 [
   {{
-    "description": "Review Q4 budget proposal and provide feedback",
+    "description": "Review Q4 budget proposal and provide feedback to **Sarah Johnson**",
     "assignee": "Sarah Johnson",
     "deadline": "Friday, December 15",
-    "context": "Budget needs approval before EOQ planning session next week",
+    "context": "Budget needs approval before EOQ planning session next week with **Mike Chen**",
     "timestamp": "0:12:34"
   }},
   {{
-    "description": "Schedule follow-up meeting with engineering team",
+    "description": "**John Smith** to schedule follow-up meeting with engineering team",
     "assignee": "John Smith",
     "deadline": "This week",
-    "context": "Need to discuss API integration timeline and resource allocation",
+    "context": "Need to discuss API integration timeline and resource allocation with **Sarah Johnson**",
     "timestamp": "0:23:45"
   }}
 ]
@@ -67,7 +68,7 @@ Do NOT include any text before or after the JSON array. Start your response with
 
 
 DECISION_PROMPT = """
-Identify all significant DECISIONS made during this meeting.
+Identify the 8-10 MOST SIGNIFICANT DECISIONS made during this meeting.
 
 A decision is a conclusive choice or resolution that the team agreed upon. Look for:
 - Explicit agreements ("let's go with...", "we've decided to...", "agreed")
@@ -77,16 +78,19 @@ A decision is a conclusive choice or resolution that the team agreed upon. Look 
 
 For each decision, provide:
 - **decision**: What was decided (clear, specific statement)
-- **participants**: Who was involved in making the decision (names)
-- **reasoning**: Why this decision was made (key factors or arguments)
-- **impact**: What this decision affects or enables
+- **rationale_one_line**: Brief reason for the decision (max 10 words)
+- **reasoning**: Why this decision was made (key factors or arguments, 1-2 sentences)
+- **impact**: What this decision affects or enables (1 sentence)
 - **timestamp**: When the decision was made (format: MM:SS)
 
 **Important Guidelines:**
-1. Only include FINAL decisions, not discussions or proposals
-2. Distinguish between decisions vs. suggestions vs. possibilities
-3. Include both major strategic decisions and minor tactical ones
-4. If a decision was reversed or changed, include the FINAL decision only
+1. PRIORITIZE by importance - limit to the 8-10 MOST IMPACTFUL decisions
+2. Only include FINAL decisions, not discussions or proposals
+3. Distinguish between decisions vs. suggestions vs. possibilities
+4. Include both major strategic decisions and minor tactical ones
+5. If a decision was reversed or changed, include the FINAL decision only
+6. Focus on decisions with business impact, not procedural ones
+7. **CRITICAL: Bold all participant names in the decision, rationale_one_line, reasoning, and impact fields using **Name** markdown syntax**
 
 **Output Format:**
 You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
@@ -96,17 +100,17 @@ Each array element must be a complete JSON object with curly braces {{}}.
 Example:
 [
   {{
-    "decision": "Migrate to microservices architecture for user authentication service",
-    "participants": "Sarah Johnson, Mike Chen, Development Team",
-    "reasoning": "Current monolith is causing deployment bottlenecks and the auth service is independently scalable",
-    "impact": "Will require 6-week refactor but enables faster feature releases and better fault isolation",
+    "decision": "**Scott Schatz** approved building in-house AI call summary solution",
+    "rationale_one_line": "Avoids Ignite license costs",
+    "reasoning": "Ignite requested expensive licenses but **Scott** decided internal solution provides more control and customization",
+    "impact": "Saves licensing costs while enabling **Joe Ainsworth** to customize features for company needs",
     "timestamp": "0:15:23"
   }},
   {{
-    "decision": "Weekly standup meetings will move to Tuesdays at 10am",
-    "participants": "Team consensus",
-    "reasoning": "Monday mornings conflict with sprint planning, Tuesday works better for everyone",
-    "impact": "Improved attendance and more productive discussions",
+    "decision": "Approve $600K Danbury-Shreveport market swap with Cumulus",
+    "rationale_one_line": "Strategic market consolidation per **Bill Jones**",
+    "reasoning": "**Eric Williams** and Cumulus proposed swap that could improve market position despite **Bill's** cash flow concerns",
+    "impact": "Changes market portfolio but **Bill Jones** requires careful CapEx analysis before finalizing",
     "timestamp": "0:42:10"
   }}
 ]
@@ -157,14 +161,13 @@ Do NOT include any text before or after the JSON array. Start your response with
 
 
 HIGHLIGHTS_PROMPT = """
-Identify 3-5 KEY MOMENTS from this meeting that should be highlighted.
+Identify the 5-8 MOST IMPORTANT KEY MOMENTS from this meeting.
 
-These are the most important, impactful, or memorable moments that someone should know about.
+These are the most impactful, memorable, or critical moments that someone should know about.
 
 For each highlight:
-- **title**: Brief descriptive title (5-10 words)
+- **description**: Single-line summary of what happened (max 20 words, no verbose context)
 - **timestamp**: When it occurred (format: MM:SS)
-- **why_important**: Why this moment matters (1-2 sentences)
 - **type**: Category of highlight (use one of: decision, action_item, insight, milestone, concern, question)
 
 **What to Look For:**
@@ -173,13 +176,17 @@ For each highlight:
 - Important insights or realizations ("aha moments")
 - Concerns or risks raised
 - Milestones achieved or celebrated
+- Financial or strategic discussions
 - Questions that need follow-up
 
 **Important Guidelines:**
-1. Select the MOST impactful moments (aim for 3-5, not more than 7)
-2. These should be moments someone would want to jump to in a recording
-3. Prioritize items with business impact
-4. Balance positive and negative highlights
+1. LIMIT to 5-8 entries (quality over quantity)
+2. Prioritize by business impact and importance
+3. Keep descriptions CONCISE (single line, no paragraphs)
+4. These should be moments someone would want to jump to in a recording
+5. Balance positive and negative highlights
+6. Skip procedural or minor moments
+7. **CRITICAL: Bold all participant names in the description field using **Name** markdown syntax**
 
 **Output Format:**
 You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
@@ -189,22 +196,29 @@ Each array element must be a complete JSON object with curly braces {{}}.
 Example:
 [
   {{
-    "title": "Critical Security Vulnerability Discovered in Payment System",
-    "timestamp": "0:12:45",
-    "why_important": "Requires immediate attention to prevent potential data breach. All hands meeting scheduled for tomorrow.",
+    "description": "**Scott Schatz** decided to build in-house AI solution instead of paying for Ignite licenses",
+    "timestamp": "0:03:15",
+    "type": "decision"
+  }},
+  {{
+    "description": "**Scott** approved immediate termination of **James Tejada** and underperforming NY engineer",
+    "timestamp": "0:06:45",
+    "type": "action_item"
+  }},
+  {{
+    "description": "$600K Danbury cash flow at risk in potential Cumulus market swap deal raised by **Bill Jones**",
+    "timestamp": "0:14:20",
     "type": "concern"
   }},
   {{
-    "title": "Q4 Revenue Target Exceeded by 23%",
-    "timestamp": "0:03:15",
-    "why_important": "Company achieved record quarterly revenue, enabling increased investment in product development.",
+    "description": "Trade revenue hit $3.8M this year versus typical $1M baseline announced by **Eric Williams**",
+    "timestamp": "0:22:10",
     "type": "milestone"
   }},
   {{
-    "title": "Decision to Acquire CompetitorCo Announced",
-    "timestamp": "0:28:30",
-    "why_important": "Strategic acquisition will expand market share by 40% and add 50 enterprise customers.",
-    "type": "decision"
+    "description": "Teams/VoIP migration completing mid-January, enabling corporate cost reductions per **Scott**",
+    "timestamp": "0:35:30",
+    "type": "insight"
   }}
 ]
 
@@ -266,6 +280,73 @@ Do NOT include any text before or after the JSON array. Start your response with
 """
 
 
+KEY_NUMBERS_PROMPT = """
+Extract all quantifiable metrics and numbers mentioned in this meeting.
+
+For each number provide:
+- **value**: The numeric value with appropriate formatting (e.g., "$4M", "40%", "15 days")
+- **unit**: Type of unit (dollars, percent, count, days, etc.)
+- **context**: Brief description of what this number represents (max 15 words)
+- **magnitude**: Numeric value for sorting (e.g., 4000000 for "$4M", 40 for "40%")
+
+**What to Extract:**
+- Dollar amounts ($1M, $338K, $4.5M, etc.)
+- Percentages (40% reduction, 82% of budget, etc.)
+- Quantities (5 participants, 3 meetings, 10 engineers, etc.)
+- Time periods (15 days, 6 weeks, 2 months, etc.)
+- Metrics (50% growth, 3x increase, 200 users, etc.)
+
+**Important Guidelines:**
+1. Extract ALL significant numbers mentioned (financial, operational, metrics)
+2. Round approximate values appropriately (e.g., "$1M" not "$1,000,000")
+3. Include context that makes the number meaningful
+4. Sort by magnitude (largest to smallest) or logical grouping
+5. Maximum 20 entries (prioritize most important)
+6. Skip trivial numbers (page numbers, timestamps, percentages under 5%)
+7. **CRITICAL: Bold all participant names in the context field using **Name** markdown syntax**
+
+**Output Format:**
+You MUST return ONLY a valid JSON array. No explanatory text before or after. No markdown code blocks.
+
+Each array element must be a complete JSON object with curly braces {{}}.
+
+Example:
+[
+  {{
+    "value": "$4M",
+    "unit": "dollars",
+    "context": "**Eric Williams'** identified savings from broadcast personnel cuts",
+    "magnitude": 4000000
+  }},
+  {{
+    "value": "$3.8M",
+    "unit": "dollars",
+    "context": "Trade revenue approved this year by **Scott Schatz** vs $1M baseline",
+    "magnitude": 3800000
+  }},
+  {{
+    "value": "40%",
+    "unit": "percent",
+    "context": "Adobe licensing reduction target identified by **Bill Jones**",
+    "magnitude": 40
+  }},
+  {{
+    "value": "70%",
+    "unit": "percent",
+    "context": "**Scott's** understanding level of **Edwin's** technical explanation",
+    "magnitude": 70
+  }}
+]
+
+If there are NO significant numbers, return exactly: []
+
+Do NOT include any text before or after the JSON array. Start your response with [ and end with ].
+
+**Transcript:**
+{transcript}
+"""
+
+
 # ============================================================================
 # STAGE 2: AGGREGATION PROMPT
 # ============================================================================
@@ -277,11 +358,12 @@ You have already extracted structured data from the meeting:
 - Action items with assignees and deadlines
 - Key decisions with reasoning
 - Topic segments with summaries
-- Important highlights
+- Important highlights (key moments)
 - Person mentions
+- Key numbers (financial/quantitative metrics)
 
 Now create a cohesive narrative summary that:
-1. Provides a clear overview of what was discussed
+1. Provides a clear, scannable overview of what was discussed
 2. Highlights the most important outcomes
 3. Maintains a professional, objective tone
 4. Includes specific details (numbers, names, dates)
@@ -295,43 +377,44 @@ Now create a cohesive narrative summary that:
 - Decisions: {decisions_count} decisions
 - Topics: {topics_count} topics discussed
 - Highlights: {highlights_count} key moments
+- Key Numbers: {key_numbers_count} metrics
 - Mentions: {mentions_count} person mentions
 
 **Instructions:**
-Create a markdown summary with these sections:
+Create a markdown summary with these TWO sections:
 
-1. **## Executive Summary** (2-3 paragraphs)
-   - What was the meeting about?
-   - What were the main outcomes?
-   - What are the next steps?
+1. **## Executive Summary**
+   - **Length varies by meeting complexity:**
+     - SHORT meetings (<30 min, <5 participants): 50-60 words (2-3 sentences)
+     - MEDIUM meetings (30-45 min, 5-8 participants): 75-90 words (3-4 sentences)
+     - COMPLEX meetings (60+ min, 8+ participants, financial decisions): 100-125 words (4-5 sentences)
+   - What was the meeting about + main outcomes + key takeaways
+   - Written for someone with 10 seconds to scan
+   - Focus on WHAT HAPPENED and WHY IT MATTERS
+   - No bullet points - just prose
 
-2. **## Key Outcomes**
-   - List the most important results (decisions + critical action items)
-   - Use bullet points, be specific
-
-3. **## Discussion Overview**
-   - Narrative summary of the main discussions
-   - Reference the topic segments
-   - Include important context and reasoning
-
-4. **## Next Steps**
-   - Forward-looking action items
-   - Dependencies or blockers
-   - Follow-up meetings needed
+2. **## Discussion Notes** (300 words maximum)
+   - Consolidated narrative summary organized by THEME (not chronologically)
+   - Include 2-3 thematic subheadings (e.g., **Cost Savings**, **Personnel Decisions**, **Strategic Initiatives**)
+   - Reference the topic segments and extracted data
+   - Include important context, reasoning, and background
+   - Written in past tense for someone who missed the meeting
+   - No bullet points within paragraphs (narrative flow)
 
 **Important Guidelines:**
 - Write in past tense (the meeting already happened)
-- Be concise but specific (aim for 400-600 words total)
 - Use professional business language
 - Include specific names, numbers, and dates from the transcript
 - **IMPORTANT: Bold all participant names** using markdown syntax (e.g., **Scott Schatz**, **Joe Ainsworth**)
+- Bold the thematic subheadings in Discussion Notes using markdown (**Subheading**)
 - Reference the extracted data but don't just list it
 - Maintain an objective, factual tone
+- DO NOT include "Key Outcomes" or "Next Steps" sections (those are handled elsewhere)
 
 **Transcript:**
 {transcript}
 
-**Now write the summary:**
+**Now write the summary with the two sections above (Executive Summary + Discussion Notes):**
 """
 
 
@@ -344,7 +427,7 @@ def get_prompt_for_extraction_type(extraction_type: str) -> str:
     Get the appropriate prompt template for an extraction type.
 
     Args:
-        extraction_type: One of: action_items, decisions, topics, highlights, mentions
+        extraction_type: One of: action_items, decisions, topics, highlights, mentions, key_numbers
 
     Returns:
         Prompt template string
@@ -357,7 +440,8 @@ def get_prompt_for_extraction_type(extraction_type: str) -> str:
         "decisions": DECISION_PROMPT,
         "topics": TOPIC_SEGMENTATION_PROMPT,
         "highlights": HIGHLIGHTS_PROMPT,
-        "mentions": MENTIONS_PROMPT
+        "mentions": MENTIONS_PROMPT,
+        "key_numbers": KEY_NUMBERS_PROMPT
     }
 
     if extraction_type not in prompts:
@@ -407,9 +491,10 @@ EXTRACTION_TOKEN_LIMITS = {
     "action_items": 1500,      # Expect 5-20 action items (increased to prevent truncation)
     "decisions": 1500,         # Expect 3-10 decisions (increased to prevent truncation)
     "topics": 800,             # Expect 3-5 topics with short summaries
-    "highlights": 800,         # Expect 3-5 highlights
+    "highlights": 800,         # Expect 5-8 highlights (limited for scannability)
     "mentions": 1000,          # Expect up to 10 mentions
-    "aggregate": 2000          # Full summary
+    "key_numbers": 1200,       # Expect up to 20 numeric metrics
+    "aggregate": 2000          # Full summary (Executive Summary + Discussion Notes)
 }
 
 # Temperature settings (lower = more focused, higher = more creative)
@@ -419,5 +504,6 @@ EXTRACTION_TEMPERATURE = {
     "topics": 0.3,             # Focused for structured output
     "highlights": 0.3,         # Focused for structured output
     "mentions": 0.2,           # Very focused - accuracy critical
+    "key_numbers": 0.2,        # Very focused - numeric accuracy critical
     "aggregate": 0.7           # More creative for narrative writing
 }

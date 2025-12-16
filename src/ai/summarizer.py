@@ -29,6 +29,7 @@ from ..ai.prompts.enhanced_prompts import (
     TOPIC_SEGMENTATION_PROMPT,
     HIGHLIGHTS_PROMPT,
     MENTIONS_PROMPT,
+    KEY_NUMBERS_PROMPT,
     AGGREGATE_SUMMARY_PROMPT,
     format_transcript_for_extraction,
     EXTRACTION_TOKEN_LIMITS,
@@ -350,6 +351,7 @@ class EnhancedSummary:
         topics: List of topic segments
         highlights: List of key moments
         mentions: List of person mentions
+        key_numbers: List of extracted quantitative metrics
         metadata: Summary generation metadata
     """
     overall_summary: str  # Markdown narrative
@@ -358,6 +360,7 @@ class EnhancedSummary:
     topics: List[Dict[str, Any]]
     highlights: List[Dict[str, Any]]
     mentions: List[Dict[str, Any]]
+    key_numbers: List[Dict[str, Any]]
     metadata: SummaryMetadata
 
     def to_dict(self) -> Dict[str, Any]:
@@ -369,6 +372,7 @@ class EnhancedSummary:
             "topics": self.topics,
             "highlights": self.highlights,
             "mentions": self.mentions,
+            "key_numbers": self.key_numbers,
             "metadata": asdict(self.metadata)
         }
 
@@ -377,13 +381,14 @@ class EnhancedMeetingSummarizer:
     """
     Multi-stage meeting summarizer with structured data extraction.
 
-    Uses 6 separate Claude API calls:
+    Uses 7 separate Claude API calls:
     1. Extract action items
     2. Extract decisions
     3. Extract topic segments
     4. Extract highlights
     5. Extract mentions
-    6. Generate aggregate narrative summary
+    6. Extract key numbers (financial/quantitative metrics)
+    7. Generate aggregate narrative summary
 
     This approach provides:
     - More accurate structured data extraction
@@ -403,6 +408,7 @@ class EnhancedMeetingSummarizer:
 
         print(result.overall_summary)
         print(f"Found {len(result.action_items)} action items")
+        print(f"Found {len(result.key_numbers)} metrics")
         print(f"Total cost: ${result.metadata.total_cost:.4f}")
     """
 
@@ -465,77 +471,81 @@ class EnhancedMeetingSummarizer:
             extraction_calls = 0
 
             # Stage 1: Extract action items
-            logger.info("Stage 1/6: Extracting action items...")
+            logger.info("Stage 1/5: Extracting action items...")
             action_items = self._extract_structured_data(
                 transcript_text,
                 ACTION_ITEM_PROMPT,
                 "action_items"
             )
             extraction_calls += 1
-            logger.info(f"Stage 1/6 complete: {len(action_items)} action items")
+            logger.info(f"Stage 1/5 complete: {len(action_items)} action items")
 
             # Stage 2: Extract decisions
-            logger.info("Stage 2/6: Extracting decisions...")
+            logger.info("Stage 2/5: Extracting decisions...")
             decisions = self._extract_structured_data(
                 transcript_text,
                 DECISION_PROMPT,
                 "decisions"
             )
             extraction_calls += 1
-            logger.info(f"Stage 2/6 complete: {len(decisions)} decisions")
+            logger.info(f"Stage 2/5 complete: {len(decisions)} decisions")
 
-            # Stage 3: Extract topic segments
-            logger.info("Stage 3/6: Extracting topic segments...")
-            topics = self._extract_structured_data(
-                transcript_text,
-                TOPIC_SEGMENTATION_PROMPT,
-                "topics"
-            )
-            extraction_calls += 1
-            logger.info(f"Stage 3/6 complete: {len(topics)} topics")
-
-            # Stage 4: Extract highlights
-            logger.info("Stage 4/6: Extracting highlights...")
+            # Stage 3: Extract highlights (was stage 4)
+            logger.info("Stage 3/5: Extracting highlights...")
             highlights = self._extract_structured_data(
                 transcript_text,
                 HIGHLIGHTS_PROMPT,
                 "highlights"
             )
             extraction_calls += 1
-            logger.info(f"Stage 4/6 complete: {len(highlights)} highlights")
+            logger.info(f"Stage 3/5 complete: {len(highlights)} highlights")
 
-            # Stage 5: Extract mentions
-            logger.info("Stage 5/6: Extracting mentions...")
-            mentions = self._extract_structured_data(
+            # Stage 4: Extract key numbers (was stage 6)
+            logger.info("Stage 4/5: Extracting key numbers...")
+            key_numbers = self._extract_structured_data(
                 transcript_text,
-                MENTIONS_PROMPT,
-                "mentions"
+                KEY_NUMBERS_PROMPT,
+                "key_numbers"
             )
             extraction_calls += 1
-            logger.info(f"Stage 5/6 complete: {len(mentions)} mentions")
+            logger.info(f"Stage 4/5 complete: {len(key_numbers)} key numbers")
 
-            # Stage 6: Generate aggregate narrative summary
-            logger.info("Stage 6/6: Generating aggregate summary...")
-            aggregate_prompt = AGGREGATE_SUMMARY_PROMPT.format(
+            # Topics and mentions removed - not used in email template
+            topics = []  # Placeholder for backward compatibility
+            mentions = []  # Placeholder for backward compatibility
+
+            # Stage 5: Generate aggregate narrative summary (was stage 7)
+            logger.info("Stage 5/5: Generating aggregate summary...")
+
+            # Build transcript cache prefix (will be cached for 90% cost savings)
+            cache_prefix = f"**Meeting Transcript:**\n\n{transcript_text}\n\n"
+
+            # Build aggregate instructions WITHOUT transcript (not cached)
+            aggregate_instructions = AGGREGATE_SUMMARY_PROMPT.format(
                 metadata=self._format_metadata(meeting_metadata),
-                transcript=transcript_text,
+                transcript="",  # Transcript is in cache_prefix
                 action_items_count=len(action_items),
                 decisions_count=len(decisions),
-                topics_count=len(topics),
+                topics_count=0,  # Not extracted anymore
                 highlights_count=len(highlights),
-                mentions_count=len(mentions)
-            )
+                key_numbers_count=len(key_numbers),
+                mentions_count=0  # Not extracted anymore
+            ).replace("**Transcript:**\n\n\n", "")  # Remove empty transcript placeholder
 
             # Add custom instructions if provided
             if custom_instructions:
-                aggregate_prompt += f"\n\n**Special Instructions from User:**\n{custom_instructions}"
+                aggregate_instructions += f"\n\n**Special Instructions from User:**\n{custom_instructions}"
 
-            # Use aggregate client (may be different model in hybrid mode)
+            # Combine: [CACHED TRANSCRIPT] + [DYNAMIC INSTRUCTIONS]
+            aggregate_prompt = cache_prefix + aggregate_instructions
+
+            # Use aggregate client with prompt caching (90% savings on transcript tokens)
             response = self.aggregate_client.generate_text(
                 system_prompt=SUMMARY_SYSTEM_PROMPT,
                 user_prompt=aggregate_prompt,
                 max_tokens=EXTRACTION_TOKEN_LIMITS["aggregate"],
-                temperature=EXTRACTION_TEMPERATURE["aggregate"]
+                temperature=EXTRACTION_TEMPERATURE["aggregate"],
+                cache_prefix=cache_prefix  # Enable caching for transcript!
             )
 
             overall_summary = response["content"]
@@ -572,6 +582,7 @@ class EnhancedMeetingSummarizer:
                 topics=topics,
                 highlights=highlights,
                 mentions=mentions,
+                key_numbers=key_numbers,
                 metadata=metadata
             )
 

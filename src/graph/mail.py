@@ -107,6 +107,7 @@ class EmailSender:
             # Build email body with all enhancements
             body_html = self._build_enhanced_email_body(
                 summary_html,
+                summary_markdown,  # NEW: Pass markdown for extracting Executive Summary and Discussion Notes
                 meeting_metadata,
                 enhanced_summary_data,
                 action_items_html,
@@ -282,9 +283,30 @@ class EmailSender:
         import base64
         return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
+    def _make_names_blue(self, text: str) -> str:
+        """
+        Convert markdown bold **Name** to HTML bold + blue styling.
+
+        This ensures all participant names are consistently styled as bold AND blue
+        throughout the email (action items, decisions, key moments, discussion notes).
+
+        Args:
+            text: Text with markdown bold syntax (**Name**)
+
+        Returns:
+            Text with HTML bold+blue styling
+        """
+        import re
+        # Replace **Name** with <strong style="color: #0078d4; font-weight: 700;">Name</strong>
+        # This pattern matches **any text** (markdown bold syntax)
+        pattern = r'\*\*([^*]+)\*\*'
+        replacement = r'<strong style="color: #0078d4; font-weight: 700;">\1</strong>'
+        return re.sub(pattern, replacement, text)
+
     def _build_enhanced_email_body(
         self,
         summary_html: str,
+        summary_markdown: str,  # NEW: Markdown version for extracting sections
         meeting_metadata: Dict[str, Any],
         enhanced_summary_data: Optional[Dict[str, Any]],
         action_items_html: Optional[str],
@@ -313,7 +335,7 @@ class EmailSender:
             Complete HTML email body
         """
         subject = meeting_metadata.get("subject", "Meeting")
-        organizer = meeting_metadata.get("organizer_name", "Unknown")
+        organizer = meeting_metadata.get("organizer_name") or meeting_metadata.get("organizer", "Unknown")
         start_time = meeting_metadata.get("start_time", "")
         scheduled_duration = meeting_metadata.get("duration_minutes", 0)  # From calendar
         join_url = meeting_metadata.get("join_url", "")
@@ -340,10 +362,8 @@ class EmailSender:
         actual_duration = transcript_stats.get("actual_duration_minutes", 0) if transcript_stats else 0
         duration = actual_duration if actual_duration > 0 else scheduled_duration
 
-        # Build duration display with actual vs scheduled if different
+        # Build duration display (only show actual duration, not scheduled)
         duration_display = f"{duration} minutes"
-        if actual_duration > 0 and scheduled_duration and abs(actual_duration - scheduled_duration) > 5:
-            duration_display = f"{actual_duration} minutes <span style='color: #666; font-size: 0.9em;'>(scheduled: {scheduled_duration})</span>"
 
         # Build participant display with actual vs invited if different
         participant_display = str(participant_count)
@@ -513,17 +533,14 @@ class EmailSender:
             <h1>📝 Meeting Summary</h1>
         </div>
 
-        <div class="meeting-info">
-            <p><strong>Meeting:</strong> {subject}</p>
-            <p><strong>Organizer:</strong> {organizer}</p>
-            <p><strong>Date:</strong> {start_time_formatted}</p>
-            <p><strong>Duration:</strong> {duration_display}</p>
-        </div>
-
-        <!-- FEATURE 2: Meeting Statistics -->
+        <!-- Meeting Statistics -->
         <div class="stats-box">
             <div class="stat">
-                <div class="stat-value">{speaker_count}</div>
+                <div class="stat-value">{duration_display}</div>
+                <div class="stat-label">Duration</div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">{len(participants) if participants else participant_count}</div>
                 <div class="stat-label">Speakers</div>
             </div>
             <div class="stat">
@@ -532,27 +549,9 @@ class EmailSender:
             </div>
         </div>
 
-        <!-- FEATURE 1 & 4: SharePoint Links (Secure) -->
-        <div class="buttons">
 """
 
-        # Link to Teams chat - users can access transcript, recording, files, and recap
-        if chat_id:
-            # Construct Teams deep link to meeting chat (not join URL)
-            import urllib.parse
-            encoded_chat_id = urllib.parse.quote(chat_id)
-            chat_url = f"https://teams.microsoft.com/l/chat/{encoded_chat_id}/0"
-            html += f'            <a href="{chat_url}" class="button">💬 Open Meeting Chat in Teams</a>\n'
-            html += f'            <p style="font-size: 12px; color: #666; margin-top: 8px;">Access transcript, recording, files, and meeting recap in Teams</p>\n'
-        elif join_url:
-            # Fallback to join URL if no chat_id
-            html += f'            <a href="{join_url}" class="button">📝 View Meeting in Teams</a>\n'
-
-        html += """        </div>
-
-"""
-
-        # v2.1: Attendees & Participation (merged speaker breakdown + participants)
+        # v2.1: Attendees & Participation (HYBRID: top 3 speakers detailed, others simplified)
         speaker_details = transcript_stats.get("speaker_details", []) if transcript_stats else []
 
         # Create speaker lookup for quick access
@@ -562,34 +561,163 @@ class EmailSender:
             speaker_map[name.lower()] = speaker
 
         if participants and len(participants) > 0:
+            # Sort participants by speaking time (most active first)
+            speakers = []
+            non_speakers = []
+            for p in participants:
+                name = p.get("display_name", p.get("email", ""))
+                speaker_data = speaker_map.get(name.lower())
+                if speaker_data:
+                    p['_speaker_data'] = speaker_data
+                    speakers.append(p)
+                else:
+                    non_speakers.append(p)
+
+            # Sort speakers by duration (descending)
+            speakers.sort(key=lambda x: x['_speaker_data'].get('duration_minutes', 0), reverse=True)
+
             html += """        <div class="attendees-section" style="background: #f5f5f5; padding: 15px; margin: 25px 0; border-radius: 4px;">
             <h3 style="margin-top: 0;">👥 Attendees & Participation</h3>
 """
+
+            # Top 3 speakers with full stats
+            top_speakers = speakers[:3]
+            other_attendees = speakers[3:] + non_speakers
+
             organizer_email = meeting_metadata.get("organizer_email", "")
-            for p in participants:
-                email = p.get("email", "")
-                name = p.get("display_name", email)
-                is_org = email.lower() == organizer_email.lower()
-                role = " (Organizer)" if is_org else ""
 
-                # Check if this person spoke
-                speaker_data = speaker_map.get(name.lower())
-
-                # Skip people who didn't speak (filter non-attendees)
-                if not speaker_data:
-                    continue
-
-                # Show speaker with bold name
-                html += f"""            <div style="margin-bottom: 10px;">
-                <strong style="color: #0078d4; font-weight: 700;">{name}{role}</strong><br>
+            if top_speakers:
+                html += """            <div style="margin-bottom: 15px;"><strong>Top Speakers:</strong></div>
 """
-                duration_min = speaker_data.get('duration_minutes', 0)
-                words = speaker_data.get('words', 0)
-                percentage = speaker_data.get('percentage', 0)
-                html += f"""                <span style="color: #666; font-size: 0.9em;">🎤 Spoke: {duration_min} min ({percentage}% of meeting) | {words:,} words</span>
+                for p in top_speakers:
+                    email = p.get("email", "")
+                    name = p.get("display_name", email)
+                    is_org = email.lower() == organizer_email.lower()
+                    role = " (Organizer)" if is_org else ""
+                    job_title = p.get("job_title", "")
+                    photo_base64 = p.get("photo_base64", "")
+                    speaker_data = p.get('_speaker_data', {})
+
+                    # Show speaker with photo, name, title, and FULL stats
+                    html += f"""            <div style="display: flex; align-items: center; margin-bottom: 15px;">
+"""
+                    # Profile photo (48x48 circular) if available
+                    if photo_base64:
+                        html += f"""                <img src="data:image/jpeg;base64,{photo_base64}"
+                         style="width: 48px; height: 48px; border-radius: 50%; margin-right: 12px; flex-shrink: 0;"
+                         alt="{name}" />
+"""
+                    else:
+                        # Placeholder avatar with initials if no photo
+                        initials = ''.join([word[0].upper() for word in name.split()[:2]])
+                        html += f"""                <div style="width: 48px; height: 48px; border-radius: 50%; background: #0078d4;
+                                color: white; display: flex; align-items: center; justify-content: center;
+                                margin-right: 12px; font-weight: 700; font-size: 18px; flex-shrink: 0;">
+                        {initials}
+                    </div>
+"""
+
+                    # Name, title, and FULL speaking stats
+                    html += f"""                <div style="flex-grow: 1;">
+                        <strong style="color: #0078d4; font-weight: 700;">{name}{role}</strong><br>
+"""
+                    if job_title:
+                        html += f"""                    <span style="color: #666; font-size: 0.9em;">{job_title}</span><br>
+"""
+                    duration_min = speaker_data.get('duration_minutes', 0)
+                    words = speaker_data.get('words', 0)
+                    percentage = speaker_data.get('percentage', 0)
+                    # NOTE: Removed 🎤 emoji, kept full stats for top 3
+                    html += f"""                    <span style="color: #666; font-size: 0.9em;">Spoke: {duration_min} min ({percentage}%) | {words:,} words</span>
+                    </div>
+                </div>
+"""
+
+            # Other attendees (with profile pictures, no speaking stats)
+            # If >5 attendees, show first 5 with photos, rest in compact format
+            if other_attendees:
+                show_with_photos = other_attendees[:5]
+                show_compact = other_attendees[5:] if len(other_attendees) > 5 else []
+
+                html += """            <div style="margin-top: 20px; margin-bottom: 10px;"><strong>Also Present:</strong></div>
+"""
+                # Show first 5 (or all if <=5) with full detail + photos
+                for p in show_with_photos:
+                    email = p.get("email", "")
+                    name = p.get("display_name", email)
+                    is_org = email.lower() == organizer_email.lower()
+                    role = " (Organizer)" if is_org else ""
+                    job_title = p.get("job_title", "")
+                    photo_base64 = p.get("photo_base64", "")
+
+                    # Show attendee with photo, name, and title (no stats)
+                    html += f"""            <div style="display: flex; align-items: center; margin-bottom: 10px;">
+"""
+                    # Profile photo (32x32 circular) if available
+                    if photo_base64:
+                        html += f"""                <img src="data:image/jpeg;base64,{photo_base64}"
+                         style="width: 32px; height: 32px; border-radius: 50%; margin-right: 10px; flex-shrink: 0;"
+                         alt="{name}" />
+"""
+                    else:
+                        # Placeholder avatar with initials if no photo
+                        initials = ''.join([word[0].upper() for word in name.split()[:2]])
+                        html += f"""                <div style="width: 32px; height: 32px; border-radius: 50%; background: #0078d4;
+                                color: white; display: flex; align-items: center; justify-content: center;
+                                margin-right: 10px; font-weight: 700; font-size: 14px; flex-shrink: 0;">
+                        {initials}
+                    </div>
+"""
+
+                    # Name and title
+                    html += f"""                <div>
+                        <strong style="color: #0078d4; font-weight: 700;">{name}{role}</strong>"""
+                    if job_title:
+                        html += f""" - <span style="color: #666; font-size: 0.9em;">{job_title}</span>"""
+                    html += """
+                    </div>
+                </div>
+"""
+
+                # If >5 attendees, show remaining in compact format (just names, comma-separated)
+                if show_compact:
+                    compact_names = []
+                    for p in show_compact:
+                        name = p.get("display_name", p.get("email", ""))
+                        email = p.get("email", "")
+                        is_org = email.lower() == organizer_email.lower()
+                        if is_org:
+                            name += " (Organizer)"
+                        compact_names.append(name)
+
+                    html += f"""            <div style="margin-top: 10px; padding: 10px; background: #f9f9f9; border-radius: 4px; font-size: 0.9em; color: #666;">
+                <strong>+{len(show_compact)} more:</strong> {', '.join(compact_names)}
             </div>
 """
+
             html += """        </div>
+
+"""
+
+        # NEW: Executive Summary Section (variable length: 50-125 words based on complexity)
+        # Extract executive summary from summary_markdown (first section after ## Executive Summary)
+        exec_summary_text = ""
+        if summary_markdown:
+            import re
+            # Match: ## Executive Summary followed by content until next ## heading
+            match = re.search(r'##\s*Executive Summary\s*\n(.*?)(?=\n##|\Z)', summary_markdown, re.DOTALL | re.IGNORECASE)
+            if match:
+                exec_summary_text = match.group(1).strip()
+
+        if exec_summary_text:
+            # Apply blue+bold styling to names before converting markdown to HTML
+            exec_summary_text = self._make_names_blue(exec_summary_text)
+            # Convert markdown to HTML for the executive summary
+            exec_summary_html = markdown2.markdown(exec_summary_text, extras=["break-on-newline"])
+            html += f"""        <div style="background: #e3f2fd; padding: 15px; margin: 25px 0; border-radius: 4px; border-left: 4px solid #2196f3;">
+            <h3 style="margin-top: 0;">📌 Executive Summary</h3>
+            {exec_summary_html}
+        </div>
 
 """
 
@@ -607,31 +735,29 @@ class EmailSender:
 """
             # Display items grouped by person
             for assignee, items in items_by_person.items():
-                # Person header with bold and color
+                # Person header with bold and color (no inline emoji)
                 if assignee and assignee != "Unassigned":
-                    html += f"""            <h4 style="color: #0078d4; font-weight: 700; margin-top: 15px; margin-bottom: 8px;">👤 {assignee}</h4>
+                    html += f"""            <h4 style="color: #0078d4; font-weight: 700; margin-top: 15px; margin-bottom: 8px;"><strong>{assignee}</strong></h4>
             <ul style="margin-top: 0;">
 """
                 else:
-                    html += """            <h4 style="color: #666; font-weight: 700; margin-top: 15px; margin-bottom: 8px;">👤 Unassigned</h4>
+                    html += """            <h4 style="color: #666; font-weight: 700; margin-top: 15px; margin-bottom: 8px;"><strong>Unassigned</strong></h4>
             <ul style="margin-top: 0;">
 """
 
                 for item in items:
                     description = item.get("description", "")
                     deadline = item.get("deadline", "Not specified")
-                    timestamp = item.get("timestamp", "")
 
-                    html += f"""                <li>
-                    <strong>{description}</strong><br>
-"""
+                    # Apply blue+bold styling to names in description
+                    description = self._make_names_blue(description)
+
+                    # Single-line format: description → deadline (no timestamps)
+                    item_text = description
                     if deadline and deadline != "Not specified":
-                        html += f"""                    📅 Due: {deadline}<br>
-"""
-                    if timestamp:
-                        html += f"""                    🕐 Mentioned at: {timestamp}<br>
-"""
-                    html += """                </li>
+                        item_text += f" → {deadline}"
+
+                    html += f"""                <li>{item_text}</li>
 """
                 html += """            </ul>
 """
@@ -647,130 +773,160 @@ class EmailSender:
 
 """
 
-        # NEW: Key Decisions Section
+        # Decisions Made Section (v2.1: simplified single-line format)
         if decisions:
             html += """        <div class="decisions-section" style="background: #e8f5e8; border-left: 4px solid #4caf50; padding: 15px; margin: 25px 0; border-radius: 4px;">
-            <h3 style="margin-top: 0; color: #2e7d32;">🎯 Key Decisions</h3>
+            <h3 style="margin-top: 0; color: #2e7d32;">🎯 Decisions Made</h3>
             <ul>
 """
             for decision in decisions:
                 decision_text = decision.get("decision", "")
-                reasoning = decision.get("reasoning", "")
-                participants_str = decision.get("participants", "")
-                timestamp = decision.get("timestamp", "")
+                # Use rationale_one_line (new field from updated DECISION_PROMPT)
+                # Fallback to reasoning if rationale_one_line not available
+                rationale = decision.get("rationale_one_line") or decision.get("reasoning", "")
 
-                html += f"""                <li>
-                    <strong>{decision_text}</strong><br>
+                # Apply blue+bold styling to names
+                decision_text = self._make_names_blue(decision_text)
+                rationale = self._make_names_blue(rationale)
+
+                # Single-line format: Decision - Rationale
+                if rationale:
+                    html += f"""                <li>{decision_text} - {rationale}</li>
 """
-                if reasoning:
-                    html += f"""                    <em>Why: {reasoning}</em><br>
-"""
-                if participants_str:
-                    # Bold and color participant names
-                    import re
-                    # Split by comma and apply styling to each name
-                    names = [name.strip() for name in participants_str.split(',')]
-                    styled_names = [f'<span style="font-weight: 700; color: #0078d4;">{name}</span>' for name in names]
-                    participants_styled = ', '.join(styled_names)
-                    html += f"""                    👥 Participants: {participants_styled}<br>
-"""
-                if timestamp and timestamp.upper() != "N/A":
-                    html += f"""                    🕐 {timestamp}<br>
-"""
-                html += """                </li>
+                else:
+                    html += f"""                <li>{decision_text}</li>
 """
             html += """            </ul>
         </div>
 
 """
 
-        # NEW: Meeting Highlights Section
-        if highlights:
-            html += """        <div class="highlights-section" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 25px 0; border-radius: 4px;">
-            <h3 style="margin-top: 0; color: #f57c00;">⭐ Key Moments</h3>
-            <ul>
+        # Key Numbers Section (v2.1: NEW - all financial/quantitative metrics)
+        key_numbers = enhanced_summary_data.get("key_numbers", [])
+        if key_numbers:
+            html += """        <div style="background: #e8f5e9; padding: 15px; margin: 25px 0; border-radius: 4px; border-left: 4px solid #4caf50;">
+            <h3 style="margin-top: 0; color: #2e7d32;">📊 Key Numbers</h3>
+            <ul style="list-style: none; padding-left: 0;">
 """
-            for highlight in highlights:
-                title = highlight.get("title", "")
-                why_important = highlight.get("why_important", "")
+            for number in key_numbers:
+                value = number.get("value", "")
+                context = number.get("context", "")
+                # Apply blue+bold styling to names in context
+                context = self._make_names_blue(context)
+                html += f"""                <li style="margin-bottom: 8px;"><strong>{value}</strong> - {context}</li>
+"""
+            html += """            </ul>
+        </div>
+
+"""
+
+        # Key Moments Section (v2.1: simplified, 5-8 entries, clickable timestamps)
+        if highlights:
+            # Limit to 5-8 most important highlights
+            highlights_limited = highlights[:8]
+
+            html += """        <div class="highlights-section" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 25px 0; border-radius: 4px;">
+            <h3 style="margin-top: 0; color: #f57c00;">⚡ Key Moments</h3>
+            <ul style="list-style: none; padding-left: 0;">
+"""
+            for highlight in highlights_limited:
+                # Use 'description' field from updated HIGHLIGHTS_PROMPT
+                # Fallback to 'title' for backward compatibility
+                description = highlight.get("description") or highlight.get("title", "")
                 timestamp = highlight.get("timestamp", "")
-                highlight_type = highlight.get("type", "")
+
+                # Apply blue+bold styling to names in description
+                description = self._make_names_blue(description)
 
                 # Create recording link with timestamp if available
                 recording_link_final = recording_sharepoint_url or recording_url
                 if recording_link_final and timestamp:
-                    # Parse MM:SS to seconds for video URL fragment
+                    # Parse H:MM:SS or MM:SS to seconds for video URL fragment
                     try:
                         parts = timestamp.split(":")
-                        seconds = int(parts[0]) * 60 + int(parts[1])
-                        timestamp_link = f'<a href="{recording_link_final}#t={seconds}">{timestamp}</a>'
+                        if len(parts) == 3:  # H:MM:SS
+                            seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                        else:  # MM:SS
+                            seconds = int(parts[0]) * 60 + int(parts[1])
+                        timestamp_link = f'<a href="{recording_link_final}#t={seconds}" style="font-weight: 700; color: #f57c00;">{timestamp}</a>'
                     except:
-                        timestamp_link = timestamp
+                        timestamp_link = f'<span style="font-weight: 700; color: #f57c00;">{timestamp}</span>'
                 else:
-                    timestamp_link = timestamp
+                    timestamp_link = f'<span style="font-weight: 700; color: #f57c00;">{timestamp}</span>' if timestamp else ""
 
-                # Only show timestamp if available
-                title_with_timestamp = f"<strong>{title}</strong>"
+                # Single-line format: [timestamp] - description
                 if timestamp_link:
-                    title_with_timestamp += f" ({timestamp_link})"
-
-                html += f"""                <li>
-                    {title_with_timestamp}<br>
-                    <em>{why_important}</em>
-                </li>
+                    html += f"""                <li style="margin-bottom: 8px;">{timestamp_link} - {description}</li>
 """
-            html += """            </ul>
+                else:
+                    html += f"""                <li style="margin-bottom: 8px;">{description}</li>
+"""
+
+            # Add "See full timeline in Teams" link if chat_id available
+            if chat_id:
+                import urllib.parse
+                encoded_chat_id = urllib.parse.quote(chat_id)
+                chat_url = f"https://teams.microsoft.com/l/chat/{encoded_chat_id}/0"
+                html += f"""            </ul>
+            <p style="margin-top: 10px;"><a href="{chat_url}" style="color: #f57c00;">See full timeline in Teams →</a></p>
+        </div>
+
+"""
+            else:
+                html += """            </ul>
         </div>
 
 """
 
-        # NEW: Meeting Topics Section
-        if topics:
-            html += """        <div class="topics-section" style="background: #f3e5f5; border-left: 4px solid #9c27b0; padding: 15px; margin: 25px 0; border-radius: 4px;">
-            <h3 style="margin-top: 0; color: #6a1b9a;">📋 Discussion Topics</h3>
-"""
-            for topic in topics:
-                topic_name = topic.get("topic", "")
-                duration = topic.get("duration", "")
-                summary_text = topic.get("summary", "")
-                speakers = topic.get("speakers", "")
+        # Discussion Notes Section (v2.1: consolidated narrative with thematic subheadings)
+        discussion_notes_text = ""
+        if summary_markdown:
+            import re
+            # Match: ## Discussion Notes followed by content until end or next ## heading
+            match = re.search(r'##\s*Discussion Notes\s*\n(.*?)(?=\n##|\Z)', summary_markdown, re.DOTALL | re.IGNORECASE)
+            if match:
+                discussion_notes_text = match.group(1).strip()
 
-                html += f"""            <div style="margin-bottom: 15px;">
-                <strong>{topic_name}</strong> <span style="color: #666;">({duration})</span><br>
-"""
-                if speakers:
-                    # Bold and color speaker names
-                    names = [name.strip() for name in speakers.split(',')]
-                    styled_names = [f'<span style="font-weight: 700; color: #0078d4;">{name}</span>' for name in names]
-                    speakers_styled = ', '.join(styled_names)
-                    html += f"""                <small>Speakers: {speakers_styled}</small><br>
-"""
-                if summary_text:
-                    html += f"""                <p style="margin: 5px 0;">{summary_text}</p>
-"""
-                html += """            </div>
-"""
-            html += """        </div>
-
-"""
-
-        html += f"""        <div class="summary">
-            <h2 style="color: #0078d4; border-bottom: 2px solid #e1e1e1; padding-bottom: 8px;">📝 Full Summary</h2>
-            {summary_html}
+        if discussion_notes_text:
+            # Apply blue+bold styling to names before converting markdown to HTML
+            discussion_notes_text = self._make_names_blue(discussion_notes_text)
+            discussion_notes_html = markdown2.markdown(discussion_notes_text, extras=["break-on-newline"])
+            # Add paragraph spacing by wrapping in a div with p styling
+            html += f"""        <div style="background: #fff3e0; padding: 15px; margin: 25px 0; border-radius: 4px; border-left: 4px solid #ff9800;">
+            <h3 style="margin-top: 0; color: #e65100;">📝 Discussion Notes</h3>
+            <div style="line-height: 1.6;">
+                {discussion_notes_html.replace('<p>', '<p style="margin-bottom: 15px;">')}
+            </div>
         </div>
 """
 
         if include_footer:
             html += """        <div class="footer">
-            <p>This summary was automatically generated by AI.</p>
-            <p>🔗 Access transcript and recording via SharePoint links above (respects Teams permissions)</p>
+"""
+            # Link to Teams chat - moved to footer
+            if chat_id:
+                # Construct Teams deep link to meeting chat
+                import urllib.parse
+                encoded_chat_id = urllib.parse.quote(chat_id)
+                chat_url = f"https://teams.microsoft.com/l/chat/{encoded_chat_id}/0"
+                html += f"""            <div style="text-align: center; margin-bottom: 30px;">
+                <a href="{chat_url}" class="button" style="display: inline-block; background: #0078d4; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600;">💬 Open Meeting Chat in Teams</a>
+                <p style="font-size: 12px; color: #666; margin-top: 8px;">Access transcript, recording, files, and meeting recap in Teams</p>
+            </div>
+"""
+            elif join_url:
+                # Fallback to join URL if no chat_id
+                html += f"""            <div style="text-align: center; margin-bottom: 30px;">
+                <a href="{join_url}" class="button" style="display: inline-block; background: #0078d4; color: white; padding: 12px 24px; text-decoration: none; border-radius: 4px; font-weight: 600;">📝 View Meeting in Teams</a>
+            </div>
+"""
 
-            <!-- Email Preferences Section -->
+            html += """            <!-- Email Preferences for Future Meetings -->
             <div style="border-top: 2px solid #e0e0e0; margin-top: 40px; padding-top: 25px;
                         background: #f9f9f9; padding: 20px; border-radius: 4px; font-size: 0.9em;">
 
                 <h3 style="margin-top: 0; color: #333; font-size: 1.1em;">
-                    📧 Email Preferences
+                    📧 Email Preferences for Future Meetings
                 </h3>
 
                 <div style="margin-bottom: 15px;">
@@ -819,17 +975,7 @@ class EmailSender:
                     </span>
                 </div>
 
-                <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #e0e0e0;
-                            font-size: 0.8em; color: #999;">
-                    Questions? Type <code style="background: white; padding: 1px 4px; border: 1px solid #ddd;">
-                    @meeting notetaker help</code> in any meeting chat.
-                </div>
-
             </div>
-
-            <p style="color: #999; font-size: 10px; margin-top: 20px;">
-                🤖 Generated with <a href="https://claude.com/claude-code">Claude Code</a> | Powered by Teams Meeting Notetaker
-            </p>
         </div>
 """
 
@@ -952,7 +1098,7 @@ class EmailSender:
         """Build personalized HTML email body with user-specific highlights first."""
 
         subject = meeting_metadata.get("subject", "Meeting")
-        organizer = meeting_metadata.get("organizer_name", "Unknown")
+        organizer = meeting_metadata.get("organizer_name") or meeting_metadata.get("organizer", "Unknown")
         start_time = meeting_metadata.get("start_time", "")
         duration = meeting_metadata.get("duration_minutes", 0)
         recording_sharepoint_url = meeting_metadata.get("recording_sharepoint_url", "")

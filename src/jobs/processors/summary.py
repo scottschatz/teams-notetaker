@@ -107,15 +107,22 @@ class SummaryProcessor(BaseProcessor):
         # Get meeting and transcript from database
         meeting = self._get_meeting(meeting_id)
 
+        # Determine version for this summary (default to 1, or use input_data version)
+        requested_version = job.input_data.get("version", 1)
+
         with self.db.get_session() as session:
-            # Check if summary already exists
-            existing_summary = session.query(Summary).filter_by(meeting_id=meeting_id).first()
+            # Check if summary with THIS VERSION already exists
+            existing_summary = session.query(Summary).filter_by(
+                meeting_id=meeting_id,
+                version=requested_version
+            ).first()
             if existing_summary:
-                self._log_progress(job, "Summary already exists, skipping", "warning")
+                self._log_progress(job, f"Summary v{requested_version} already exists, skipping", "warning")
                 return self._create_output_data(
                     success=True,
-                    message="Summary already exists",
+                    message=f"Summary v{requested_version} already exists",
                     summary_id=existing_summary.id,
+                    version=requested_version,
                     cached=True
                 )
 
@@ -161,6 +168,7 @@ class SummaryProcessor(BaseProcessor):
                 topics = enhanced_result.topics
                 highlights = enhanced_result.highlights
                 mentions = enhanced_result.mentions
+                key_numbers = enhanced_result.key_numbers  # FIX: Extract key_numbers
                 metadata = enhanced_result.metadata
 
                 input_tokens = metadata.total_tokens  # Approximate
@@ -191,8 +199,8 @@ class SummaryProcessor(BaseProcessor):
                     extras=["tables", "fenced-code-blocks", "code-friendly"]
                 )
 
-                # Determine version for this summary
-                version = job.input_data.get("version", 1)
+                # Use requested_version (already determined at top of function)
+                version = requested_version
 
                 # Save enhanced summary to database
                 summary = Summary(
@@ -211,6 +219,7 @@ class SummaryProcessor(BaseProcessor):
                     topics_json=topics,
                     highlights_json=highlights,
                     mentions_json=mentions,
+                    key_numbers_json=key_numbers,  # FIX: Add key_numbers_json
                     version=version,
                     custom_instructions=custom_instructions
                 )

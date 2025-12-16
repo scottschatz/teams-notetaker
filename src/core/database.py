@@ -305,6 +305,7 @@ class Summary(Base):
     topics_json = Column(JSONB)  # List of {topic, duration, speakers, summary, key_points}
     highlights_json = Column(JSONB)  # List of {title, timestamp, why_important, type}
     mentions_json = Column(JSONB)  # List of {person, mentioned_by, context, timestamp, type}
+    key_numbers_json = Column(JSONB)  # List of {value, unit, context, magnitude} - financial/quantitative metrics
 
     # Versioning (NEW - for re-summarization)
     version = Column(Integer, default=1, nullable=False, index=True)

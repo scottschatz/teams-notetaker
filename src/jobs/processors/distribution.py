@@ -183,7 +183,8 @@ class DistributionProcessor(BaseProcessor):
                 "decisions": summary.decisions_json or [],
                 "topics": summary.topics_json or [],
                 "highlights": summary.highlights_json or [],
-                "mentions": summary.mentions_json or []
+                "mentions": summary.mentions_json or [],
+                "key_numbers": summary.key_numbers_json or []  # NEW: Financial/quantitative metrics
             }
 
             # Build transcript stats (v2.1: includes speaker breakdown)
@@ -279,15 +280,23 @@ class DistributionProcessor(BaseProcessor):
                         from_email = self.config.app.email_from or "noreply@townsquaremedia.com"
 
                         # Format participants list for email template (deduplicated by email)
+                        # Enrich with photos and job titles
                         seen_emails = set()
                         participants_dict = []
                         for p in participants:
                             email_lower = p.email.lower() if p.email else ""
                             if email_lower and email_lower not in seen_emails:
+                                # Enrich participant with photo and job title
+                                enriched = self.graph_client.enrich_user_with_photo_and_title(
+                                    p.email, p.display_name
+                                )
+
                                 participants_dict.append({
                                     "email": p.email,
                                     "display_name": p.display_name,
-                                    "role": p.role
+                                    "role": p.role,
+                                    "job_title": enriched.get("jobTitle"),
+                                    "photo_base64": enriched.get("photo_base64")
                                 })
                                 seen_emails.add(email_lower)
 

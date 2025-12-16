@@ -145,11 +145,15 @@ class JobQueueManager:
         Atomically claim next available job using FOR UPDATE SKIP LOCKED.
 
         Selection criteria (in order):
-        1. Status: pending or retrying
+        1. Status: pending, retrying, OR stale running jobs (heartbeat >15min old)
         2. Retry time: next_retry_at is NULL or in the past
         3. Dependencies: parent job (depends_on_job_id) is completed
         4. Priority: higher priority first (DESC)
         5. Age: older jobs first (created_at ASC)
+
+        Orphaned Job Recovery:
+        - Recovers jobs stuck in "running" status with stale heartbeat (>15 min)
+        - These jobs are claimed and retried with incremented retry_count
 
         Args:
             worker_id: Worker identifier (for tracking)
@@ -167,14 +171,21 @@ class JobQueueManager:
                     status = :running_status,
                     worker_id = :worker_id,
                     started_at = :now,
-                    heartbeat_at = :now
+                    heartbeat_at = :now,
+                    retry_count = CASE
+                        WHEN status = :stale_running_status THEN COALESCE(retry_count, 0) + 1
+                        ELSE retry_count
+                    END
                 WHERE id = (
                     SELECT jq.id
                     FROM job_queue jq
                     LEFT JOIN job_queue parent ON jq.depends_on_job_id = parent.id
                     WHERE
-                        -- Job is ready to run
-                        jq.status IN (:pending_status, :retrying_status)
+                        -- Job is ready to run (including stale running jobs for recovery)
+                        (
+                            jq.status IN (:pending_status, :retrying_status)
+                            OR (jq.status = :stale_running_status AND jq.heartbeat_at < :stale_threshold)
+                        )
 
                         -- Retry time has passed (or not set)
                         AND (jq.next_retry_at IS NULL OR jq.next_retry_at <= :now)
@@ -192,6 +203,7 @@ class JobQueueManager:
             """)
 
             now = datetime.now()
+            stale_threshold = now - timedelta(minutes=15)
 
             result = session.execute(
                 query,
@@ -199,9 +211,11 @@ class JobQueueManager:
                     "running_status": "running",
                     "pending_status": "pending",
                     "retrying_status": "retrying",
+                    "stale_running_status": "running",
                     "completed_status": "completed",
                     "worker_id": worker_id,
-                    "now": now
+                    "now": now,
+                    "stale_threshold": stale_threshold
                 }
             )
 
@@ -212,11 +226,24 @@ class JobQueueManager:
                 # Convert row to JobQueue object
                 job = session.query(JobQueue).filter_by(id=row.id).first()
 
-                logger.info(
-                    f"✓ Claimed job {job.id} (type: {job.job_type}, "
-                    f"meeting: {job.meeting_id}, priority: {job.priority}, "
-                    f"retry: {job.retry_count}/{job.max_retries})"
+                # Check if this was a recovered stale job
+                was_recovered = (
+                    row.heartbeat_at is not None
+                    and row.heartbeat_at < stale_threshold
                 )
+
+                if was_recovered:
+                    logger.warning(
+                        f"⚠️  RECOVERED stale job {job.id} (type: {job.job_type}, "
+                        f"meeting: {job.meeting_id}, stale_heartbeat: {row.heartbeat_at}, "
+                        f"retry: {job.retry_count}/{job.max_retries})"
+                    )
+                else:
+                    logger.info(
+                        f"✓ Claimed job {job.id} (type: {job.job_type}, "
+                        f"meeting: {job.meeting_id}, priority: {job.priority}, "
+                        f"retry: {job.retry_count}/{job.max_retries})"
+                    )
 
                 return job
             else:
@@ -285,6 +312,10 @@ class JobQueueManager:
             job.error_message = error_message
             if output_data:
                 job.output_data = output_data
+
+            # Initialize retry_count if None (handles manually created jobs)
+            if job.retry_count is None:
+                job.retry_count = 0
 
             # Check if we should retry
             if should_retry and job.retry_count < job.max_retries:
@@ -432,6 +463,49 @@ class JobQueueManager:
 
             logger.info(f"Cancelled {cancelled} jobs for meeting {meeting_id}")
             return cancelled
+
+    def cleanup_orphaned_jobs(self) -> int:
+        """
+        Cleanup jobs that are orphaned due to failed parent jobs.
+
+        This marks jobs as "failed" if they depend on a parent job that has failed.
+        These jobs would otherwise stay in "pending" status forever.
+
+        Returns:
+            Number of jobs marked as failed
+        """
+        with self.db.get_session() as session:
+            from sqlalchemy.orm import aliased
+
+            # Create alias for parent jobs
+            ParentJob = aliased(JobQueue)
+
+            # Find jobs waiting on failed parents
+            orphaned_jobs = session.query(JobQueue).join(
+                ParentJob,
+                JobQueue.depends_on_job_id == ParentJob.id
+            ).filter(
+                JobQueue.status.in_(["pending", "retrying"]),
+                JobQueue.depends_on_job_id.isnot(None),
+                ParentJob.status == "failed"
+            ).all()
+
+            failed_count = 0
+            for job in orphaned_jobs:
+                job.status = "failed"
+                job.error_message = f"Parent job {job.depends_on_job_id} failed, cannot proceed"
+                job.completed_at = datetime.now()
+                failed_count += 1
+
+                logger.warning(
+                    f"Marked orphaned job {job.id} as failed (parent {job.depends_on_job_id} failed)"
+                )
+
+            if failed_count > 0:
+                session.commit()
+                logger.info(f"Cleaned up {failed_count} orphaned jobs with failed parents")
+
+            return failed_count
 
     def get_job_status(self, job_id: int) -> Optional[Dict[str, Any]]:
         """

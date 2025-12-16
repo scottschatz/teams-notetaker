@@ -93,8 +93,10 @@ class JobWorker:
         2. Processes them concurrently (up to max_concurrent)
         3. Updates heartbeats
         4. Handles errors and retries
+        5. Cleans up orphaned jobs periodically
         """
         self.running = True
+        cleanup_counter = 0
 
         logger.info(f"Worker {self.worker_id} started")
 
@@ -102,6 +104,17 @@ class JobWorker:
             while self.running:
                 # Process jobs concurrently
                 await self._process_batch()
+
+                # Periodic cleanup of orphaned jobs (every 60 seconds)
+                cleanup_counter += 1
+                if cleanup_counter >= 60:
+                    try:
+                        orphaned_count = self.queue.cleanup_orphaned_jobs()
+                        if orphaned_count > 0:
+                            logger.info(f"Cleaned up {orphaned_count} orphaned jobs")
+                    except Exception as e:
+                        logger.error(f"Orphaned job cleanup failed: {e}")
+                    cleanup_counter = 0
 
                 # Sleep briefly before next iteration
                 await asyncio.sleep(1)
@@ -333,8 +346,8 @@ def main():
     # Create and run worker
     worker = JobWorker(
         config=config,
-        max_concurrent=config.max_concurrent_jobs,
-        job_timeout=config.job_timeout_minutes * 60
+        max_concurrent=config.app.max_concurrent_jobs,
+        job_timeout=config.app.job_timeout_minutes * 60
     )
 
     logger.info("Starting job worker...")

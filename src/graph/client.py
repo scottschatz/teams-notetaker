@@ -339,6 +339,119 @@ class GraphAPIClient:
         logger.info(f"Pagination complete: {page_count} pages, {len(all_items)} total items")
         return all_items
 
+    def get_user_photo(self, user_id: str, size: str = "48x48") -> Optional[str]:
+        """
+        Get user profile photo as base64-encoded string.
+
+        Args:
+            user_id: User ID or email address
+            size: Photo size (48x48, 64x64, 96x96, 120x120, 240x240, etc.)
+
+        Returns:
+            Base64-encoded photo string, or None if photo not available
+        """
+        try:
+            endpoint = f"/users/{user_id}/photos/{size}/$value"
+
+            # Make request with custom headers to get binary data
+            response = self._request("GET", endpoint)
+
+            if response.status_code == 200:
+                import base64
+                photo_base64 = base64.b64encode(response.content).decode('utf-8')
+                logger.debug(f"Fetched {size} photo for user {user_id}")
+                return photo_base64
+            else:
+                logger.debug(f"No photo available for user {user_id}")
+                return None
+
+        except Exception as e:
+            logger.debug(f"Could not fetch photo for {user_id}: {e}")
+            return None
+
+    def get_user_details(self, user_id: str) -> Dict[str, Any]:
+        """
+        Get user details including job title, department, etc.
+
+        Args:
+            user_id: User ID or email address
+
+        Returns:
+            Dictionary with user details (displayName, jobTitle, mail, etc.)
+        """
+        try:
+            endpoint = f"/users/{user_id}"
+            params = {"$select": "displayName,mail,userPrincipalName,jobTitle,department,officeLocation"}
+
+            user_data = self.get(endpoint, params=params)
+            logger.debug(f"Fetched details for user {user_id}: {user_data.get('displayName')}")
+            return user_data
+
+        except Exception as e:
+            logger.warning(f"Could not fetch details for {user_id}: {e}")
+            return {}
+
+    def enrich_user_with_photo_and_title(self, user_email: str, display_name: str) -> Dict[str, Any]:
+        """
+        Enrich user data with profile photo and job title.
+        Tries alternate email formats for aliases (e.g., Scott.Schatz -> sschatz).
+
+        Args:
+            user_email: User email address
+            display_name: User display name
+
+        Returns:
+            Dictionary with displayName, email, jobTitle, photo_base64
+        """
+        enriched = {
+            "displayName": display_name,
+            "email": user_email,
+            "jobTitle": None,
+            "photo_base64": None
+        }
+
+        # Generate alternate email formats to try (same logic as meetings.py)
+        normalized_email = user_email.lower()
+        alternate_emails = [normalized_email]
+
+        if '.' in normalized_email.split('@')[0]:
+            # Try without the dot: "scott.schatz@domain.com" -> "sschatz@domain.com"
+            local_part, domain = normalized_email.split('@')
+            parts = local_part.split('.')
+            if len(parts) == 2:
+                # Take first letter of first name + last name
+                alternate = f"{parts[0][0]}{parts[1]}@{domain}"
+                alternate_emails.append(alternate)
+
+        # Try each email format
+        for attempt_email in alternate_emails:
+            try:
+                # Get user details (job title, etc.)
+                details = self.get_user_details(attempt_email)
+                if details:
+                    enriched["jobTitle"] = details.get("jobTitle")
+                    enriched["department"] = details.get("department")
+
+                    # Get profile photo (48x48 thumbnail)
+                    photo = self.get_user_photo(attempt_email, size="48x48")
+                    if photo:
+                        enriched["photo_base64"] = photo
+
+                    if attempt_email != normalized_email:
+                        logger.debug(f"Found details for {user_email} using alternate format: {attempt_email}")
+
+                    # Success - stop trying other formats
+                    break
+
+            except Exception as e:
+                # Try next format
+                if attempt_email == alternate_emails[-1]:
+                    # Last attempt failed
+                    logger.debug(f"Could not enrich user {user_email} (tried {len(alternate_emails)} formats): {e}")
+                continue
+
+        return enriched
+
     def test_connection(self) -> bool:
         """
         Test Graph API connection by fetching organization info.

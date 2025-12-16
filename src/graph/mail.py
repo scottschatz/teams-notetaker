@@ -315,7 +315,7 @@ class EmailSender:
         subject = meeting_metadata.get("subject", "Meeting")
         organizer = meeting_metadata.get("organizer_name", "Unknown")
         start_time = meeting_metadata.get("start_time", "")
-        duration = meeting_metadata.get("duration_minutes", 0)
+        scheduled_duration = meeting_metadata.get("duration_minutes", 0)  # From calendar
         join_url = meeting_metadata.get("join_url", "")
         chat_id = meeting_metadata.get("chat_id", "")
         recording_url = meeting_metadata.get("recording_url", "")
@@ -334,15 +334,16 @@ class EmailSender:
         word_count = transcript_stats.get("word_count", 0) if transcript_stats else 0
         speaker_count = transcript_stats.get("speaker_count", 0) if transcript_stats else 0
         participant_count = meeting_metadata.get("participant_count", 0)
-
-        # Get scheduled vs actual stats (v2.1 feature)
-        scheduled_duration = meeting_metadata.get("scheduled_duration")
         invited_count = meeting_metadata.get("invited_count")
+
+        # Use actual duration from transcript stats (v2.1 feature)
+        actual_duration = transcript_stats.get("actual_duration_minutes", 0) if transcript_stats else 0
+        duration = actual_duration if actual_duration > 0 else scheduled_duration
 
         # Build duration display with actual vs scheduled if different
         duration_display = f"{duration} minutes"
-        if scheduled_duration and abs(duration - scheduled_duration) > 5:
-            duration_display = f"{duration} minutes <span style='color: #666; font-size: 0.9em;'>(scheduled: {scheduled_duration})</span>"
+        if actual_duration > 0 and scheduled_duration and abs(actual_duration - scheduled_duration) > 5:
+            duration_display = f"{actual_duration} minutes <span style='color: #666; font-size: 0.9em;'>(scheduled: {scheduled_duration})</span>"
 
         # Build participant display with actual vs invited if different
         participant_display = str(participant_count)

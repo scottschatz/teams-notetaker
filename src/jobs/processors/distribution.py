@@ -219,15 +219,18 @@ class DistributionProcessor(BaseProcessor):
                     # For now, send to all participants
                     # In Sprint 4, we'll add: email_recipients = self._filter_by_preferences(participant_emails)
 
-                    # Format participants list for email template
-                    participants_dict = [
-                        {
-                            "email": p.email,
-                            "display_name": p.display_name,
-                            "role": p.role
-                        }
-                        for p in participants
-                    ]
+                    # Format participants list for email template (deduplicated by email)
+                    seen_emails = set()
+                    participants_dict = []
+                    for p in participants:
+                        email_lower = p.email.lower() if p.email else ""
+                        if email_lower and email_lower not in seen_emails:
+                            participants_dict.append({
+                                "email": p.email,
+                                "display_name": p.display_name,
+                                "role": p.role
+                            })
+                            seen_emails.add(email_lower)
 
                     email_message_id = self.email_sender.send_meeting_summary(
                         from_email=from_email,

@@ -168,7 +168,7 @@ class AppConfig:
 
     # Webhooks (v3.0) - Azure Relay for org-wide discovery
     webhooks_enabled: bool = True  # Enable webhook-based discovery
-    webhook_backfill_hours: int = 48  # Hours to backfill on startup
+    webhook_backfill_hours: int = 4  # Maximum hours to backfill on startup (usually uses gap detection)
     webhook_safety_net_enabled: bool = True  # Daily catchup for missed meetings
 
     # User Preferences (v3.0) - Opt-in system

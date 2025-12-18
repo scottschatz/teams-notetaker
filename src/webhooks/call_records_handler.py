@@ -698,11 +698,11 @@ class CallRecordsWebhookHandler:
         }
 
         try:
-            # Calculate cutoff time - use the EARLIER of:
-            # 1. lookback_hours from now (requested by user)
-            # 2. Last webhook time minus 5 minutes (smart gap detection)
-            # This ensures we always look back at least as far as requested
-            lookback_cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+            # Calculate cutoff time - use the LATER of:
+            # 1. Last webhook time minus 5 minutes (smart gap detection) - PREFERRED
+            # 2. lookback_hours from now (maximum cap to prevent huge queries)
+            # This ensures efficient backfill - only look back to last webhook, not full lookback
+            max_lookback_cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
 
             with self.db.get_session() as session:
                 last_webhook = session.query(ProcessedCallRecord).filter_by(
@@ -716,19 +716,20 @@ class CallRecordsWebhookHandler:
                         processed_at = processed_at.replace(tzinfo=timezone.utc)
 
                     gap_cutoff = processed_at - timedelta(minutes=5)
+                    time_gap = datetime.now(timezone.utc) - processed_at
+                    hours_gap = time_gap.total_seconds() / 3600
 
-                    # Use the EARLIER time (further back in time)
-                    if lookback_cutoff < gap_cutoff:
-                        cutoff = lookback_cutoff
-                        logger.info(f"Using requested {lookback_hours}h lookback (further back than gap)")
-                    else:
+                    # Use the LATER time (more recent) - prefer gap detection for efficiency
+                    # But cap at max_lookback_cutoff to prevent going too far back
+                    if gap_cutoff > max_lookback_cutoff:
                         cutoff = gap_cutoff
-                        time_gap = datetime.now(timezone.utc) - processed_at
-                        hours_gap = time_gap.total_seconds() / 3600
                         logger.info(f"Using gap detection ({hours_gap:.1f}h since last webhook)")
+                    else:
+                        cutoff = max_lookback_cutoff
+                        logger.info(f"Gap too large ({hours_gap:.1f}h), capping at {lookback_hours}h lookback")
                 else:
                     # No webhooks - use requested lookback
-                    cutoff = lookback_cutoff
+                    cutoff = max_lookback_cutoff
                     logger.info(f"No webhooks found, backfilling last {lookback_hours} hours...")
 
             cutoff_str = cutoff.isoformat().replace('+00:00', 'Z')

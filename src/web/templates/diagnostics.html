@@ -3,7 +3,7 @@
 {% block title %}System Diagnostics - Teams Notetaker{% endblock %}
 
 {% block content %}
-<div x-data="diagnosticsData()" x-init="loadStatus(); setInterval(loadStatus, 5000)">
+<div x-data="diagnosticsData()" x-init="loadStatus(); setInterval(loadStatus, 5000); init()">
     <div class="flex justify-between items-center mb-6">
         <h1 class="text-3xl font-bold text-gray-900">System Diagnostics</h1>
         <div class="flex items-center space-x-4">
@@ -17,7 +17,9 @@
                 <select x-model="lookbackHours" class="px-3 py-1 border border-gray-300 rounded-lg text-sm">
                     <option value="1">1 hour</option>
                     <option value="6">6 hours</option>
+                    <option value="12">12 hours</option>
                     <option value="24">24 hours</option>
+                    <option value="48">2 days</option>
                     <option value="72">3 days</option>
                     <option value="168">1 week</option>
                     <option value="720">30 days</option>
@@ -170,6 +172,40 @@
             </table>
         </div>
     </div>
+
+    <!-- Live Log Viewer -->
+    <div class="bg-white rounded-lg shadow p-6">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-lg font-semibold text-gray-900">Live Logs</h2>
+            <div class="flex items-center space-x-2">
+                <select x-model="logService" @change="loadLogs()" class="px-3 py-1 border border-gray-300 rounded-lg text-sm">
+                    <option value="worker">Worker</option>
+                    <option value="webhook">Webhook</option>
+                    <option value="web">Web</option>
+                </select>
+                <label class="flex items-center space-x-1 text-sm text-gray-600">
+                    <input type="checkbox" x-model="autoRefreshLogs" class="rounded">
+                    <span>Auto-refresh</span>
+                </label>
+                <button @click="loadLogs()" class="px-3 py-1 bg-gray-600 text-white rounded-lg hover:bg-gray-700 text-sm">
+                    Refresh
+                </button>
+            </div>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-4 h-64 overflow-y-auto font-mono text-xs" id="logContainer">
+            <template x-for="(line, index) in logEntries" :key="index">
+                <div class="text-gray-300 py-0.5"
+                     :class="{
+                         'text-red-400': line.includes('ERROR') || line.includes('error'),
+                         'text-yellow-400': line.includes('WARNING') || line.includes('warning'),
+                         'text-green-400': line.includes('✓') || line.includes('completed') || line.includes('success'),
+                         'text-blue-400': line.includes('INFO')
+                     }"
+                     x-text="line"></div>
+            </template>
+            <div x-show="logEntries.length === 0" class="text-gray-500">No logs available</div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -183,6 +219,10 @@ function diagnosticsData() {
         },
         lastUpdated: '',
         lookbackHours: 24,  // Default to 24 hours
+        logService: 'worker',
+        logEntries: [],
+        autoRefreshLogs: true,
+        logRefreshInterval: null,
 
         async loadStatus() {
             try {
@@ -227,6 +267,47 @@ function diagnosticsData() {
             if (!dateString) return '-';
             const date = new Date(dateString);
             return date.toLocaleTimeString();
+        },
+
+        async loadLogs() {
+            try {
+                const response = await fetch(`/diagnostics/api/logs?service=${this.logService}&lines=100`);
+                const data = await response.json();
+                this.logEntries = data.entries || [];
+
+                // Auto-scroll to bottom
+                this.$nextTick(() => {
+                    const container = document.getElementById('logContainer');
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+                });
+            } catch (error) {
+                console.error('Failed to load logs:', error);
+                this.logEntries = ['Error loading logs: ' + error.message];
+            }
+        },
+
+        init() {
+            // Load logs on init
+            this.loadLogs();
+
+            // Set up auto-refresh watcher
+            this.$watch('autoRefreshLogs', (value) => {
+                if (value) {
+                    this.logRefreshInterval = setInterval(() => this.loadLogs(), 3000);
+                } else {
+                    if (this.logRefreshInterval) {
+                        clearInterval(this.logRefreshInterval);
+                        this.logRefreshInterval = null;
+                    }
+                }
+            });
+
+            // Start auto-refresh if enabled by default
+            if (this.autoRefreshLogs) {
+                this.logRefreshInterval = setInterval(() => this.loadLogs(), 3000);
+            }
         }
     }
 }

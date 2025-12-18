@@ -302,30 +302,97 @@ class DistributionProcessor(BaseProcessor):
 
                         from_email = self.config.app.email_from or "noreply@townsquaremedia.com"
 
-                        # Format participants list for email template (deduplicated by email)
+                        # Format participants list for email template (deduplicated by email/name)
                         # Enrich with photos and job titles (run in executor to avoid blocking)
                         loop = asyncio.get_event_loop()
-                        seen_emails = set()
+                        seen_identifiers = set()  # Track by email or display_name
                         participants_dict = []
                         for p in participants:
                             email_lower = p.email.lower() if p.email else ""
-                            if email_lower and email_lower not in seen_emails:
-                                # Enrich participant with photo and job title (non-blocking)
-                                enriched = await loop.run_in_executor(
-                                    None,
-                                    lambda email=p.email, name=p.display_name: self.graph_client.enrich_user_with_photo_and_title(
-                                        email, name
+                            # Use email as identifier if available, otherwise use display_name
+                            identifier = email_lower if email_lower else (p.display_name or "").lower()
+
+                            if identifier and identifier not in seen_identifiers:
+                                # Only enrich with photo/title if participant has email (internal user)
+                                if email_lower:
+                                    enriched = await loop.run_in_executor(
+                                        None,
+                                        lambda email=p.email, name=p.display_name: self.graph_client.enrich_user_with_photo_and_title(
+                                            email, name
+                                        )
                                     )
-                                )
+                                else:
+                                    # PSTN/external participants - no enrichment available
+                                    enriched = {}
 
                                 participants_dict.append({
-                                    "email": p.email,
+                                    "email": p.email,  # May be None for PSTN
                                     "display_name": p.display_name,
                                     "role": p.role,
                                     "job_title": enriched.get("jobTitle"),
                                     "photo_base64": enriched.get("photo_base64")
                                 })
-                                seen_emails.add(email_lower)
+                                seen_identifiers.add(identifier)
+
+                        # Fetch meeting invitees for "Invited" section
+                        invitees_list = []
+                        if meeting.join_url and meeting.organizer_user_id:
+                            try:
+                                # Find online meeting by join URL
+                                online_meetings = await loop.run_in_executor(
+                                    None,
+                                    lambda: self.graph_client.get(
+                                        f"/users/{meeting.organizer_user_id}/onlineMeetings",
+                                        params={"$filter": f"joinWebUrl eq '{meeting.join_url}'"}
+                                    )
+                                )
+
+                                if online_meetings.get("value"):
+                                    om = online_meetings["value"][0]
+                                    om_participants = om.get("participants", {})
+
+                                    # Get attendee emails that actually joined (for filtering)
+                                    attendee_emails = {p.email.lower() for p in participants if p.email}
+
+                                    # Collect invitees (organizer + attendees from invite)
+                                    all_invitees = []
+
+                                    # Add organizer
+                                    org = om_participants.get("organizer", {})
+                                    if org.get("upn"):
+                                        all_invitees.append({
+                                            "email": org["upn"].lower(),
+                                            "name": org.get("identity", {}).get("user", {}).get("displayName")
+                                        })
+
+                                    # Add invited attendees
+                                    for att in om_participants.get("attendees", []):
+                                        if att.get("upn"):
+                                            all_invitees.append({
+                                                "email": att["upn"].lower(),
+                                                "name": att.get("identity", {}).get("user", {}).get("displayName")
+                                            })
+
+                                    # Filter out invitees who actually attended (by email)
+                                    for inv in all_invitees:
+                                        if inv["email"] not in attendee_emails:
+                                            # Look up display name if not available
+                                            if not inv["name"]:
+                                                try:
+                                                    user_info = await loop.run_in_executor(
+                                                        None,
+                                                        lambda email=inv["email"]: self.graph_client.get(f"/users/{email}")
+                                                    )
+                                                    inv["name"] = user_info.get("displayName", inv["email"])
+                                                except:
+                                                    inv["name"] = inv["email"].split("@")[0]
+                                            invitees_list.append(inv)
+
+                                    if invitees_list:
+                                        self._log_progress(job, f"Found {len(invitees_list)} invitees who may not have attended")
+
+                            except Exception as e:
+                                self._log_progress(job, f"Could not fetch meeting invitees: {e}", "warning")
 
                         # Format meeting time in Eastern timezone for subject
                         import pytz
@@ -351,10 +418,11 @@ class DistributionProcessor(BaseProcessor):
                                 subject=f"Meeting Summary: {meeting.subject} ({time_str})",
                                 summary_markdown=summary.summary_text,
                                 meeting_metadata=meeting_metadata,
-                                enhanced_summary_data=enhanced_summary_data,  # NEW: Enhanced data
-                                transcript_content=None,  # REMOVED: Using SharePoint links instead
+                                enhanced_summary_data=enhanced_summary_data,
+                                transcript_content=None,  # Using SharePoint links instead
                                 participants=participants_dict,
                                 transcript_stats=transcript_stats,
+                                invitees=invitees_list,  # NEW: Invitees who may not have attended
                                 include_footer=True
                             )
                         )

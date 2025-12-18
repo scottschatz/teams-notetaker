@@ -255,9 +255,21 @@ class ConfigManager:
         self.jwt_secret_key = os.getenv("JWT_SECRET_KEY", "")
         if not self.jwt_secret_key:
             import secrets
+            import logging
 
-            self.jwt_secret_key = secrets.token_urlsafe(32)
-            print("WARNING: JWT_SECRET_KEY not set in .env, using temporary key")
+            env_mode = os.getenv("ENV", "development").lower()
+            if env_mode == "production":
+                raise ValueError(
+                    "CRITICAL: JWT_SECRET_KEY must be set in production! "
+                    "Generate one with: python -c \"import secrets; print(secrets.token_urlsafe(32))\""
+                )
+            else:
+                self.jwt_secret_key = secrets.token_urlsafe(32)
+                logging.warning(
+                    "⚠️ JWT_SECRET_KEY not set - using temporary key. "
+                    "Sessions will be invalidated on restart. Set ENV=production to enforce."
+                )
+                print("WARNING: JWT_SECRET_KEY not set in .env, using temporary key (dev mode)")
 
         # Role-based access control
         self.admin_users = [u.strip().lower() for u in os.getenv("ADMIN_USERS", "").split(",") if u.strip()]

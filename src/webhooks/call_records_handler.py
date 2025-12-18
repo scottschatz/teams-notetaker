@@ -172,15 +172,16 @@ class CallRecordsWebhookHandler:
                     from sqlalchemy import cast
                     from sqlalchemy.dialects.postgresql import JSONB
 
+                    # Check for existing jobs in any active or completed state
                     existing_job = session.query(JobQueue).filter(
                         JobQueue.meeting_id == db_meeting_id,
                         JobQueue.job_type == "fetch_transcript",
-                        JobQueue.status == "completed",
+                        JobQueue.status.in_(["pending", "running", "retrying", "completed"]),
                         JobQueue.input_data["transcript_id"].astext == transcript_id
                     ).first()
 
                     if existing_job:
-                        logger.info(f"Transcript {transcript_id[:20]}... already processed for meeting {db_meeting_id}")
+                        logger.info(f"Transcript {transcript_id[:20]}... already has job (status={existing_job.status}) for meeting {db_meeting_id}")
                         return {"status": "duplicate", "meeting_id": db_meeting_id}
 
                     logger.info(f"New transcript {transcript_id[:20]}... for recurring meeting {db_meeting_id}")
@@ -314,6 +315,34 @@ class CallRecordsWebhookHandler:
 
                 logger.info(f"Meeting has {len(opted_in_participants)} opted-in participants")
 
+                # Extract organizer info from call record or first participant
+                # callRecords don't have a simple "organizer" field - use organizer from call record
+                # or fall back to first participant as the meeting creator
+                organizer_info = call_record.get("organizer", {})
+                organizer_user = organizer_info.get("user", {})
+                organizer_user_id = organizer_user.get("id")
+                organizer_email = None
+                organizer_name = organizer_user.get("displayName")
+
+                # If no organizer in callRecord, use first participant's user_id
+                if not organizer_user_id and participants:
+                    first_participant = participants[0]
+                    organizer_user_id = first_participant.get("user_id")
+                    organizer_email = first_participant.get("email")
+                    organizer_name = first_participant.get("name")
+                    logger.info(f"Using first participant as organizer: {organizer_email} ({organizer_user_id})")
+
+                # Look up organizer email from Graph API if we have user_id but no email
+                if organizer_user_id and not organizer_email:
+                    try:
+                        user_info = self.graph_client.get(f"/users/{organizer_user_id}")
+                        organizer_email = user_info.get("mail") or user_info.get("userPrincipalName")
+                        if not organizer_name:
+                            organizer_name = user_info.get("displayName")
+                        logger.debug(f"Looked up organizer: {organizer_name} <{organizer_email}>")
+                    except Exception as e:
+                        logger.warning(f"Could not look up organizer email for {organizer_user_id}: {e}")
+
                 # Check if meeting already exists in database
                 existing_meeting = session.query(Meeting).filter_by(
                     meeting_id=online_meeting_id
@@ -322,13 +351,19 @@ class CallRecordsWebhookHandler:
                 if existing_meeting:
                     logger.info(f"Meeting {existing_meeting.id} already exists")
                     meeting_id = existing_meeting.id
+
+                    # Update organizer_user_id if we have it and existing doesn't
+                    if organizer_user_id and not existing_meeting.organizer_user_id:
+                        existing_meeting.organizer_user_id = organizer_user_id
+                        logger.info(f"Updated organizer_user_id for meeting {meeting_id}")
                 else:
                     # Create meeting record
                     meeting = Meeting(
                         meeting_id=online_meeting_id,
                         subject=call_record.get("subject", "Unknown Meeting"),
-                        organizer_email=call_record.get("organizer", {}).get("email"),
-                        organizer_name=call_record.get("organizer", {}).get("displayName"),
+                        organizer_email=organizer_email,
+                        organizer_name=organizer_name,
+                        organizer_user_id=organizer_user_id,
                         start_time=self._parse_datetime(call_record.get("startDateTime")),
                         end_time=self._parse_datetime(call_record.get("endDateTime")),
                         participant_count=len(participants),
@@ -345,13 +380,53 @@ class CallRecordsWebhookHandler:
                     # Add participants
                     from ..core.database import MeetingParticipant
                     for p in participants:
+                        display_name = p.get("name") or "Unknown"
+                        participant_type = p.get("type", "internal")
+
+                        # For PSTN participants, include phone number in display name
+                        if participant_type == "pstn" and p.get("phone"):
+                            phone = p["phone"]
+                            # Format phone with icon: "Name (📞 +1234567890)" or just "📞 +1234567890"
+                            if display_name and display_name != "Phone Participant":
+                                display_name = f"{display_name} (📞 {phone})"
+                            else:
+                                display_name = f"📞 {phone}"
+
+                        # For external/guest participants, mark them
+                        elif participant_type in ("guest", "external"):
+                            if display_name and not display_name.endswith("(External)"):
+                                display_name = f"{display_name} (External)"
+
                         participant = MeetingParticipant(
                             meeting_id=meeting_id,
-                            email=p["email"],
-                            display_name=p["name"],
+                            email=p.get("email"),
+                            display_name=display_name,
                             role=p.get("role", "attendee")
                         )
                         session.add(participant)
+
+                # Check if fetch_transcript job already exists for this meeting
+                # This prevents duplicates when webhook and backfill both process same meeting
+                existing_job = session.query(JobQueue).filter(
+                    JobQueue.meeting_id == meeting_id,
+                    JobQueue.job_type == "fetch_transcript",
+                    JobQueue.status.in_(["pending", "running", "retrying", "completed"])
+                ).first()
+
+                if existing_job:
+                    logger.info(f"fetch_transcript job already exists for meeting {meeting_id} (job {existing_job.id}, status={existing_job.status})")
+                    # Still mark callRecord as processed to avoid re-checking
+                    session.add(ProcessedCallRecord(
+                        call_record_id=call_record_id,
+                        source=source
+                    ))
+                    session.commit()
+                    return {
+                        "status": "job_exists",
+                        "call_record_id": call_record_id,
+                        "meeting_id": meeting_id,
+                        "existing_job_id": existing_job.id
+                    }
 
                 # Mark callRecord as processed
                 session.add(ProcessedCallRecord(
@@ -389,22 +464,28 @@ class CallRecordsWebhookHandler:
 
         Note: Call record sessions only include user ID and displayName, NOT email.
         We must look up each user in Graph API to get their email address.
+
+        Also extracts:
+        - PSTN participants (phone dial-in) with phone numbers
+        - Guest users (external Teams users)
+        - ACS users (Azure Communication Services)
         """
         participants = []
-        seen_user_ids = set()
+        seen_ids = set()  # Track seen user IDs and phone numbers
 
         for session_data in call_record.get("sessions", []):
             for endpoint in ["caller", "callee"]:
                 identity = session_data.get(endpoint, {}).get("identity", {})
-                user = identity.get("user")
 
+                # Handle internal Teams users
+                user = identity.get("user")
                 if user and user.get("id"):
                     user_id = user["id"]
 
                     # Skip if already processed this user
-                    if user_id in seen_user_ids:
+                    if user_id in seen_ids:
                         continue
-                    seen_user_ids.add(user_id)
+                    seen_ids.add(user_id)
 
                     # Look up user email from Graph API (not included in call record)
                     email = user.get("userPrincipalName")  # Usually not present
@@ -422,10 +503,67 @@ class CallRecordsWebhookHandler:
                             "email": email.lower(),  # Normalize to lowercase
                             "name": user.get("displayName"),
                             "role": "attendee",
-                            "user_id": user_id
+                            "user_id": user_id,
+                            "type": "internal"
                         })
+                    continue
 
-        logger.info(f"Extracted {len(participants)} participants from call record")
+                # Handle PSTN/phone participants
+                phone = identity.get("phone")
+                if phone:
+                    phone_id = phone.get("id", "")
+                    display_name = phone.get("displayName", "")
+
+                    # Use phone number as unique identifier
+                    unique_id = phone_id or display_name
+                    if unique_id and unique_id not in seen_ids:
+                        seen_ids.add(unique_id)
+                        participants.append({
+                            "email": None,  # PSTN users don't have email
+                            "name": display_name or "Phone Participant",
+                            "phone": phone_id,
+                            "role": "attendee",
+                            "type": "pstn"
+                        })
+                        logger.debug(f"Found PSTN participant: {display_name} ({phone_id})")
+                    continue
+
+                # Handle guest users (external Teams users)
+                guest = identity.get("guest")
+                if guest:
+                    guest_id = guest.get("id", "")
+                    if guest_id and guest_id not in seen_ids:
+                        seen_ids.add(guest_id)
+                        participants.append({
+                            "email": guest.get("email", "").lower() if guest.get("email") else None,
+                            "name": guest.get("displayName", "Guest"),
+                            "role": "attendee",
+                            "type": "guest"
+                        })
+                        logger.debug(f"Found guest participant: {guest.get('displayName')}")
+                    continue
+
+                # Handle ACS users (Azure Communication Services - external)
+                acs_user = identity.get("acsUser")
+                if acs_user:
+                    acs_id = acs_user.get("id", "")
+                    if acs_id and acs_id not in seen_ids:
+                        seen_ids.add(acs_id)
+                        participants.append({
+                            "email": None,
+                            "name": acs_user.get("displayName", "External Participant"),
+                            "role": "attendee",
+                            "type": "external"
+                        })
+                        logger.debug(f"Found ACS participant: {acs_user.get('displayName')}")
+
+        # Log summary of extracted participants
+        internal = sum(1 for p in participants if p.get("type") == "internal")
+        pstn = sum(1 for p in participants if p.get("type") == "pstn")
+        guest = sum(1 for p in participants if p.get("type") == "guest")
+        external = sum(1 for p in participants if p.get("type") == "external")
+        logger.info(f"Extracted {len(participants)} participants: {internal} internal, {pstn} PSTN, {guest} guest, {external} external")
+
         return participants
 
     def _parse_datetime(self, dt_string: str) -> datetime:
@@ -436,6 +574,61 @@ class CallRecordsWebhookHandler:
             return datetime.fromisoformat(dt_string.replace("Z", "+00:00"))
         except:
             return None
+
+    def _fetch_meeting_invitees(self, organizer_user_id: str, join_url: str) -> list:
+        """
+        Fetch meeting invitees from online meeting.
+
+        Args:
+            organizer_user_id: The organizer's user ID
+            join_url: The meeting join URL
+
+        Returns:
+            List of invitee dicts with email and name
+        """
+        if not organizer_user_id or not join_url:
+            return []
+
+        try:
+            # Find online meeting by join URL
+            meetings = self.graph_client.get(
+                f"/users/{organizer_user_id}/onlineMeetings",
+                params={"$filter": f"joinWebUrl eq '{join_url}'"}
+            )
+
+            if not meetings.get("value"):
+                logger.debug(f"No online meeting found for join URL")
+                return []
+
+            online_meeting = meetings["value"][0]
+            participants_data = online_meeting.get("participants", {})
+
+            invitees = []
+
+            # Add organizer
+            organizer = participants_data.get("organizer", {})
+            if organizer.get("upn"):
+                invitees.append({
+                    "email": organizer["upn"].lower(),
+                    "name": organizer.get("identity", {}).get("user", {}).get("displayName"),
+                    "role": "organizer"
+                })
+
+            # Add attendees
+            for attendee in participants_data.get("attendees", []):
+                if attendee.get("upn"):
+                    invitees.append({
+                        "email": attendee["upn"].lower(),
+                        "name": attendee.get("identity", {}).get("user", {}).get("displayName"),
+                        "role": attendee.get("role", "attendee")
+                    })
+
+            logger.info(f"Found {len(invitees)} invitees from online meeting")
+            return invitees
+
+        except Exception as e:
+            logger.warning(f"Could not fetch meeting invitees: {e}")
+            return []
 
     async def backfill_recent_meetings(self, lookback_hours: int = 48) -> Dict[str, Any]:
         """
@@ -463,34 +656,48 @@ class CallRecordsWebhookHandler:
         }
 
         try:
-            # Smart gap detection (from last webhook timestamp)
+            # Calculate cutoff time - use the EARLIER of:
+            # 1. lookback_hours from now (requested by user)
+            # 2. Last webhook time minus 5 minutes (smart gap detection)
+            # This ensures we always look back at least as far as requested
+            lookback_cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+
             with self.db.get_session() as session:
                 last_webhook = session.query(ProcessedCallRecord).filter_by(
                     source='webhook'
                 ).order_by(ProcessedCallRecord.processed_at.desc()).first()
 
                 if last_webhook:
-                    # Backfill from last webhook with 5-minute safety margin
                     # Make processed_at timezone-aware if it's naive
                     processed_at = last_webhook.processed_at
                     if processed_at.tzinfo is None:
                         processed_at = processed_at.replace(tzinfo=timezone.utc)
 
-                    cutoff = processed_at - timedelta(minutes=5)
-                    time_gap = datetime.now(timezone.utc) - processed_at
-                    hours_gap = time_gap.total_seconds() / 3600
+                    gap_cutoff = processed_at - timedelta(minutes=5)
 
-                    logger.info(f"Last webhook: {last_webhook.processed_at}")
-                    logger.info(f"Backfilling {hours_gap:.1f} hour gap...")
+                    # Use the EARLIER time (further back in time)
+                    if lookback_cutoff < gap_cutoff:
+                        cutoff = lookback_cutoff
+                        logger.info(f"Using requested {lookback_hours}h lookback (further back than gap)")
+                    else:
+                        cutoff = gap_cutoff
+                        time_gap = datetime.now(timezone.utc) - processed_at
+                        hours_gap = time_gap.total_seconds() / 3600
+                        logger.info(f"Using gap detection ({hours_gap:.1f}h since last webhook)")
                 else:
-                    # No webhooks - use default lookback
-                    cutoff = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+                    # No webhooks - use requested lookback
+                    cutoff = lookback_cutoff
                     logger.info(f"No webhooks found, backfilling last {lookback_hours} hours...")
 
             cutoff_str = cutoff.isoformat().replace('+00:00', 'Z')
 
-            # Query callRecords API (PROVEN WORKING)
+            # Query callRecords API with PAGINATION support
+            # Graph API returns max 60 results per page with @odata.nextLink for more
             logger.info(f"Querying callRecords since {cutoff_str}...")
+            call_records = []
+            page = 1
+
+            # Initial request
             response = self.graph_client.get(
                 "/communications/callRecords",
                 params={
@@ -498,9 +705,23 @@ class CallRecordsWebhookHandler:
                 }
             )
 
-            call_records = response.get("value", [])
+            page_records = response.get("value", [])
+            call_records.extend(page_records)
+            logger.info(f"Page {page}: {len(page_records)} callRecords")
+
+            # Follow pagination links
+            next_link = response.get("@odata.nextLink")
+            while next_link:
+                page += 1
+                # The get() method already supports full URLs
+                response = self.graph_client.get(next_link)
+                page_records = response.get("value", [])
+                call_records.extend(page_records)
+                logger.info(f"Page {page}: {len(page_records)} callRecords (total: {len(call_records)})")
+                next_link = response.get("@odata.nextLink")
+
             stats["call_records_found"] = len(call_records)
-            logger.info(f"Found {len(call_records)} callRecords to process")
+            logger.info(f"Found {len(call_records)} callRecords total across {page} pages")
 
             # Process each callRecord
             for record in call_records:
@@ -552,8 +773,10 @@ class CallRecordsWebhookHandler:
                     if result["status"] == "processed":
                         stats["meetings_created"] += 1
                         stats["jobs_created"] += 1
-                        # Note: Can't easily track if transcript was found vs pending
-                        # without refactoring _process_call_record
+                    elif result["status"] == "job_exists":
+                        # Meeting already has a pending/running job (from webhook or earlier backfill)
+                        logger.info(f"Job already exists for meeting {result.get('meeting_id')}, skipping duplicate")
+                        # Don't count as error - this is expected deduplication
                     elif result["status"] == "error":
                         stats["errors"] += 1
 

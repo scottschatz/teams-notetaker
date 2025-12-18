@@ -62,6 +62,7 @@ class EmailSender:
         participants: Optional[List[Dict[str, str]]] = None,
         transcript_stats: Optional[Dict[str, Any]] = None,
         cc_emails: Optional[List[str]] = None,
+        invitees: Optional[List[Dict[str, str]]] = None,
         include_footer: bool = True
     ) -> str:
         """
@@ -77,6 +78,7 @@ class EmailSender:
             participants: Optional list of participants
             transcript_stats: Optional stats (word_count, speaker_count)
             cc_emails: Optional CC recipients
+            invitees: Optional list of invitees who may not have attended
             include_footer: Add standard footer with branding
 
         Returns:
@@ -107,12 +109,13 @@ class EmailSender:
             # Build email body with all enhancements
             body_html = self._build_enhanced_email_body(
                 summary_html,
-                summary_markdown,  # NEW: Pass markdown for extracting Executive Summary and Discussion Notes
+                summary_markdown,  # Pass markdown for extracting Executive Summary and Discussion Notes
                 meeting_metadata,
                 enhanced_summary_data,
                 action_items_html,
                 participants,
                 transcript_stats,
+                invitees,
                 include_footer
             )
 
@@ -306,29 +309,31 @@ class EmailSender:
     def _build_enhanced_email_body(
         self,
         summary_html: str,
-        summary_markdown: str,  # NEW: Markdown version for extracting sections
+        summary_markdown: str,  # Markdown version for extracting sections
         meeting_metadata: Dict[str, Any],
         enhanced_summary_data: Optional[Dict[str, Any]],
         action_items_html: Optional[str],
         participants: Optional[List[Dict[str, str]]],
         transcript_stats: Optional[Dict[str, Any]],
+        invitees: Optional[List[Dict[str, str]]] = None,
         include_footer: bool = True
     ) -> str:
         """
-        Build enhanced HTML email body with all 6 features:
+        Build enhanced HTML email body with all features:
         1. Recording link
         2. Meeting statistics
         3. Transcript attachment (handled separately)
         4. Dashboard link
         5. Action items callout
-        6. Participant list
+        6. Participant list (Top Speakers, Also Present, Invited)
 
         Args:
             summary_html: Summary content (HTML)
             meeting_metadata: Meeting details
             action_items_html: Extracted action items HTML
-            participants: List of participants
+            participants: List of participants who attended
             transcript_stats: Transcript statistics
+            invitees: List of invitees who may not have attended
             include_footer: Include branding footer
 
         Returns:
@@ -584,15 +589,16 @@ class EmailSender:
             top_speakers = speakers[:3]
             other_attendees = speakers[3:] + non_speakers
 
-            organizer_email = meeting_metadata.get("organizer_email", "")
+            organizer_email = meeting_metadata.get("organizer_email") or ""
 
             if top_speakers:
                 html += """            <div style="margin-bottom: 15px;"><strong>Top Speakers:</strong></div>
 """
                 for p in top_speakers:
-                    email = p.get("email", "")
+                    email = p.get("email") or ""
                     name = p.get("display_name", email)
-                    is_org = email.lower() == organizer_email.lower()
+                    # Handle None values safely
+                    is_org = (email.lower() == organizer_email.lower()) if email and organizer_email else False
                     role = " (Organizer)" if is_org else ""
                     job_title = p.get("job_title", "")
                     photo_base64 = p.get("photo_base64", "")
@@ -643,9 +649,9 @@ class EmailSender:
 """
                 # Show first 5 (or all if <=5) with full detail + photos
                 for p in show_with_photos:
-                    email = p.get("email", "")
+                    email = p.get("email") or ""
                     name = p.get("display_name", email)
-                    is_org = email.lower() == organizer_email.lower()
+                    is_org = (email.lower() == organizer_email.lower()) if email and organizer_email else False
                     role = " (Organizer)" if is_org else ""
                     job_title = p.get("job_title", "")
                     photo_base64 = p.get("photo_base64", "")
@@ -684,8 +690,8 @@ class EmailSender:
                     compact_names = []
                     for p in show_compact:
                         name = p.get("display_name", p.get("email", ""))
-                        email = p.get("email", "")
-                        is_org = email.lower() == organizer_email.lower()
+                        email = p.get("email") or ""
+                        is_org = (email.lower() == organizer_email.lower()) if email and organizer_email else False
                         if is_org:
                             name += " (Organizer)"
                         compact_names.append(name)
@@ -695,11 +701,26 @@ class EmailSender:
             </div>
 """
 
+            # Invited section - show invitees who may not have attended
+            if invitees and len(invitees) > 0:
+                html += """            <div style="margin-top: 20px; margin-bottom: 10px;"><strong>Invited:</strong></div>
+"""
+                # Show invitees in a compact format (just names/emails)
+                invitee_names = []
+                for inv in invitees:
+                    name = inv.get("name") or inv.get("email", "").split("@")[0]
+                    invitee_names.append(name)
+
+                html += f"""            <div style="padding: 10px; background: #fff3e0; border-radius: 4px; font-size: 0.9em; color: #666;">
+                {', '.join(invitee_names)}
+            </div>
+"""
+
             html += """        </div>
 
 """
 
-        # NEW: Executive Summary Section (variable length: 50-125 words based on complexity)
+        # Executive Summary Section (variable length: 50-125 words based on complexity)
         # Extract executive summary from summary_markdown (first section after ## Executive Summary)
         exec_summary_text = ""
         if summary_markdown:

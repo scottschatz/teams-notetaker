@@ -176,6 +176,8 @@ class MeetingParticipant(Base):
     joined_at = Column(DateTime)
     left_at = Column(DateTime)
     is_pilot_user = Column(Boolean, default=False, index=True)
+    attended = Column(Boolean, default=True, index=True)  # True=joined call, False=invited but didn't join
+    participant_type = Column(String(20))  # 'internal', 'pstn', 'guest', 'external'
 
     # Relationships
     meeting = relationship("Meeting", back_populates="participants")

@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse
 
 from ...core.database import DatabaseManager, JobQueue, Meeting
 from ...core.config import get_config
+from ..app import limiter
 from sqlalchemy import func, desc
 
 
@@ -159,14 +160,19 @@ async def get_system_status(db: DatabaseManager = Depends(get_db)):
 
 
 @router.post("/api/force-lookback")
+@limiter.limit("5/minute")  # Rate limit: max 5 backfills per minute
 async def force_lookback(
+    request: Request,
     hours: int = Query(..., ge=1, le=720),  # Max 30 days
     db: DatabaseManager = Depends(get_db)
 ):
     """
     Force a lookback/backfill for the specified number of hours.
 
+    Rate limited to 5 requests per minute to prevent API abuse.
+
     Args:
+        request: FastAPI request object (for rate limiting)
         hours: Number of hours to look back
 
     Returns:
@@ -199,6 +205,64 @@ async def force_lookback(
     except Exception as e:
         logger.error(f"Force lookback failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/api/logs")
+async def get_recent_logs(
+    lines: int = Query(default=50, ge=10, le=500),
+    service: str = Query(default="worker")
+):
+    """
+    Get recent log entries from service logs.
+
+    Args:
+        lines: Number of lines to return (default 50)
+        service: Service to get logs from (worker, webhook, web)
+
+    Returns:
+        List of recent log entries
+    """
+    import os
+
+    # Map service to log file
+    log_files = {
+        "worker": "logs/worker.log",
+        "webhook": None,  # Uses journalctl
+        "web": None  # Uses journalctl
+    }
+
+    log_entries = []
+
+    if service == "worker" and os.path.exists("logs/worker.log"):
+        # Read from file
+        try:
+            with open("logs/worker.log", "r") as f:
+                all_lines = f.readlines()
+                log_entries = [line.strip() for line in all_lines[-lines:]]
+        except Exception as e:
+            log_entries = [f"Error reading log: {e}"]
+    else:
+        # Use journalctl for systemd services
+        try:
+            service_name = f"teams-notetaker-{service}"
+            result = subprocess.run(
+                ["journalctl", "--user", "-u", service_name, "-n", str(lines), "--no-pager", "-o", "short"],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                log_entries = [line for line in result.stdout.strip().split("\n") if line]
+            else:
+                log_entries = [f"Error: {result.stderr}"]
+        except Exception as e:
+            log_entries = [f"Error getting logs: {e}"]
+
+    return {
+        "service": service,
+        "lines": len(log_entries),
+        "entries": log_entries
+    }
 
 
 @router.get("/", response_class=HTMLResponse)

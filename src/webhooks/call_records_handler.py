@@ -343,6 +343,24 @@ class CallRecordsWebhookHandler:
                     except Exception as e:
                         logger.warning(f"Could not look up organizer email for {organizer_user_id}: {e}")
 
+                # Look up meeting subject from online meeting details
+                meeting_subject = "Unknown Meeting"
+                if organizer_user_id and online_meeting_id:
+                    try:
+                        # Try to find the meeting subject via the organizer's online meetings
+                        # Query by joinWebUrl since we have that from the callRecord
+                        join_url = online_meeting_id  # online_meeting_id is the joinWebUrl
+                        meetings_response = self.graph_client.get(
+                            f"/users/{organizer_user_id}/onlineMeetings",
+                            params={"$filter": f"joinWebUrl eq '{join_url}'"}
+                        )
+                        meetings = meetings_response.get("value", [])
+                        if meetings:
+                            meeting_subject = meetings[0].get("subject") or "Teams Meeting"
+                            logger.info(f"Found meeting subject: {meeting_subject}")
+                    except Exception as e:
+                        logger.debug(f"Could not look up meeting subject: {e}")
+
                 # Check if meeting already exists in database
                 existing_meeting = session.query(Meeting).filter_by(
                     meeting_id=online_meeting_id
@@ -360,7 +378,7 @@ class CallRecordsWebhookHandler:
                     # Create meeting record
                     meeting = Meeting(
                         meeting_id=online_meeting_id,
-                        subject=call_record.get("subject", "Unknown Meeting"),
+                        subject=meeting_subject,
                         organizer_email=organizer_email,
                         organizer_name=organizer_name,
                         organizer_user_id=organizer_user_id,

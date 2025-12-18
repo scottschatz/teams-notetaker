@@ -30,17 +30,17 @@ class MeetingResponse(BaseModel):
     """Meeting API response."""
     id: int
     meeting_id: str
-    subject: str
-    organizer_name: str
-    organizer_email: Optional[str]
-    start_time: Optional[datetime]
-    end_time: Optional[datetime]
-    duration_minutes: int
-    participant_count: int
-    status: str
-    has_transcript: bool
-    has_summary: bool
-    has_distribution: bool
+    subject: Optional[str] = None
+    organizer_name: Optional[str] = None
+    organizer_email: Optional[str] = None
+    start_time: Optional[datetime] = None
+    end_time: Optional[datetime] = None
+    duration_minutes: Optional[int] = None
+    participant_count: Optional[int] = None
+    status: Optional[str] = None
+    has_transcript: bool = False
+    has_summary: bool = False
+    has_distribution: bool = False
     word_count: Optional[int] = None
     speaker_count: Optional[int] = None
 

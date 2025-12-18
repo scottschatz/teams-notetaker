@@ -349,17 +349,21 @@ class CallRecordsWebhookHandler:
                     try:
                         # Try to find the meeting subject via the organizer's online meetings
                         # Query by joinWebUrl since we have that from the callRecord
+                        # URL-encode the joinWebUrl for the OData filter
+                        from urllib.parse import quote
                         join_url = online_meeting_id  # online_meeting_id is the joinWebUrl
+                        encoded_url = quote(join_url, safe='')
                         meetings_response = self.graph_client.get(
                             f"/users/{organizer_user_id}/onlineMeetings",
-                            params={"$filter": f"joinWebUrl eq '{join_url}'"}
+                            params={"$filter": f"joinWebUrl eq '{encoded_url}'"}
                         )
                         meetings = meetings_response.get("value", [])
                         if meetings:
                             meeting_subject = meetings[0].get("subject") or "Teams Meeting"
                             logger.info(f"Found meeting subject: {meeting_subject}")
                     except Exception as e:
-                        logger.debug(f"Could not look up meeting subject: {e}")
+                        # Many callRecords are ad-hoc calls without scheduled meetings
+                        logger.debug(f"Could not look up meeting subject for {organizer_user_id}: {e}")
 
                 # Check if meeting already exists in database
                 existing_meeting = session.query(Meeting).filter_by(

@@ -77,22 +77,22 @@ class SummaryProcessor(BaseProcessor):
 
         from ...core.config import ClaudeConfig
 
-        # Use Sonnet 4.5 for both extraction and aggregate
-        sonnet_config = ClaudeConfig(
+        # Use Haiku 4.5 for testing (cheaper alternative)
+        # TODO: Make this configurable - Sonnet 4.5 for quality, Haiku 4.5 for cost savings
+        model_config = ClaudeConfig(
             api_key=config.claude.api_key,
-            model="claude-sonnet-4-5-20250929",  # Frontier model for best quality
+            model="claude-haiku-4-5-20251001",  # Testing Haiku for cost savings
             max_tokens=config.claude.max_tokens,
             temperature=config.claude.temperature
         )
 
         # Choose summarizer based on config flag
         if config.app.use_single_call_summarization:
-            logger.info("Using single-call summarization approach (1 API call, faster, cheaper, better quality)")
-            self.summarizer = SingleCallSummarizer(sonnet_config)
+            logger.info(f"Using single-call summarization with {model_config.model}")
+            self.summarizer = SingleCallSummarizer(model_config)
         else:
-            logger.info("Using multi-stage summarization approach (5 API calls with prompt caching)")
-            # Initialize enhanced summarizer with Sonnet 4.5 for all calls
-            self.summarizer = EnhancedMeetingSummarizer(sonnet_config, sonnet_config)
+            logger.info(f"Using multi-stage summarization with {model_config.model}")
+            self.summarizer = EnhancedMeetingSummarizer(model_config, model_config)
 
     async def process(self, job) -> Dict[str, Any]:
         """

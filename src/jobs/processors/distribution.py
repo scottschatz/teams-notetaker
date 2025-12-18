@@ -352,7 +352,8 @@ class DistributionProcessor(BaseProcessor):
                                     om_participants = om.get("participants", {})
 
                                     # Get attendee emails that actually joined (for filtering)
-                                    attendee_emails = {p.email.lower() for p in participants if p.email}
+                                    # Only include participants who actually attended (not invitees stored with attended=False)
+                                    attendee_emails = {p.email.lower() for p in participants if p.email and getattr(p, 'attended', True)}
 
                                     # Collect invitees (organizer + attendees from invite)
                                     all_invitees = []

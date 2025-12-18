@@ -147,7 +147,7 @@ class CallRecordsWebhookHandler:
 
                 if existing_meeting:
                     logger.info(f"Meeting {existing_meeting.id} already exists, updating status")
-                    existing_meeting.status = "transcript_ready"
+                    existing_meeting.status = "queued"
                     db_meeting_id = existing_meeting.id
 
                     # Check if we've already processed this transcript
@@ -184,7 +184,7 @@ class CallRecordsWebhookHandler:
                         end_time=self._parse_datetime(meeting_info.get("endDateTime")),
                         join_url=meeting_info.get("joinWebUrl"),
                         chat_id=meeting_info.get("chatInfo", {}).get("threadId"),
-                        status="transcript_ready"
+                        status="queued"
                     )
                     session.add(meeting)
                     session.flush()

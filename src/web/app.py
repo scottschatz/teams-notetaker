@@ -68,12 +68,14 @@ def create_app() -> FastAPI:
     app.state.config = config
 
     # Register routers (imported here to avoid circular imports)
-    from .routers import auth, dashboard, meetings, health
+    from .routers import auth, dashboard, meetings, health, admin, diagnostics
 
     app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
     app.include_router(dashboard.router, prefix="/dashboard", tags=["Dashboard"])
+    app.include_router(admin.router, tags=["Admin"])
     app.include_router(meetings.router, prefix="/api/meetings", tags=["Meetings API"])
     app.include_router(health.router, prefix="/api", tags=["Health"])
+    app.include_router(diagnostics.router, tags=["Diagnostics"])
 
     # Root redirect
     @app.get("/", response_class=HTMLResponse)

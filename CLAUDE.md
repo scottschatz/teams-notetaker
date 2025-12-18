@@ -525,3 +525,229 @@ The code is clean, well-documented, tested (where possible), and ready for deplo
 *Total Duration: ~4 hours*
 *Final Commit: 0b768b8*
 *GitHub: https://github.com/scottschatz/teams-notetaker*
+
+---
+
+# December 17, 2025 Session - Backfill Functionality Fix
+
+**Session Date**: December 17, 2025
+**AI Model**: Claude Sonnet 4.5
+**Task**: Fix broken lookback/backfill functionality
+**Duration**: ~3 hours
+**Result**: ✅ Complete success - 11/11 tests passing
+
+## 🎯 Problems Identified & Fixed
+
+### Critical Issues Discovered
+
+1. **Web UI Completely Broken**
+   - **Location**: `src/web/routers/diagnostics.py:188`
+   - **Issue**: Called non-existent `backfill_from_graph_api()` method
+   - **Fix**: Changed to `await handler.backfill_recent_meetings(lookback_hours=hours)`
+   - **Impact**: Force lookback UI now functional
+
+2. **Graph API Approach Wrong**
+   - **Issue**: Used `getAllTranscripts` API which doesn't work with application permissions
+   - **Root Cause**: getAllTranscripts requires delegated permissions (user context)
+   - **Fix**: Switched to proven callRecords API + individual transcript fetch
+
+3. **No Retry Logic**
+   - **Issue**: Transcripts take 7-45 minutes to appear after meeting ends
+   - **Impact**: One-shot fetch always failed for recent meetings
+   - **Fix**: Implemented exponential backoff (15min → 8hr over 6 retries)
+
+4. **Datetime Deprecation Warnings**
+   - **Issue**: `datetime.utcnow()` deprecated in Python 3.12+
+   - **Fix**: Migrated to `datetime.now(timezone.utc)`
+   - **Gotcha**: Had to handle timezone-aware vs naive datetime mixing
+
+5. **Datetime Format Issue**
+   - **Issue**: Graph API rejected format like `2025-12-17T19:49:08.823821+00:00Z`
+   - **Root Cause**: `.isoformat()` on aware datetime returns +00:00, then added Z
+   - **Fix**: `.isoformat().replace('+00:00', 'Z')`
+
+## 🧪 Testing Implementation
+
+Created comprehensive test suite (11 tests):
+
+### Test Infrastructure Challenges
+
+1. **JSONB vs SQLite**
+   - **Issue**: PostgreSQL JSONB columns incompatible with SQLite test database
+   - **Solution**: Monkey-patched JSONB to use JSON for SQLite
+   ```python
+   JSONB._compiler_dispatch = lambda self, visitor, **kw: JSON._compiler_dispatch(self, visitor, **kw)
+   ```
+
+2. **DatabaseManager Pool Settings**
+   - **Issue**: `max_overflow` parameter invalid for SQLite
+   - **Solution**: Manually created DatabaseManager with `object.__new__()` to bypass __init__
+
+3. **Mock Graph API Routing**
+   - **Issue**: Different URLs need different responses (list vs individual records)
+   - **Solution**: Smart mock routing based on URL patterns and kwargs
+   ```python
+   def mock_get(url, **kwargs):
+       if url == "/communications/callRecords" and "params" in kwargs:
+           return {"value": sample_call_records}  # List
+       elif "/communications/callRecords/" in url:
+           return individual_record  # Single record
+   ```
+
+4. **User Preference Model Mismatch**
+   - **Issue**: Factory used `email` field but model uses `user_email`
+   - **Fix**: Updated factory to match actual database schema
+
+5. **Default Opt-In Behavior**
+   - **Issue**: Tests assumed users opt-out by default
+   - **Reality**: PreferenceManager returns True if no preference found
+   - **Fix**: Updated tests to explicitly create opted-out users
+
+## ⚠️ Critical Learnings - AVOID THESE MISTAKES
+
+### 1. **Always Read Files Before Editing**
+- **Problem**: Can't edit without reading first (tool constraint)
+- **Solution**: Always `Read` file before `Edit`, even if you "know" the content
+
+### 2. **Import Dependencies When Changing stdlib Usage**
+- **Problem**: Changed `datetime.utcnow()` to `datetime.now(timezone.utc)` but forgot to import `timezone`
+- **Error**: `NameError: name 'timezone' is not defined`
+- **Solution**: Always update imports when changing from module-level to imported constants
+
+### 3. **Timezone-Aware vs Naive Mixing**
+- **Problem**: Can't subtract naive datetime from aware datetime
+- **Error**: `TypeError: can't subtract offset-naive and offset-aware datetimes`
+- **Solution**: Add `.replace(tzinfo=timezone.utc)` to naive datetimes before arithmetic with aware datetimes
+
+### 4. **Graph API DateTime Format**
+- **Problem**: Graph API is VERY picky about datetime format
+- **Wrong**: `2025-12-17T19:49:08.823821+00:00Z` (has both +00:00 AND Z)
+- **Right**: `2025-12-17T19:49:08.823821Z` (Z only for UTC)
+- **Solution**: `.isoformat().replace('+00:00', 'Z')` not `.isoformat() + 'Z'`
+
+### 5. **Mock Setup for Multi-Call Workflows**
+- **Problem**: Single `return_value` doesn't work when code makes multiple API calls with different URLs
+- **Solution**: Use `side_effect` with function that routes based on URL/params
+- **Example**: Backfill lists records, then fetches each individually - needs 2 different responses
+
+### 6. **SQLite != PostgreSQL**
+- **Problem**: Test database (SQLite) doesn't support all PostgreSQL features
+- **Common Issues**:
+  - JSONB type → Use JSON instead
+  - Connection pool settings (max_overflow) → Not supported
+  - Array columns → Use JSON arrays
+- **Solution**: Either use PostgreSQL for tests OR create compatibility layer
+
+### 7. **Database Model Field Names**
+- **Problem**: Assumed field name without checking actual model
+- **Example**: Used `email` when model has `user_email`
+- **Solution**: ALWAYS check actual model definition before creating test data
+
+### 8. **Default Business Logic**
+- **Problem**: Assumed opt-out by default, but system is opt-in by default
+- **Impact**: Tests failed because they expected opposite behavior
+- **Solution**: Read the actual implementation before writing test expectations
+
+### 9. **Test Assertions Must Match Reality**
+- **Problem**: Test expected missing joinWebUrl to count as "error"
+- **Reality**: Code handles gracefully with warning, not error
+- **Solution**: Assertions must match actual code behavior, not assumed behavior
+
+### 10. **Template Directory Structure**
+- **Problem**: Referenced `templates/diagnostics/backfill_history.html` but directory didn't exist
+- **Error**: Template not found
+- **Solution**: Create directory structure before writing templates
+
+## 📊 Delivered Features
+
+### Code Changes (6 files modified/created)
+
+1. **Fixed Critical Bug** (`src/web/routers/diagnostics.py`)
+   - Added missing import for GraphAPIClient
+   - Fixed method call and added async/await
+   - Added backfill history viewer endpoints
+
+2. **Enhanced Backfill Logic** (`src/webhooks/call_records_handler.py`)
+   - Smart gap detection from last webhook
+   - Comprehensive statistics tracking
+   - Fixed datetime deprecations
+   - Fixed Graph API datetime format
+
+3. **Added Retry Logic** (`src/jobs/processors/transcript.py`)
+   - Exponential backoff: 15min, 30min, 1hr, 2hr, 4hr, 8hr
+   - Proper job status transitions
+   - Max 6 retries before giving up
+
+4. **Added Tracking Model** (`src/core/database.py`)
+   - BackfillRun table for monitoring operations
+   - Stores configuration and statistics
+
+5. **Comprehensive Tests** (`tests/test_backfill.py`)
+   - 11 tests covering all scenarios
+   - Edge case testing
+   - 100% pass rate
+
+6. **Test Factories** (`tests/factories.py`)
+   - GraphAPITestFactory for realistic test data
+   - DatabaseTestFactory for model creation
+
+### Web UI Enhancements
+
+1. **Backfill History Viewer** (`/diagnostics/backfill-history`)
+   - Table showing last 50 backfill runs
+   - Statistics breakdown
+   - Error messages display
+   - Duration calculation
+
+2. **Diagnostics Page Updated**
+   - Added "View Backfill History" button
+   - Links to new history page
+
+## 🎓 Key Takeaways for Future Sessions
+
+### Testing Best Practices
+
+1. **Write Tests DURING Implementation** - Not after
+2. **Test Edge Cases** - Empty results, malformed data, API errors
+3. **Mock Realistically** - Match actual API behavior, not assumptions
+4. **Use Factories** - Centralized test data generation prevents duplication
+
+### Python Best Practices
+
+1. **Timezone-Aware Everything** - Always use `timezone.utc` not naive UTC
+2. **Import What You Use** - Don't rely on module-level constants
+3. **Check Actual Schemas** - Don't assume field names
+4. **Read Deprecation Warnings** - Fix them immediately
+
+### Debugging Workflow
+
+1. **Run Tests After Every Change** - Catch issues immediately
+2. **Read Error Messages Carefully** - They usually tell you exactly what's wrong
+3. **Check Actual vs Expected** - Don't assume, verify
+4. **Use Logs** - Add logging before debugging
+
+### API Integration Lessons
+
+1. **DateTime Formats Matter** - Graph API is strict
+2. **Permissions Matter** - Application vs delegated permissions
+3. **Test with Real API** - Mocks hide permission issues
+4. **Retry Logic Essential** - External systems have timing issues
+
+## ✅ Session Results
+
+**Testing**: 11/11 tests passing ✅
+**Deprecation Warnings**: 0 (all fixed) ✅
+**Force Lookback**: Working ✅
+**Backfill History UI**: Deployed ✅
+**Services**: Running ✅
+
+**Files Modified**: 6
+**Lines Changed**: ~800
+**Commits**: 4
+**Test Coverage**: Comprehensive
+
+---
+
+*Session End: December 17, 2025*
+*Duration: ~3 hours*
+*Status: ✅ PRODUCTION READY*

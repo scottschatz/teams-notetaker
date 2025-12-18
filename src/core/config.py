@@ -85,6 +85,33 @@ class AzureADConfig:
 
 
 @dataclass
+class AzureRelayConfig:
+    """Azure Relay configuration for webhook listening."""
+
+    namespace: str = ""  # e.g., "myrelay.servicebus.windows.net"
+    hybrid_connection: str = "teams-webhooks"
+    key_name: str = "RootManageSharedAccessKey"
+    key: str = ""
+
+    def is_configured(self) -> bool:
+        """Check if Azure Relay is properly configured."""
+        return bool(self.namespace and self.key)
+
+    @property
+    def webhook_url(self) -> str:
+        """
+        Get the public webhook URL for Graph API subscriptions.
+
+        Note: This is the HTTP endpoint format for external services (like Microsoft Graph)
+        to send requests TO the Azure Relay. This is different from the WebSocket URL
+        (wss://.../$hc/...) that the listener uses to connect.
+        """
+        if not self.is_configured():
+            return ""
+        return f"https://{self.namespace}/{self.hybrid_connection}"
+
+
+@dataclass
 class AppConfig:
     """Runtime application configuration (from config.yaml)."""
 
@@ -132,9 +159,20 @@ class AppConfig:
     enable_mentions: bool = True
     max_highlights: int = 5
 
+    # Summarization Approach (v2.1)
+    use_single_call_summarization: bool = True  # Default: use single-call (faster, cheaper, better quality)
+
     # SharePoint Links (v2.0)
     use_sharepoint_links: bool = True
     sharepoint_link_expiration_days: int = 90
+
+    # Webhooks (v3.0) - Azure Relay for org-wide discovery
+    webhooks_enabled: bool = True  # Enable webhook-based discovery
+    webhook_backfill_hours: int = 48  # Hours to backfill on startup
+    webhook_safety_net_enabled: bool = True  # Daily catchup for missed meetings
+
+    # User Preferences (v3.0) - Opt-in system
+    default_email_preference: bool = False  # Default opt-out (users must opt-in)
 
 
 class ConfigManager:
@@ -205,6 +243,14 @@ class ConfigManager:
             allowed_domain=os.getenv("AZURE_AD_ALLOWED_DOMAIN", "townsquaremedia.com"),
         )
 
+        # Azure Relay configuration (for webhooks)
+        self.azure_relay = AzureRelayConfig(
+            namespace=os.getenv("AZURE_RELAY_NAMESPACE", ""),
+            hybrid_connection=os.getenv("AZURE_RELAY_HYBRID_CONNECTION", "teams-webhooks"),
+            key_name=os.getenv("AZURE_RELAY_KEY_NAME", "RootManageSharedAccessKey"),
+            key=os.getenv("AZURE_RELAY_KEY", ""),
+        )
+
         # JWT secret for session tokens
         self.jwt_secret_key = os.getenv("JWT_SECRET_KEY", "")
         if not self.jwt_secret_key:
@@ -247,6 +293,7 @@ class ConfigManager:
                 "teams_chat_enabled": self.app.teams_chat_enabled,
                 "minimum_meeting_duration_minutes": self.app.minimum_meeting_duration_minutes,
                 "worker_heartbeat_interval_seconds": self.app.worker_heartbeat_interval_seconds,
+                "use_single_call_summarization": self.app.use_single_call_summarization,
             }
 
             with open(self.config_file, "w") as f:

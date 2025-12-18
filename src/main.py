@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from src.core.config import get_config, ConfigManager
 from src.core.database import DatabaseManager
 from src.core.logging_config import setup_logging
+from src.cli.webhooks_commands import webhooks
 
 
 @click.group()
@@ -487,6 +488,14 @@ def config_validate():
             click.echo(f"   • {error}")
         click.echo("")
         sys.exit(1)
+
+
+# ============================================================================
+# WEBHOOK MANAGEMENT
+# ============================================================================
+
+# Register webhooks command group
+cli.add_command(webhooks)
 
 
 # ============================================================================

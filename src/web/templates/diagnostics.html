@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+
+{% block title %}System Diagnostics - Teams Notetaker{% endblock %}
+
+{% block content %}
+<div x-data="diagnosticsData()" x-init="loadStatus(); setInterval(loadStatus, 5000)">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-gray-900">System Diagnostics</h1>
+        <div class="flex items-center space-x-4">
+            <span class="text-sm text-gray-500" x-text="'Last updated: ' + lastUpdated"></span>
+            <a href="/diagnostics/backfill-history"
+               class="px-4 py-1 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm font-medium">
+                View Backfill History
+            </a>
+            <div class="flex items-center space-x-2">
+                <label class="text-sm text-gray-700">Force Lookback:</label>
+                <select x-model="lookbackHours" class="px-3 py-1 border border-gray-300 rounded-lg text-sm">
+                    <option value="1">1 hour</option>
+                    <option value="6">6 hours</option>
+                    <option value="24">24 hours</option>
+                    <option value="72">3 days</option>
+                    <option value="168">1 week</option>
+                    <option value="720">30 days</option>
+                </select>
+                <button @click="forceLookback()"
+                        class="px-4 py-1 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-sm font-medium">
+                    Run Lookback
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Services Status -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <template x-for="(service, name) in status.services" :key="name">
+            <div class="bg-white rounded-lg shadow p-6">
+                <div class="flex justify-between items-start">
+                    <h3 class="text-sm font-medium text-gray-700" x-text="name.replace('teams-notetaker-', '')"></h3>
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium"
+                          :class="service.running ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                          x-text="service.running ? 'Running' : 'Stopped'">
+                    </span>
+                </div>
+                <p class="mt-2 text-xs text-gray-500" x-show="service.started_at" x-text="'Started: ' + formatTime(service.started_at)"></p>
+            </div>
+        </template>
+    </div>
+
+    <!-- Queue Statistics -->
+    <div class="bg-white rounded-lg shadow p-6 mb-8">
+        <h2 class="text-xl font-bold text-gray-900 mb-4">Job Queue</h2>
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div>
+                <p class="text-sm text-gray-500">Pending</p>
+                <p class="text-2xl font-bold text-yellow-600" x-text="status.queue?.stats?.pending || 0"></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Running</p>
+                <p class="text-2xl font-bold text-blue-600" x-text="status.queue?.stats?.running || 0"></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Completed</p>
+                <p class="text-2xl font-bold text-green-600" x-text="status.queue?.stats?.completed || 0"></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Failed</p>
+                <p class="text-2xl font-bold text-red-600" x-text="status.queue?.stats?.failed || 0"></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Retrying</p>
+                <p class="text-2xl font-bold text-orange-600" x-text="status.queue?.stats?.retrying || 0"></p>
+            </div>
+        </div>
+
+        <!-- Activity Last Hour -->
+        <div class="mt-6" x-show="status.queue?.activity_last_hour">
+            <h3 class="text-sm font-semibold text-gray-700 mb-2">Activity (Last Hour)</h3>
+            <div class="space-y-2">
+                <template x-for="(statuses, jobType) in status.queue?.activity_last_hour" :key="jobType">
+                    <div class="flex items-center">
+                        <span class="text-sm font-medium text-gray-700 w-40" x-text="jobType"></span>
+                        <template x-for="(count, status) in statuses" :key="status">
+                            <span class="ml-2 px-2 py-1 text-xs rounded"
+                                  :class="{
+                                      'bg-green-100 text-green-800': status === 'completed',
+                                      'bg-blue-100 text-blue-800': status === 'running',
+                                      'bg-yellow-100 text-yellow-800': status === 'pending',
+                                      'bg-red-100 text-red-800': status === 'failed'
+                                  }"
+                                  x-text="status + ': ' + count">
+                            </span>
+                        </template>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Meeting Statistics -->
+    <div class="bg-white rounded-lg shadow p-6 mb-8">
+        <h2 class="text-xl font-bold text-gray-900 mb-4">Meetings</h2>
+        <div class="grid grid-cols-2 md:grid-cols-6 gap-4">
+            <div>
+                <p class="text-sm text-gray-500">Total</p>
+                <p class="text-2xl font-bold text-gray-900" x-text="status.meetings?.stats?.total || 0"></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Completed</p>
+                <p class="text-2xl font-bold text-green-600" x-text="status.meetings?.stats?.completed || 0"></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Processing</p>
+                <p class="text-2xl font-bold text-blue-600" x-text="status.meetings?.stats?.processing || 0"></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Queued</p>
+                <p class="text-2xl font-bold text-yellow-600" x-text="status.meetings?.stats?.queued || 0"></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Skipped</p>
+                <p class="text-2xl font-bold text-gray-600" x-text="status.meetings?.stats?.skipped || 0"></p>
+            </div>
+            <div>
+                <p class="text-sm text-gray-500">Failed</p>
+                <p class="text-2xl font-bold text-red-600" x-text="status.meetings?.stats?.failed || 0"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Jobs -->
+    <div class="bg-white rounded-lg shadow overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200">
+            <h2 class="text-xl font-bold text-gray-900">Recent Jobs</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Job ID</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Type</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Meeting</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Created</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Completed</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    <template x-for="job in status.recent_jobs" :key="job.id">
+                        <tr>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900" x-text="job.id"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="job.type"></td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
+                                      :class="{
+                                          'bg-green-100 text-green-800': job.status === 'completed',
+                                          'bg-blue-100 text-blue-800': job.status === 'running',
+                                          'bg-yellow-100 text-yellow-800': job.status === 'pending',
+                                          'bg-red-100 text-red-800': job.status === 'failed',
+                                          'bg-orange-100 text-orange-800': job.status === 'retrying'
+                                      }"
+                                      x-text="job.status">
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="job.meeting_id || '-'"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="formatDateTime(job.created_at)"></td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500" x-text="job.completed_at ? formatDateTime(job.completed_at) : '-'"></td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function diagnosticsData() {
+    return {
+        status: {
+            services: {},
+            queue: {},
+            meetings: {},
+            recent_jobs: []
+        },
+        lastUpdated: '',
+        lookbackHours: 24,  // Default to 24 hours
+
+        async loadStatus() {
+            try {
+                const response = await fetch('/diagnostics/api/status');
+                this.status = await response.json();
+                this.lastUpdated = new Date().toLocaleTimeString();
+            } catch (error) {
+                console.error('Failed to load diagnostics:', error);
+            }
+        },
+
+        async forceLookback() {
+            if (!confirm(`Force lookback for the last ${this.lookbackHours} hours? This will search Graph API for all meetings with transcripts and create jobs for any that were missed.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/diagnostics/api/force-lookback?hours=${this.lookbackHours}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    alert(`Lookback complete!\n\nJobs created: ${data.jobs_created}\nLookback from: ${new Date(data.lookback_start).toLocaleString()}`);
+                    this.loadStatus();  // Refresh status
+                } else {
+                    const error = await response.json();
+                    alert('Failed to run lookback: ' + error.detail);
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        },
+
+        formatDateTime(dateString) {
+            if (!dateString) return '-';
+            const date = new Date(dateString);
+            return date.toLocaleString();
+        },
+
+        formatTime(dateString) {
+            if (!dateString) return '-';
+            const date = new Date(dateString);
+            return date.toLocaleTimeString();
+        }
+    }
+}
+</script>
+{% endblock %}

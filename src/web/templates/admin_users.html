@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+
+{% block title %}User Management - Teams Notetaker{% endblock %}
+
+{% block content %}
+<div class="min-h-screen">
+    <h1 class="text-3xl font-bold text-gray-900 mb-6">User Management</h1>
+
+    <div class="max-w-7xl mx-auto">
+            <!-- Stats -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-700">Total Users</h3>
+                    <p class="text-3xl font-bold text-blue-600">{{ total_users }}</p>
+                </div>
+                <div class="bg-white rounded-lg shadow p-6">
+                    <h3 class="text-lg font-semibold text-gray-700">Active Subscribers</h3>
+                    <p class="text-3xl font-bold text-green-600">{{ active_users }}</p>
+                </div>
+            </div>
+
+            <!-- Add User Form & Bulk Actions -->
+            <div class="bg-white rounded-lg shadow p-6 mb-8">
+                <div class="flex justify-between items-start mb-4">
+                    <h2 class="text-xl font-bold text-gray-900">Add New Subscriber</h2>
+                    <div class="flex gap-2">
+                        <button
+                            onclick="subscribeAll()"
+                            class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium text-sm"
+                        >
+                            Subscribe All
+                        </button>
+                        <button
+                            onclick="unsubscribeAll()"
+                            class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-medium text-sm"
+                        >
+                            Unsubscribe All
+                        </button>
+                    </div>
+                </div>
+                <form action="/admin/users/add" method="POST" class="flex gap-4">
+                    <input
+                        type="email"
+                        name="email"
+                        placeholder="user@townsquaremedia.com"
+                        required
+                        class="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    >
+                    <button
+                        type="submit"
+                        class="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                    >
+                        Add User
+                    </button>
+                </form>
+            </div>
+
+            <!-- Users Table -->
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h2 class="text-xl font-bold text-gray-900">Subscribers</h2>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Preference</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Updated</th>
+                                <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="bg-white divide-y divide-gray-200">
+                            {% for user in users %}
+                            <tr id="user-{{ user.user_email }}" class="hover:bg-gray-50">
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="text-sm font-medium text-gray-900">{{ user.user_email }}</div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    {% if user.receive_emails %}
+                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
+                                        Active
+                                    </span>
+                                    {% else %}
+                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
+                                        Disabled
+                                    </span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    {{ user.email_preference }}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                    {% if user.updated_at %}
+                                    {{ user.updated_at.strftime('%Y-%m-%d %H:%M') }}
+                                    {% else %}
+                                    -
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                    <button
+                                        onclick="toggleUser('{{ user.user_email }}')"
+                                        class="text-blue-600 hover:text-blue-900 mr-4"
+                                    >
+                                        {% if user.receive_emails %}Disable{% else %}Enable{% endif %}
+                                    </button>
+                                    <button
+                                        onclick="deleteUser('{{ user.user_email }}')"
+                                        class="text-red-600 hover:text-red-900"
+                                    >
+                                        Delete
+                                    </button>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        async function toggleUser(email) {
+            try {
+                const response = await fetch(`/admin/users/${encodeURIComponent(email)}/toggle`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to toggle user status');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function deleteUser(email) {
+            if (!confirm(`Are you sure you want to delete ${email}?`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/admin/users/${encodeURIComponent(email)}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    location.reload();
+                } else {
+                    alert('Failed to delete user');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function subscribeAll() {
+            if (!confirm('Enable email delivery for ALL users?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/admin/users/subscribe-all', {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    alert(data.message);
+                    location.reload();
+                } else {
+                    alert('Failed to subscribe all users');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function unsubscribeAll() {
+            if (!confirm('Disable email delivery for ALL users? This will stop all email notifications.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch('/admin/users/unsubscribe-all', {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    alert(data.message);
+                    location.reload();
+                } else {
+                    alert('Failed to unsubscribe all users');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+    </script>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+    // JavaScript already included above
+</script>
+{% endblock %}

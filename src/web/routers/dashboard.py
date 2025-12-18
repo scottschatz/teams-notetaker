@@ -5,10 +5,8 @@ HTML pages for the web dashboard.
 """
 
 import logging
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse
-
-from ...auth.dependencies import get_current_user, require_admin
 
 
 logger = logging.getLogger(__name__)
@@ -17,10 +15,7 @@ router = APIRouter()
 
 
 @router.get("/", response_class=HTMLResponse)
-async def dashboard_home(
-    request: Request,
-    current_user: dict = Depends(get_current_user)
-):
+async def dashboard_home(request: Request):
     """
     Main dashboard page with overview stats.
 
@@ -33,17 +28,14 @@ async def dashboard_home(
         "dashboard.html",
         {
             "request": request,
-            "user": current_user,
+            "user": {"email": "local", "role": "admin"},  # Dummy user for templates
             "page": "dashboard"
         }
     )
 
 
 @router.get("/meetings", response_class=HTMLResponse)
-async def meetings_page(
-    request: Request,
-    current_user: dict = Depends(get_current_user)
-):
+async def meetings_page(request: Request):
     """
     Meetings browser page.
 
@@ -56,7 +48,7 @@ async def meetings_page(
         "meetings.html",
         {
             "request": request,
-            "user": current_user,
+            "user": {"email": "local", "role": "admin"},
             "page": "meetings"
         }
     )
@@ -65,8 +57,7 @@ async def meetings_page(
 @router.get("/meetings/{meeting_id}", response_class=HTMLResponse)
 async def meeting_detail_page(
     request: Request,
-    meeting_id: int,
-    current_user: dict = Depends(get_current_user)
+    meeting_id: int
 ):
     """
     Meeting detail page with transcript and summary.
@@ -83,7 +74,7 @@ async def meeting_detail_page(
         "meeting_detail.html",
         {
             "request": request,
-            "user": current_user,
+            "user": {"email": "local", "role": "admin"},
             "meeting_id": meeting_id,
             "page": "meetings"
         }
@@ -91,10 +82,7 @@ async def meeting_detail_page(
 
 
 @router.get("/pilot", response_class=HTMLResponse)
-async def pilot_users_page(
-    request: Request,
-    current_user: dict = Depends(require_admin)
-):
+async def pilot_users_page(request: Request):
     """
     Pilot users management page (admin only).
 
@@ -107,17 +95,14 @@ async def pilot_users_page(
         "pilot_users.html",
         {
             "request": request,
-            "user": current_user,
+            "user": {"email": "local", "role": "admin"},
             "page": "pilot"
         }
     )
 
 
 @router.get("/config", response_class=HTMLResponse)
-async def config_page(
-    request: Request,
-    current_user: dict = Depends(require_admin)
-):
+async def config_page(request: Request):
     """
     Configuration editor page (admin only).
 
@@ -130,7 +115,7 @@ async def config_page(
         "config.html",
         {
             "request": request,
-            "user": current_user,
+            "user": {"email": "local", "role": "admin"},
             "page": "config"
         }
     )

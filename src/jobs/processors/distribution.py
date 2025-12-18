@@ -84,8 +84,10 @@ class DistributionProcessor(BaseProcessor):
         self._validate_job_input(job, required_fields=["meeting_id"])
 
         meeting_id = job.input_data["meeting_id"]
+        resend_target = job.input_data.get("resend_target")  # 'organizer', 'subscribers', 'both', or None
 
-        self._log_progress(job, f"Distributing summary for meeting {meeting_id}")
+        self._log_progress(job, f"Distributing summary for meeting {meeting_id}" +
+                          (f" (resend to: {resend_target})" if resend_target else ""))
 
         # Get meeting, summary, and participants from database
         meeting = self._get_meeting(meeting_id)
@@ -118,10 +120,25 @@ class DistributionProcessor(BaseProcessor):
                 f"Found {len(participant_emails)} participant email(s)"
             )
 
+            # Filter by resend_target if specified
+            if resend_target:
+                if resend_target == 'organizer':
+                    # Only send to organizer
+                    participant_emails = [meeting.organizer_email] if meeting.organizer_email else []
+                    self._log_progress(job, f"Resending to organizer only: {meeting.organizer_email}")
+                elif resend_target == 'subscribers':
+                    # Only send to subscribers (filter out organizer)
+                    participant_emails = [e for e in participant_emails if e != meeting.organizer_email]
+                    self._log_progress(job, f"Resending to subscribers only (excluding organizer)")
+                # 'both' or any other value: send to all (no filtering)
+
             # Filter by preferences using priority logic (opt-in/opt-out system)
             filtered_emails = []
             for email in participant_emails:
-                if self.pref_manager.should_send_email(email, meeting_id):
+                # For resend_target='organizer', skip preference check (always send to organizer)
+                if resend_target == 'organizer':
+                    filtered_emails.append(email)
+                elif self.pref_manager.should_send_email(email, meeting_id):
                     filtered_emails.append(email)
                 else:
                     logger.debug(f"Skipping {email} based on preferences")

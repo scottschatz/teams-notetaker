@@ -13,7 +13,7 @@ from ..processors.base import BaseProcessor, register_processor
 from ...graph.client import GraphAPIClient
 from ...graph.transcripts import TranscriptFetcher
 from ...utils.vtt_parser import parse_vtt, get_transcript_metadata, format_transcript_for_summary
-from ...core.database import Transcript, Meeting, ProcessedChatMessage
+from ...core.database import Transcript, Meeting, ProcessedChatMessage, JobQueue
 from ...core.exceptions import TranscriptNotFoundError, GraphAPIError
 from ...chat.command_parser import ChatCommandParser, CommandType
 from ...preferences.user_preferences import PreferenceManager
@@ -304,18 +304,63 @@ class TranscriptProcessor(BaseProcessor):
         except TranscriptNotFoundError as e:
             self._log_progress(job, f"Transcript not available: {e}", "warning")
 
-            # Update meeting status
-            self._update_meeting_status(
-                meeting_id,
-                "skipped",
-                error_message=f"No transcript available: {e}"
-            )
+            # NEW: Implement exponential backoff retry
+            max_retries = job.max_retries if hasattr(job, 'max_retries') and job.max_retries else 6
 
-            return self._create_output_data(
-                success=False,
-                message=f"Transcript not available: {e}",
-                skipped=True
-            )
+            if job.retry_count < max_retries:
+                # Calculate next retry time: 15min, 30min, 1hr, 2hr, 4hr, 8hr
+                delay_minutes = 15 * (2 ** job.retry_count)
+                next_retry = datetime.utcnow() + timedelta(minutes=delay_minutes)
+
+                self._log_progress(
+                    job,
+                    f"Transcript not ready. Scheduling retry {job.retry_count + 1}/{max_retries} "
+                    f"in {delay_minutes} minutes (at {next_retry})"
+                )
+
+                # Update job for retry
+                with self.db.get_session() as session:
+                    db_job = session.query(JobQueue).filter_by(id=job.id).first()
+                    if db_job:
+                        db_job.status = "retrying"
+                        db_job.retry_count += 1
+                        db_job.next_retry_at = next_retry
+                        db_job.error_message = f"Transcript not ready: {e}"
+                        session.commit()
+
+                # Don't update meeting status yet - still trying
+                return self._create_output_data(
+                    success=False,
+                    message=f"Transcript not ready, retry scheduled for {next_retry}",
+                    retry_scheduled=True,
+                    next_retry_at=next_retry.isoformat(),
+                    retry_count=job.retry_count + 1,
+                    max_retries=max_retries
+                )
+            else:
+                # Max retries reached - give up
+                total_minutes = sum(15 * (2 ** i) for i in range(max_retries))
+                hours = total_minutes / 60
+
+                self._log_progress(
+                    job,
+                    f"Max retries ({max_retries}) reached. Transcript still not available after {hours:.1f} hours.",
+                    "error"
+                )
+
+                # Update meeting status to failed
+                self._update_meeting_status(
+                    meeting_id,
+                    "failed",
+                    error_message=f"Transcript not available after {max_retries} retries ({hours:.1f} hours)"
+                )
+
+                return self._create_output_data(
+                    success=False,
+                    message=f"Transcript not available after {max_retries} retries",
+                    skipped=True,
+                    max_retries_reached=True
+                )
 
         except Exception as e:
             self._log_progress(job, f"Failed to fetch transcript: {e}", "error")

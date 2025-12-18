@@ -4,61 +4,183 @@
 
 {% block content %}
 <div x-data="meetingsData()" x-init="loadMeetings()">
-    <h1 class="text-3xl font-bold text-gray-900 mb-6">Meetings</h1>
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-gray-900">Meetings</h1>
 
-    <!-- Meetings List -->
-    <div class="bg-white shadow overflow-hidden sm:rounded-md">
-        <ul role="list" class="divide-y divide-gray-200">
-            <template x-for="meeting in meetings" :key="meeting.id">
-                <li>
-                    <a :href="'/dashboard/meetings/' + meeting.id" class="block hover:bg-gray-50">
-                        <div class="px-4 py-4 sm:px-6">
-                            <div class="flex items-center justify-between">
-                                <p class="text-sm font-medium text-blue-600 truncate" x-text="meeting.subject"></p>
-                                <div class="ml-2 flex-shrink-0 flex">
-                                    <p class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full"
-                                       :class="{
-                                           'bg-green-100 text-green-800': meeting.status === 'completed',
-                                           'bg-blue-100 text-blue-800': meeting.status === 'processing',
-                                           'bg-yellow-100 text-yellow-800': meeting.status === 'queued',
-                                           'bg-gray-100 text-gray-800': meeting.status === 'discovered'
-                                       }"
-                                       x-text="meeting.status">
-                                    </p>
-                                </div>
-                            </div>
-                            <div class="mt-2 sm:flex sm:justify-between">
-                                <div class="sm:flex">
-                                    <p class="flex items-center text-sm text-gray-500">
-                                        <svg class="flex-shrink-0 mr-1.5 h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
-                                        </svg>
-                                        <span x-text="meeting.organizer_name"></span>
-                                    </p>
-                                    <p class="mt-2 flex items-center text-sm text-gray-500 sm:mt-0 sm:ml-6">
-                                        <svg class="flex-shrink-0 mr-1.5 h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                                        </svg>
-                                        <span x-text="meeting.duration_minutes + ' min'"></span>
-                                    </p>
-                                </div>
-                                <div class="mt-2 flex items-center text-sm text-gray-500 sm:mt-0">
-                                    <svg class="flex-shrink-0 mr-1.5 h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
-                                    </svg>
-                                    <p>
-                                        <time x-text="formatDate(meeting.start_time)"></time>
-                                    </p>
-                                </div>
-                            </div>
-                        </div>
-                    </a>
-                </li>
-            </template>
-        </ul>
+        <!-- User Filter -->
+        <div class="flex items-center space-x-4">
+            <label class="text-sm text-gray-700">Filter by participant:</label>
+            <select x-model="userFilter" @change="loadMeetings()"
+                    class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
+                <option value="">All Meetings</option>
+                <option value="sschatz@townsquaremedia.com">Scott Schatz</option>
+                <option value="joeainsworth@townsquaremedia.com">Joe Ainsworth</option>
+            </select>
+        </div>
+    </div>
 
-        <div x-show="meetings.length === 0" class="px-4 py-12 text-center text-gray-500">
-            No meetings found
+    <!-- Meetings Table -->
+    <div class="bg-white shadow overflow-hidden sm:rounded-lg">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subject</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Organizer</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Start Time</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Participants</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Words</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Speakers</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    <template x-for="meeting in meetings" :key="meeting.id">
+                        <template>
+                            <!-- Main row -->
+                            <tr class="hover:bg-gray-50" :class="{'bg-blue-50': expandedMeeting === meeting.id}">
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <button @click="toggleExpand(meeting.id)"
+                                            x-show="meeting.has_distribution"
+                                            class="text-gray-400 hover:text-gray-600">
+                                        <svg class="w-5 h-5 transform transition-transform"
+                                             :class="{'rotate-90': expandedMeeting === meeting.id}"
+                                             fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                        </svg>
+                                    </button>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="text-sm text-gray-500" x-text="meeting.id"></div>
+                                </td>
+                                <td class="px-6 py-4">
+                                    <div class="text-sm font-medium text-gray-900" x-text="meeting.subject"></div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="text-sm text-gray-900" x-text="meeting.organizer_name"></div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="text-sm text-gray-500" x-text="formatDateTime(meeting.start_time)"></div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="text-sm text-gray-500" x-text="meeting.duration_minutes + ' min'"></div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="text-sm text-gray-500" x-text="meeting.participant_count || '-'"></div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="text-sm text-gray-500" x-text="meeting.word_count || '-'"></div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <div class="text-sm text-gray-500" x-text="meeting.speaker_count || '-'"></div>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full cursor-help"
+                                          :class="{
+                                              'bg-green-100 text-green-800': meeting.status === 'completed',
+                                              'bg-blue-100 text-blue-800': meeting.status === 'processing',
+                                              'bg-yellow-100 text-yellow-800': meeting.status === 'queued',
+                                              'bg-gray-100 text-gray-800': meeting.status === 'discovered',
+                                              'bg-gray-100 text-gray-600': meeting.status === 'skipped',
+                                              'bg-red-100 text-red-800': meeting.status === 'failed'
+                                          }"
+                                          :title="meeting.status === 'skipped' && !meeting.has_transcript ? 'Skipped: No transcript available' : ''"
+                                          x-text="meeting.status">
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                    <div class="flex justify-end space-x-2">
+                                        <!-- Reprocess button -->
+                                        <button
+                                            @click="reprocessMeeting(meeting.id)"
+                                            class="text-blue-600 hover:text-blue-900"
+                                            title="Reprocess"
+                                        >
+                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                            </svg>
+                                        </button>
+
+                                        <!-- Resend dropdown -->
+                                        <div x-data="{ open: false }" class="relative" x-show="meeting.has_summary">
+                                            <button
+                                                @click="open = !open"
+                                                class="text-green-600 hover:text-green-900"
+                                                title="Resend Summary"
+                                            >
+                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                                                </svg>
+                                            </button>
+                                            <div
+                                                x-show="open"
+                                                @click.away="open = false"
+                                                class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10"
+                                                style="display: none;"
+                                            >
+                                                <div class="py-1">
+                                                    <a @click="resendSummary(meeting.id, 'organizer'); open = false" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">To Organizer</a>
+                                                    <a @click="resendSummary(meeting.id, 'subscribers'); open = false" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">To Subscribers</a>
+                                                    <a @click="resendSummary(meeting.id, 'both'); open = false" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">To Both</a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+
+                            <!-- Expanded distribution details row -->
+                            <tr x-show="expandedMeeting === meeting.id" class="bg-blue-50">
+                                <td colspan="11" class="px-6 py-4">
+                                    <div class="pl-12">
+                                        <h4 class="text-sm font-semibold text-gray-700 mb-3">Distribution Details</h4>
+                                        <template x-if="distributionDetails[meeting.id] && distributionDetails[meeting.id].length > 0">
+                                            <table class="min-w-full divide-y divide-gray-300">
+                                                <thead class="bg-gray-100">
+                                                    <tr>
+                                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Recipient</th>
+                                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Type</th>
+                                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Method</th>
+                                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Sent At</th>
+                                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Status</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody class="divide-y divide-gray-200">
+                                                    <template x-for="dist in distributionDetails[meeting.id]" :key="dist.id">
+                                                        <tr>
+                                                            <td class="px-4 py-2 text-sm text-gray-900" x-text="dist.recipient_email"></td>
+                                                            <td class="px-4 py-2 text-sm text-gray-600" x-text="dist.recipient_type"></td>
+                                                            <td class="px-4 py-2 text-sm text-gray-600" x-text="dist.delivery_method"></td>
+                                                            <td class="px-4 py-2 text-sm text-gray-600" x-text="formatDateTime(dist.sent_at)"></td>
+                                                            <td class="px-4 py-2 text-sm">
+                                                                <span class="px-2 py-1 text-xs rounded-full"
+                                                                      :class="dist.status === 'sent' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                                                                      x-text="dist.status">
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    </template>
+                                                </tbody>
+                                            </table>
+                                        </template>
+                                        <template x-if="!distributionDetails[meeting.id] || distributionDetails[meeting.id].length === 0">
+                                            <p class="text-sm text-gray-500">No distribution records found.</p>
+                                        </template>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                    </template>
+                </tbody>
+            </table>
+
+            <div x-show="meetings.length === 0" class="px-4 py-12 text-center text-gray-500">
+                No meetings found
+            </div>
         </div>
     </div>
 </div>
@@ -67,18 +189,87 @@
 function meetingsData() {
     return {
         meetings: [],
+        userFilter: '',
+        expandedMeeting: null,
+        distributionDetails: {},
+
         async loadMeetings() {
             try {
-                const response = await fetch('/api/meetings?limit=50');
+                let url = '/api/meetings/?limit=50';
+                if (this.userFilter) {
+                    url += `&participant=${encodeURIComponent(this.userFilter)}`;
+                }
+                const response = await fetch(url);
                 this.meetings = await response.json();
             } catch (error) {
                 console.error('Failed to load meetings:', error);
             }
         },
-        formatDate(dateString) {
+
+        async toggleExpand(meetingId) {
+            if (this.expandedMeeting === meetingId) {
+                this.expandedMeeting = null;
+            } else {
+                this.expandedMeeting = meetingId;
+
+                // Load distribution details if not already loaded
+                if (!this.distributionDetails[meetingId]) {
+                    await this.loadDistribution(meetingId);
+                }
+            }
+        },
+
+        async loadDistribution(meetingId) {
+            try {
+                const response = await fetch(`/api/meetings/${meetingId}/distribution`);
+                this.distributionDetails[meetingId] = await response.json();
+            } catch (error) {
+                console.error('Failed to load distribution details:', error);
+                this.distributionDetails[meetingId] = [];
+            }
+        },
+
+        formatDateTime(dateString) {
             if (!dateString) return 'Unknown';
             const date = new Date(dateString);
-            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString();
+            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        },
+
+        async reprocessMeeting(meetingId) {
+            if (!confirm('Reprocess this meeting? This will re-fetch the transcript and regenerate the summary.')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/meetings/${meetingId}/reprocess`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    alert('Meeting queued for reprocessing');
+                    this.loadMeetings();
+                } else {
+                    alert('Failed to reprocess meeting');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        },
+
+        async resendSummary(meetingId, target) {
+            try {
+                const response = await fetch(`/api/meetings/${meetingId}/resend?target=${target}`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    alert(`Summary queued to resend to ${target}`);
+                } else {
+                    alert('Failed to resend summary');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
         }
     }
 }

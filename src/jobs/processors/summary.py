@@ -11,7 +11,7 @@ from datetime import datetime
 
 from ..processors.base import BaseProcessor, register_processor
 from ...ai.claude_client import ClaudeClient
-from ...ai.summarizer import MeetingSummarizer, EnhancedMeetingSummarizer, EnhancedSummary
+from ...ai.summarizer import MeetingSummarizer, EnhancedMeetingSummarizer, SingleCallSummarizer, EnhancedSummary
 from ...utils.vtt_parser import format_transcript_for_summary
 from ...core.database import Summary, Transcript
 from ...core.exceptions import SummaryGenerationError, ClaudeAPIError
@@ -84,8 +84,14 @@ class SummaryProcessor(BaseProcessor):
             temperature=config.claude.temperature
         )
 
-        # Initialize enhanced summarizer with Sonnet 4.5 for all calls
-        self.summarizer = EnhancedMeetingSummarizer(sonnet_config, sonnet_config)
+        # Choose summarizer based on config flag
+        if config.app.use_single_call_summarization:
+            logger.info("Using single-call summarization approach (1 API call, faster, cheaper, better quality)")
+            self.summarizer = SingleCallSummarizer(sonnet_config)
+        else:
+            logger.info("Using multi-stage summarization approach (5 API calls with prompt caching)")
+            # Initialize enhanced summarizer with Sonnet 4.5 for all calls
+            self.summarizer = EnhancedMeetingSummarizer(sonnet_config, sonnet_config)
 
     async def process(self, job) -> Dict[str, Any]:
         """
@@ -171,19 +177,28 @@ class SummaryProcessor(BaseProcessor):
                 key_numbers = enhanced_result.key_numbers  # FIX: Extract key_numbers
                 metadata = enhanced_result.metadata
 
-                input_tokens = metadata.total_tokens  # Approximate
-                output_tokens = metadata.total_tokens  # We don't track separately yet
-                total_tokens = metadata.total_tokens
-                cost = metadata.total_cost
-                model = metadata.model
-                generation_time_ms = metadata.generation_time_ms
+                input_tokens = metadata.get("total_tokens", 0)  # Approximate
+                output_tokens = metadata.get("total_tokens", 0)  # We don't track separately yet
+                total_tokens = metadata.get("total_tokens", 0)
+                cost = metadata.get("total_cost", 0.0)
+                model = metadata.get("model", "unknown")
+                generation_time_ms = metadata.get("generation_time_ms", 0)
                 truncated = False  # Enhanced summarizer doesn't truncate
+
+                # Extract approach and additional metadata
+                approach = metadata.get("approach", "multi_stage")
+                extraction_calls = metadata.get("extraction_calls", 5)
 
                 self._log_progress(
                     job,
-                    f"✓ Summary generated: {output_tokens} tokens, "
-                    f"${cost:.4f}, {generation_time_ms}ms"
+                    f"✓ Summary generated using {approach} approach: {output_tokens} tokens, "
+                    f"${cost:.4f}, {extraction_calls} API call(s), {generation_time_ms}ms"
                 )
+
+                # Log discussion notes word count if available (single-call only)
+                word_count = metadata.get("discussion_notes_word_count")
+                if word_count:
+                    logger.info(f"Discussion notes word count: {word_count}")
 
                 if truncated:
                     self._log_progress(
@@ -268,7 +283,7 @@ class SummaryProcessor(BaseProcessor):
                     cost=cost,
                     model=model,
                     generation_time_ms=generation_time_ms,
-                    extraction_calls=metadata.extraction_calls,
+                    extraction_calls=metadata.get("extraction_calls", 5),
                     # Structured data counts
                     action_items_count=len(action_items),
                     decisions_count=len(decisions),

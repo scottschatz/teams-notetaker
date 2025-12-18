@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Backfill History - Teams Notetaker{% endblock %}
+
+{% block content %}
+<div class="container mx-auto px-4 py-8">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold">Backfill History</h1>
+        <a href="/diagnostics" class="bg-gray-500 hover:bg-gray-600 text-white px-4 py-2 rounded">
+            ← Back to Diagnostics
+        </a>
+    </div>
+
+    <div class="bg-white shadow-md rounded-lg overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Started</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Source</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Lookback</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Records</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Meetings</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Skipped</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Errors</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white divide-y divide-gray-200">
+                    {% if runs %}
+                        {% for run in runs %}
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                #{{ run.id }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{ run.started_at.strftime('%Y-%m-%d %H:%M:%S') if run.started_at else 'N/A' }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {% if run.completed_at and run.started_at %}
+                                    {{ "%.1f"|format((run.completed_at - run.started_at).total_seconds()) }}s
+                                {% else %}
+                                    -
+                                {% endif %}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap">
+                                <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full
+                                    {% if run.status == 'completed' %}bg-green-100 text-green-800
+                                    {% elif run.status == 'running' %}bg-yellow-100 text-yellow-800
+                                    {% elif run.status == 'failed' %}bg-red-100 text-red-800
+                                    {% else %}bg-gray-100 text-gray-800{% endif %}">
+                                    {{ run.status }}
+                                </span>
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{ run.source or 'unknown' }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{ run.lookback_hours or 'N/A' }}h
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {{ run.call_records_found or 0 }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                                {{ run.meetings_created or 0 }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                {{ run.skipped_no_optin or 0 }}
+                            </td>
+                            <td class="px-6 py-4 whitespace-nowrap text-sm {% if run.errors and run.errors > 0 %}text-red-600 font-semibold{% else %}text-gray-500{% endif %}">
+                                {{ run.errors or 0 }}
+                            </td>
+                        </tr>
+                        {% if run.error_message %}
+                        <tr>
+                            <td colspan="10" class="px-6 py-2 bg-red-50">
+                                <div class="text-sm text-red-700">
+                                    <strong>Error:</strong> {{ run.error_message }}
+                                </div>
+                            </td>
+                        </tr>
+                        {% endif %}
+                        {% endfor %}
+                    {% else %}
+                        <tr>
+                            <td colspan="10" class="px-6 py-8 text-center text-gray-500">
+                                No backfill runs found
+                            </td>
+                        </tr>
+                    {% endif %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="mt-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h3 class="font-semibold text-blue-900 mb-2">Statistics Legend</h3>
+        <ul class="text-sm text-blue-800 space-y-1">
+            <li><strong>Records:</strong> Total call records found in Graph API</li>
+            <li><strong>Meetings:</strong> New meetings created from backfill</li>
+            <li><strong>Skipped:</strong> Meetings with no opted-in participants</li>
+            <li><strong>Errors:</strong> Number of errors encountered during processing</li>
+        </ul>
+    </div>
+</div>
+{% endblock %}

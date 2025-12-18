@@ -31,20 +31,17 @@
                             Meetings
                         </a>
                         {% if user.role == 'admin' %}
-                        <a href="/dashboard/pilot" class="{% if page == 'pilot' %}border-blue-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
-                            Pilot Users
+                        <a href="/admin/users" class="{% if page == 'users' %}border-blue-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                            Users
                         </a>
-                        <a href="/dashboard/config" class="{% if page == 'config' %}border-blue-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
-                            Configuration
+                        <a href="/diagnostics" class="{% if page == 'diagnostics' %}border-blue-500 text-gray-900{% else %}border-transparent text-gray-500 hover:border-gray-300 hover:text-gray-700{% endif %} inline-flex items-center px-1 pt-1 border-b-2 text-sm font-medium">
+                            Diagnostics
                         </a>
                         {% endif %}
                     </div>
                 </div>
                 <div class="flex items-center">
                     <span class="text-gray-700 mr-4">{{ user.email }}</span>
-                    <button onclick="logout()" class="bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded text-sm">
-                        Logout
-                    </button>
                 </div>
             </div>
         </div>

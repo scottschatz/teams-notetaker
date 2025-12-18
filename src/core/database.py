@@ -558,6 +558,70 @@ class ProcessedChatMessage(Base):
         return f"<ProcessedChatMessage(id='{self.message_id}', type='{self.command_type}')>"
 
 
+class ProcessedCallRecord(Base):
+    """
+    Tracking for processed Microsoft Graph callRecords.
+
+    Prevents duplicate processing of callRecords from webhooks, backfills,
+    and safety net syncs.
+    """
+    __tablename__ = "processed_call_records"
+
+    call_record_id = Column(String(255), primary_key=True)
+    processed_at = Column(DateTime, default=func.now(), index=True)
+    source = Column(String(20))  # 'webhook', 'backfill', 'safety_net'
+
+    def __repr__(self):
+        return f"<ProcessedCallRecord(id='{self.call_record_id}', source='{self.source}')>"
+
+
+class BackfillRun(Base):
+    """
+    Track backfill operations for monitoring and debugging.
+
+    Records each backfill execution with statistics for:
+    - Troubleshooting backfill issues
+    - Monitoring system health
+    - Analytics and reporting
+    """
+    __tablename__ = "backfill_runs"
+
+    id = Column(Integer, primary_key=True)
+    started_at = Column(DateTime, default=func.now(), index=True)
+    completed_at = Column(DateTime)
+    status = Column(String(50), default="running", index=True)
+
+    # Configuration
+    lookback_hours = Column(Integer)
+    cutoff_time = Column(DateTime)  # Actual cutoff used
+    source = Column(String(20))  # 'manual', 'automatic', 'force'
+    triggered_by = Column(String(255))  # User email or 'system'
+
+    # Statistics
+    call_records_found = Column(Integer, default=0)
+    meetings_created = Column(Integer, default=0)
+    transcripts_found = Column(Integer, default=0)
+    transcripts_pending = Column(Integer, default=0)
+    skipped_no_optin = Column(Integer, default=0)
+    jobs_created = Column(Integer, default=0)
+    errors = Column(Integer, default=0)
+
+    # Error tracking
+    error_message = Column(Text)
+    error_stack = Column(Text)
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('running', 'completed', 'failed')",
+            name="valid_backfill_status"
+        ),
+        Index("idx_backfill_runs_status_time", "status", "started_at"),
+    )
+
+    def __repr__(self):
+        return f"<BackfillRun(id={self.id}, status='{self.status}', started={self.started_at})>"
+
+
 # ============================================================================
 # DATABASE MANAGER
 # ============================================================================

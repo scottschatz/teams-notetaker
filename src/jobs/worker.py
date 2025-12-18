@@ -18,6 +18,8 @@ from ..core.config import get_config
 from ..jobs.queue import JobQueueManager
 from ..jobs.processors.base import get_processor_registry
 from ..core.exceptions import JobProcessingError
+from ..graph.client import GraphAPIClient
+from ..inbox import InboxMonitor
 
 # Import processors to register them
 from ..jobs.processors import transcript, summary, distribution
@@ -79,9 +81,26 @@ class JobWorker:
         # Processor registry
         self.registry = get_processor_registry()
 
+        # Initialize inbox monitor (for email-based preferences)
+        self.inbox_monitor = None
+        inbox_email = getattr(config.app, 'email_from', None)
+        if inbox_email:
+            try:
+                graph_client = GraphAPIClient(config.graph_api)
+                self.inbox_monitor = InboxMonitor(
+                    db=self.db,
+                    graph_client=graph_client,
+                    mailbox_email=inbox_email,
+                    lookback_minutes=60
+                )
+                logger.info(f"Inbox monitor initialized for {inbox_email}")
+            except Exception as e:
+                logger.warning(f"Could not initialize inbox monitor: {e}")
+
         logger.info(
             f"JobWorker initialized (id: {self.worker_id}, "
-            f"max_concurrent: {max_concurrent}, timeout: {job_timeout}s)"
+            f"max_concurrent: {max_concurrent}, timeout: {job_timeout}s, "
+            f"inbox_monitoring: {'enabled' if self.inbox_monitor else 'disabled'})"
         )
 
     async def start(self):
@@ -97,6 +116,7 @@ class JobWorker:
         """
         self.running = True
         cleanup_counter = 0
+        inbox_counter = 0
 
         logger.info(f"Worker {self.worker_id} started")
 
@@ -115,6 +135,21 @@ class JobWorker:
                     except Exception as e:
                         logger.error(f"Orphaned job cleanup failed: {e}")
                     cleanup_counter = 0
+
+                # Periodic inbox check for email commands (every 5 minutes = 300 seconds)
+                inbox_counter += 1
+                if inbox_counter >= 300 and self.inbox_monitor:
+                    try:
+                        stats = await self.inbox_monitor.check_inbox()
+                        if stats.get("processed", 0) > 0:
+                            logger.info(
+                                f"Inbox check: {stats['processed']} processed, "
+                                f"{stats['subscribed']} subscribed, "
+                                f"{stats['unsubscribed']} unsubscribed"
+                            )
+                    except Exception as e:
+                        logger.error(f"Inbox check failed: {e}")
+                    inbox_counter = 0
 
                 # Sleep briefly before next iteration
                 await asyncio.sleep(1)

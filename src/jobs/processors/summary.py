@@ -75,16 +75,10 @@ class SummaryProcessor(BaseProcessor):
         # Prioritizes QUALITY over cost savings for accurate, detailed summaries
         # Cost: ~$0.12/meeting vs $0.055/meeting hybrid (but much better quality)
 
-        from ...core.config import ClaudeConfig
-
-        # Use Haiku 4.5 for testing (cheaper alternative)
-        # TODO: Make this configurable - Sonnet 4.5 for quality, Haiku 4.5 for cost savings
-        model_config = ClaudeConfig(
-            api_key=config.claude.api_key,
-            model="claude-haiku-4-5-20251001",  # Testing Haiku for cost savings
-            max_tokens=config.claude.max_tokens,
-            temperature=config.claude.temperature
-        )
+        # Use the model from config (config.yaml or environment)
+        # Default is claude-sonnet-4-20250514, can be overridden to claude-haiku-4-5-20251001 for cost savings
+        model_config = config.claude
+        logger.debug(f"Using Claude model: {model_config.model}")
 
         # Choose summarizer based on config flag
         if config.app.use_single_call_summarization:

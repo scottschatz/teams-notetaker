@@ -282,6 +282,10 @@ class ConfigManager:
                 with open(self.config_file, "r") as f:
                     data = yaml.safe_load(f) or {}
                     self.app = AppConfig(**data)
+
+                    # Override Claude model if specified in config.yaml
+                    if "claude_model" in data:
+                        self.claude.model = data["claude_model"]
             except Exception as e:
                 print(f"WARNING: Failed to load config.yaml: {e}")
                 print("Using default configuration")

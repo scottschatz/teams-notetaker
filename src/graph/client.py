@@ -339,6 +339,96 @@ class GraphAPIClient:
         logger.info(f"Pagination complete: {page_count} pages, {len(all_items)} total items")
         return all_items
 
+    def batch_get(self, requests: List[Dict[str, str]], max_batch_size: int = 20) -> List[Dict[str, Any]]:
+        """
+        Execute multiple GET requests in a single batch call.
+
+        Graph API /$batch endpoint allows up to 20 requests per batch.
+        This method handles splitting larger request lists into multiple batches.
+
+        Args:
+            requests: List of dicts with 'id' and 'url' keys
+                      Example: [{"id": "1", "url": "/users/user1@example.com"}, ...]
+            max_batch_size: Maximum requests per batch (default 20, Graph API limit)
+
+        Returns:
+            List of response dicts with 'id', 'status', and 'body' keys
+            Results are returned in the same order as requests
+
+        Usage:
+            requests = [
+                {"id": "user1", "url": "/users/user1@example.com"},
+                {"id": "user2", "url": "/users/user2@example.com"},
+            ]
+            responses = client.batch_get(requests)
+            for resp in responses:
+                if resp["status"] == 200:
+                    user_data = resp["body"]
+        """
+        if not requests:
+            return []
+
+        all_responses = []
+
+        # Process in batches of max_batch_size
+        for i in range(0, len(requests), max_batch_size):
+            batch = requests[i:i + max_batch_size]
+
+            # Build batch payload
+            batch_payload = {
+                "requests": [
+                    {
+                        "id": req["id"],
+                        "method": "GET",
+                        "url": req["url"] if req["url"].startswith("/") else f"/{req['url']}"
+                    }
+                    for req in batch
+                ]
+            }
+
+            try:
+                logger.debug(f"Executing batch request with {len(batch)} items")
+                response = self.post("/$batch", json=batch_payload)
+
+                # Extract responses
+                batch_responses = response.get("responses", [])
+
+                # Create response lookup by ID
+                response_by_id = {r["id"]: r for r in batch_responses}
+
+                # Return in original request order
+                for req in batch:
+                    req_id = req["id"]
+                    if req_id in response_by_id:
+                        resp = response_by_id[req_id]
+                        all_responses.append({
+                            "id": req_id,
+                            "status": resp.get("status", 500),
+                            "body": resp.get("body", {})
+                        })
+                    else:
+                        logger.warning(f"No response for batch request ID {req_id}")
+                        all_responses.append({
+                            "id": req_id,
+                            "status": 500,
+                            "body": {"error": {"message": "No response in batch"}}
+                        })
+
+                logger.debug(f"Batch complete: {len(batch_responses)} responses")
+
+            except Exception as e:
+                logger.error(f"Batch request failed: {e}")
+                # Return error responses for all items in this batch
+                for req in batch:
+                    all_responses.append({
+                        "id": req["id"],
+                        "status": 500,
+                        "body": {"error": {"message": str(e)}}
+                    })
+
+        logger.info(f"Batch GET complete: {len(all_responses)} total responses from {len(requests)} requests")
+        return all_responses
+
     def get_user_photo(self, user_id: str, size: str = "48x48") -> Optional[str]:
         """
         Get user profile photo as base64-encoded string.

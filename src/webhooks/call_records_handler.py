@@ -161,7 +161,7 @@ class CallRecordsWebhookHandler:
                         # Fetch organizer details
                         try:
                             user_info = self.graph_client.get(f"/users/{organizer_user_id}")
-                            existing_meeting.organizer_email = user_info.get("mail") or user_info.get("userPrincipalName")
+                            existing_meeting.organizer_email = self._get_email_from_user_info(user_info)
                             existing_meeting.organizer_name = user_info.get("displayName")
                             logger.info(f"Updated organizer info for meeting {db_meeting_id}")
                         except Exception as e:
@@ -193,7 +193,7 @@ class CallRecordsWebhookHandler:
                     if organizer_user_id:
                         try:
                             user_info = self.graph_client.get(f"/users/{organizer_user_id}")
-                            organizer_email = user_info.get("mail") or user_info.get("userPrincipalName")
+                            organizer_email = self._get_email_from_user_info(user_info)
                             organizer_name = user_info.get("displayName")
                             logger.info(f"Fetched organizer info: {organizer_name} <{organizer_email}>")
                         except Exception as e:
@@ -367,7 +367,7 @@ class CallRecordsWebhookHandler:
                 if organizer_user_id and not organizer_email:
                     try:
                         user_info = self.graph_client.get(f"/users/{organizer_user_id}")
-                        organizer_email = user_info.get("mail") or user_info.get("userPrincipalName")
+                        organizer_email = self._get_email_from_user_info(user_info)
                         if not organizer_name:
                             organizer_name = user_info.get("displayName")
                         logger.debug(f"Looked up organizer: {organizer_name} <{organizer_email}>")
@@ -667,6 +667,30 @@ class CallRecordsWebhookHandler:
             return dt.replace(tzinfo=None)  # Store as UTC-naive
         except:
             return None
+
+    def _get_email_from_user_info(self, user_info: dict) -> str:
+        """Extract email address from Graph API user info.
+
+        Prefers the 'mail' field (actual email) over 'userPrincipalName' (UPN).
+        UPN can be different from email for guests/external users.
+
+        Args:
+            user_info: User data from Graph API /users/{id} endpoint
+
+        Returns:
+            Email address string, or empty string if not found
+        """
+        # Prefer actual email address
+        email = user_info.get("mail", "")
+        if email:
+            return email.lower()
+
+        # Fall back to UPN only if it looks like an email (contains @)
+        upn = user_info.get("userPrincipalName", "")
+        if upn and "@" in upn:
+            return upn.lower()
+
+        return ""
 
     def _fetch_meeting_invitees(self, organizer_user_id: str, join_url: str) -> list:
         """

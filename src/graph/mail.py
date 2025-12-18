@@ -941,6 +941,9 @@ class EmailSender:
         </div>
 """
 
+        # Get email_from for mailto links (passed via meeting_metadata or use default)
+        email_from = meeting_metadata.get("email_from", "noreply@townsquaremedia.com")
+
         if include_footer:
             html += """        <div class="footer">
 """
@@ -962,60 +965,24 @@ class EmailSender:
             </div>
 """
 
-            html += """            <!-- Email Preferences for Future Meetings -->
-            <div style="border-top: 2px solid #e0e0e0; margin-top: 40px; padding-top: 25px;
-                        background: #f9f9f9; padding: 20px; border-radius: 4px; font-size: 0.9em;">
+            # Build mailto links
+            unsubscribe_link = f"mailto:{email_from}?subject=Unsubscribe"
+            subscribe_link = f"mailto:{email_from}?subject=Subscribe"
+            feedback_link = f"mailto:{email_from}?subject=Feedback"
 
-                <h3 style="margin-top: 0; color: #333; font-size: 1.1em;">
-                    📧 Email Preferences for Future Meetings
-                </h3>
-
-                <div style="margin-bottom: 15px;">
-                    <strong style="color: #0078d4;">For this meeting:</strong><br>
-                    <span style="color: #555;">
-                        Don't want summaries for this meeting? Type in the meeting chat:<br>
-                        <code style="background: white; padding: 2px 6px; border: 1px solid #ddd;
-                                    border-radius: 3px; font-family: monospace; font-size: 0.95em;">
-                            no emails
-                        </code>
-                    </span>
-                </div>
-
-                <div style="margin-bottom: 15px;">
-                    <strong style="color: #0078d4;">For all meetings:</strong><br>
-                    <span style="color: #555;">
-                        Stop receiving all summaries - type in any meeting chat:<br>
-                        <code style="background: white; padding: 2px 6px; border: 1px solid #ddd;
-                                    border-radius: 3px; font-family: monospace; font-size: 0.95em;">
-                            no emails for all meetings
-                        </code>
-                    </span>
-                </div>
-
-                <div style="margin-bottom: 15px;">
-                    <strong style="color: #0078d4;">Changed your mind?</strong><br>
-                    <span style="color: #555;">
-                        Start receiving summaries again - type in any meeting chat:<br>
-                        <code style="background: white; padding: 2px 6px; border: 1px solid #ddd;
-                                    border-radius: 3px; font-family: monospace; font-size: 0.95em;">
-                            enable emails
-                        </code>
-                    </span>
-                </div>
-
-                <hr style="border: none; border-top: 1px solid #ddd; margin: 20px 0;">
-
-                <div style="font-size: 0.85em; color: #666;">
-                    <strong>For Meeting Organizers:</strong><br>
-                    <span style="color: #777;">
-                        Disable distribution for a meeting:<br>
-                        <code style="background: white; padding: 2px 6px; border: 1px solid #ddd;
-                                    border-radius: 3px; font-family: monospace; font-size: 0.95em;">
-                            @meeting notetaker disable distribution
-                        </code>
-                    </span>
-                </div>
-
+            html += f"""            <!-- Email Preferences -->
+            <div style="text-align: center; font-size: 13px; color: #666; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+                <p style="margin-bottom: 12px;">
+                    <a href="{unsubscribe_link}" style="color: #0078d4; text-decoration: none;">Unsubscribe</a>
+                    &nbsp;|&nbsp;
+                    <a href="{subscribe_link}" style="color: #0078d4; text-decoration: none;">Subscribe/Resubscribe</a>
+                    &nbsp;|&nbsp;
+                    <a href="{feedback_link}" style="color: #0078d4; text-decoration: none;">Send Feedback</a>
+                </p>
+                <p style="font-size: 11px; color: #999; margin-top: 8px;">
+                    To manage your email preferences, send an email with "subscribe" or "unsubscribe"
+                    in the subject line to <strong>{email_from}</strong>
+                </p>
             </div>
         </div>
 """

@@ -175,6 +175,9 @@ class DistributionProcessor(BaseProcessor):
                 end_utc = meeting.end_time.replace(tzinfo=pytz.UTC) if meeting.end_time.tzinfo is None else meeting.end_time
                 end_time_eastern = end_utc.astimezone(eastern).strftime("%a, %b %d, %Y at %I:%M %p %Z")
 
+            # Get email_from for mailto links in footer
+            email_from = self.config.app.email_from or "noreply@townsquaremedia.com"
+
             meeting_metadata = {
                 "meeting_id": meeting.id,
                 "subject": meeting.subject,
@@ -187,7 +190,8 @@ class DistributionProcessor(BaseProcessor):
                 "join_url": meeting.join_url or "",
                 "recording_url": meeting.recording_url or "",
                 "recording_sharepoint_url": meeting.recording_sharepoint_url or "",
-                "chat_id": meeting.chat_id or ""
+                "chat_id": meeting.chat_id or "",
+                "email_from": email_from  # For mailto links in email footer
             }
 
             # Get transcript with SharePoint URL
@@ -283,7 +287,7 @@ class DistributionProcessor(BaseProcessor):
                     else:
                         self._log_progress(job, f"Sending email to {len(participant_emails)} recipients")
 
-                        from_email = self.config.app.email_from or "noreply@townsquaremedia.com"
+                        # email_from is already defined in meeting_metadata above
 
                         # Format participants list for email template (deduplicated by email/name)
                         # Only include participants who actually attended (not invitees with attended=False)
@@ -415,7 +419,7 @@ class DistributionProcessor(BaseProcessor):
                         email_message_id = await loop.run_in_executor(
                             None,
                             lambda: self.email_sender.send_meeting_summary(
-                                from_email=from_email,
+                                from_email=email_from,
                                 to_emails=participant_emails,
                                 subject=f"Meeting Summary: {meeting.subject} ({time_str})",
                                 summary_markdown=summary.summary_text,

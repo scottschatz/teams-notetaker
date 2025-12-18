@@ -401,9 +401,33 @@ class CallRecordsWebhookHandler:
                             meeting_id=meeting_id,
                             email=p.get("email"),
                             display_name=display_name,
-                            role=p.get("role", "attendee")
+                            role=p.get("role", "attendee"),
+                            attended=True,
+                            participant_type=participant_type
                         )
                         session.add(participant)
+
+                    # Fetch and store invitees (people invited but may not have attended)
+                    # This provides correct name spellings for AI summary generation
+                    attendee_emails = {p.get("email", "").lower() for p in participants if p.get("email")}
+                    invitees = self._fetch_meeting_invitees(organizer_user_id, online_meeting_id)
+                    invitees_added = 0
+                    for inv in invitees:
+                        inv_email = inv.get("email", "").lower()
+                        # Only add if they didn't actually attend
+                        if inv_email and inv_email not in attendee_emails:
+                            invitee_participant = MeetingParticipant(
+                                meeting_id=meeting_id,
+                                email=inv_email,
+                                display_name=inv.get("name") or inv_email.split("@")[0],
+                                role=inv.get("role", "attendee"),
+                                attended=False,
+                                participant_type="internal"
+                            )
+                            session.add(invitee_participant)
+                            invitees_added += 1
+                    if invitees_added > 0:
+                        logger.info(f"Added {invitees_added} invitees who didn't attend")
 
                 # Check if fetch_transcript job already exists for this meeting
                 # This prevents duplicates when webhook and backfill both process same meeting

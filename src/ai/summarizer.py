@@ -786,11 +786,20 @@ class SingleCallSummarizer:
         # Format transcript
         transcript_text = self._format_transcript(transcript_segments)
 
+        # Extract participant names from metadata for correct spelling
+        participant_names = []
+        if meeting_metadata and meeting_metadata.get("participant_names"):
+            participant_names = meeting_metadata["participant_names"]
+        participant_names_str = "\n".join(f"- {name}" for name in participant_names) if participant_names else "(No participant list available)"
+
         # Load prompt template
         from .prompts.single_call_prompt import SINGLE_CALL_COMPREHENSIVE_PROMPT
 
         # Build user prompt
-        user_prompt = SINGLE_CALL_COMPREHENSIVE_PROMPT.format(transcript=transcript_text)
+        user_prompt = SINGLE_CALL_COMPREHENSIVE_PROMPT.format(
+            transcript=transcript_text,
+            participant_names=participant_names_str
+        )
 
         # Add custom instructions if provided
         if custom_instructions:

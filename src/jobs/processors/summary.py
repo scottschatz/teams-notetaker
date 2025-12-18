@@ -14,7 +14,7 @@ from ..processors.base import BaseProcessor, register_processor
 from ...ai.claude_client import ClaudeClient
 from ...ai.summarizer import MeetingSummarizer, EnhancedMeetingSummarizer, SingleCallSummarizer, EnhancedSummary
 from ...utils.vtt_parser import format_transcript_for_summary
-from ...core.database import Summary, Transcript, Meeting, JobQueue
+from ...core.database import Summary, Transcript, Meeting, JobQueue, MeetingParticipant
 from ...core.exceptions import SummaryGenerationError, ClaudeAPIError
 
 
@@ -143,6 +143,10 @@ class SummaryProcessor(BaseProcessor):
                 f"Found transcript: {transcript.word_count} words, {transcript.speaker_count} speakers"
             )
 
+            # Fetch participant names for correct spelling in summary
+            participants = session.query(MeetingParticipant).filter_by(meeting_id=meeting_id).all()
+            participant_names = [p.display_name for p in participants if p.display_name]
+
             # Build meeting metadata
             meeting_metadata = {
                 "subject": meeting.subject,
@@ -150,7 +154,8 @@ class SummaryProcessor(BaseProcessor):
                 "start_time": meeting.start_time.isoformat() if meeting.start_time else "",
                 "end_time": meeting.end_time.isoformat() if meeting.end_time else "",
                 "duration_minutes": meeting.duration_minutes,
-                "participant_count": meeting.participant_count
+                "participant_count": meeting.participant_count,
+                "participant_names": participant_names  # For correct name spelling
             }
 
             # Generate enhanced summary with structured extractions

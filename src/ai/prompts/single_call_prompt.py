@@ -9,6 +9,12 @@ SINGLE_CALL_COMPREHENSIVE_PROMPT = """Analyze this meeting transcript and extrac
 
 You MUST return ONLY a valid JSON object. No explanatory text before or after. No markdown code blocks. Start with {{ and end with }}.
 
+**PARTICIPANT NAMES (USE THESE EXACT SPELLINGS):**
+
+The following are the correct spellings of participant names from the meeting invite. When mentioning anyone in your summary, use these EXACT spellings (the transcript may have phonetic misspellings):
+
+{participant_names}
+
 **REQUIRED OUTPUT STRUCTURE:**
 
 {{

@@ -751,3 +751,186 @@ Created comprehensive test suite (11 tests):
 *Session End: December 17, 2025*
 *Duration: ~3 hours*
 *Status: ✅ PRODUCTION READY*
+
+---
+
+# December 17, 2025 (Evening) - End-to-End Pipeline Fix
+
+**Session Date**: December 17, 2025 (Evening)
+**AI Model**: Claude Opus 4.5
+**Task**: Fix why user (Scott Schatz) hasn't received ANY meeting summary emails
+**Duration**: ~2 hours
+**Result**: ✅ Complete success - Email delivered!
+
+## 🎯 Problems Identified & Fixed
+
+### Root Cause Analysis
+
+The meeting processing pipeline was broken at multiple points:
+
+1. **Participant Extraction Bug** - Sessions not included when fetching callRecords
+2. **Worker Deadlock** - Blocking I/O in async processors froze the event loop
+3. **Timezone Mismatch** - Database stores EST, code assumed UTC
+4. **Debug Mode Case Sensitivity** - Email variants didn't match config
+
+### Critical Fix 1: Sessions Not Included in CallRecord Fetch
+
+**Location**: `src/webhooks/call_records_handler.py` (around line 308)
+
+**Problem**: `_process_call_record()` fetched callRecords without sessions, so participant extraction found 0 participants.
+
+**Solution**: Added `$expand=sessions` and fallback session fetching:
+```python
+# Fetch full callRecord from Graph API (including sessions)
+call_record = self.graph_client.get(
+    f"/communications/callRecords/{call_record_id}",
+    params={"$expand": "sessions"}
+)
+
+# If sessions weren't expanded, fetch them separately
+if "sessions" not in call_record or not call_record["sessions"]:
+    sessions_response = self.graph_client.get(
+        f"/communications/callRecords/{call_record_id}/sessions"
+    )
+    call_record["sessions"] = sessions_response.get("value", [])
+```
+
+**Key Insight**: Graph API does NOT include sessions by default - you MUST explicitly request them via `$expand=sessions` or fetch separately.
+
+### Critical Fix 2: Worker Deadlock (Blocking I/O in Async)
+
+**Problem**: Async processors called blocking Graph API and Claude API methods directly, freezing the event loop.
+
+**Solution**: Wrapped ALL blocking I/O in `asyncio.run_in_executor()`:
+
+**Files Modified**:
+- `src/jobs/processors/summary.py` - Claude API call
+- `src/jobs/processors/transcript.py` - Graph API calls (3 locations)
+- `src/jobs/processors/distribution.py` - Email, chat, and participant enrichment (4 locations)
+
+**Pattern**:
+```python
+import asyncio
+
+# WRONG (blocks event loop):
+result = self.summarizer.generate_enhanced_summary(...)
+
+# RIGHT (non-blocking):
+loop = asyncio.get_event_loop()
+result = await loop.run_in_executor(
+    None,
+    lambda: self.summarizer.generate_enhanced_summary(...)
+)
+```
+
+**Key Insight**: In async Python, ANY synchronous blocking call (HTTP requests, file I/O, etc.) must be run in an executor to prevent deadlocks.
+
+### Critical Fix 3: Timezone Mismatch
+
+**Location**: `src/graph/transcripts.py` (around line 265)
+
+**Problem**: Transcript time matching failed because:
+- Database stores naive datetimes in **local EST time** (America/New_York)
+- Code assumed they were **UTC**
+- Transcripts are stored with UTC times
+- 5-hour difference caused no matches
+
+**Example**:
+- Meeting in DB: 21:25 (EST, stored as naive)
+- Transcript created: 02:26 UTC = 21:26 EST
+- Code treated DB time as UTC → 5-hour difference → no match
+
+**Solution**: Use pytz to localize naive datetimes as EST before comparison:
+```python
+if meeting_start_time.tzinfo is None:
+    import pytz
+    eastern = pytz.timezone('America/New_York')
+    meeting_start_time = eastern.localize(meeting_start_time)
+```
+
+**Key Insight**: Always know what timezone your "naive" datetimes are in. This codebase stores local EST time, NOT UTC!
+
+### Critical Fix 4: Debug Mode Email Filtering
+
+**Location**: `config.yaml`
+
+**Problem**: Debug mode filtered emails by exact match. Participant was `sschatz@townsquaremedia.com` but config only had `Scott.Schatz@townsquaremedia.com`.
+
+**Solution**: Added all email variants:
+```yaml
+debug_mode: true
+debug_email_recipients:
+  - Scott.Schatz@townsquaremedia.com
+  - sschatz@townsquaremedia.com
+  - scott.schatz@townsquaremedia.com
+```
+
+**Key Insight**: Email addresses can have multiple forms (UPN vs SMTP). Include all variants in config.
+
+## ⚠️ Critical Learnings - REMEMBER THESE
+
+### 1. Service Restart Required After Code Changes
+- **Problem**: Made code fix but backfill still showed old behavior
+- **Solution**: `systemctl --user restart teams-notetaker-worker`
+- **Key Insight**: Code changes don't take effect until service restart
+
+### 2. Graph API Sessions Require Explicit Request
+- **WRONG**: `GET /communications/callRecords/{id}` → No sessions
+- **RIGHT**: `GET /communications/callRecords/{id}?$expand=sessions` → Has sessions
+- **ALTERNATIVE**: Fetch sessions separately: `GET /communications/callRecords/{id}/sessions`
+
+### 3. Database Stores Local Time, Not UTC
+- All naive datetimes in this database are EST (America/New_York)
+- Must localize with pytz before comparing to UTC API responses
+- Check distribution.py for correct UTC→EST conversion for email display
+
+### 4. Async Processors Need run_in_executor for Blocking Calls
+Every blocking call in async code needs this pattern:
+```python
+loop = asyncio.get_event_loop()
+result = await loop.run_in_executor(None, lambda: blocking_call(...))
+```
+
+### 5. Check Email Variants in Debug Mode
+Users may have multiple email addresses:
+- UPN: `firstname.lastname@domain.com`
+- SMTP: `flastname@domain.com`
+- Primary: `fname@domain.com`
+
+## 📊 Final Pipeline Flow (Now Working)
+
+```
+1. Webhook/Backfill creates meeting record
+     ↓
+2. fetch_transcript job runs
+   - Finds transcript by matching time (EST→UTC conversion)
+   - Downloads VTT content
+     ↓
+3. generate_summary job runs
+   - Calls Claude API (via run_in_executor)
+   - Creates enhanced summary with action items, decisions, etc.
+     ↓
+4. distribute job runs
+   - Posts to Teams chat (if chat_id exists)
+   - Sends email to participants
+   - Respects debug_mode filtering
+```
+
+## ✅ Session Results
+
+**Email Delivered**: ✅ Message ID: `sent-c8337cc3-c80f-460d-a508-a59eeb29b6bb`
+**Pipeline Status**: ✅ All 3 stages working (fetch_transcript → generate_summary → distribute)
+**Meeting 193 Status**: `completed` with `has_distribution = true`
+
+**Files Modified**:
+- `src/webhooks/call_records_handler.py` - Sessions expansion
+- `src/jobs/processors/summary.py` - asyncio import + run_in_executor
+- `src/jobs/processors/transcript.py` - asyncio import + run_in_executor (3 locations)
+- `src/jobs/processors/distribution.py` - asyncio import + run_in_executor (4 locations)
+- `src/graph/transcripts.py` - Timezone fix with pytz
+- `config.yaml` - Debug email recipients
+
+---
+
+*Session End: December 17, 2025*
+*Status: ✅ PIPELINE WORKING*

@@ -6,8 +6,9 @@ First processor in the job chain (fetch_transcript → generate_summary → dist
 """
 
 import logging
+import asyncio
 from typing import Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from ..processors.base import BaseProcessor, register_processor
 from ...graph.client import GraphAPIClient
@@ -126,10 +127,15 @@ class TranscriptProcessor(BaseProcessor):
             user_id_for_transcript = organizer_user_id
 
             try:
-                transcript_metadata = self.transcript_fetcher.find_transcript_by_time(
-                    organizer_user_id=organizer_user_id,
-                    meeting_start_time=meeting.start_time,
-                    tolerance_minutes=30
+                # Run in executor to avoid blocking event loop
+                loop = asyncio.get_event_loop()
+                transcript_metadata = await loop.run_in_executor(
+                    None,
+                    lambda: self.transcript_fetcher.find_transcript_by_time(
+                        organizer_user_id=organizer_user_id,
+                        meeting_start_time=meeting.start_time,
+                        tolerance_minutes=30
+                    )
                 )
             except Exception as e:
                 # If 403 error accessing organizer's transcripts, try using a pilot user's ID
@@ -161,10 +167,14 @@ class TranscriptProcessor(BaseProcessor):
                                     f"Trying to access transcript via pilot user {pilot_participant.email}",
                                     "info"
                                 )
-                                transcript_metadata = self.transcript_fetcher.find_transcript_by_time(
-                                    organizer_user_id=pilot_user_id,
-                                    meeting_start_time=meeting.start_time,
-                                    tolerance_minutes=30
+                                # Run in executor to avoid blocking event loop
+                                transcript_metadata = await loop.run_in_executor(
+                                    None,
+                                    lambda: self.transcript_fetcher.find_transcript_by_time(
+                                        organizer_user_id=pilot_user_id,
+                                        meeting_start_time=meeting.start_time,
+                                        tolerance_minutes=30
+                                    )
                                 )
                                 user_id_for_transcript = pilot_user_id
                             else:
@@ -182,10 +192,14 @@ class TranscriptProcessor(BaseProcessor):
 
             # Download the transcript content (for AI processing)
             # Use the user_id_for_transcript (might be organizer or pilot user fallback)
-            vtt_content = self.transcript_fetcher.download_transcript_content(
-                organizer_user_id=user_id_for_transcript,
-                meeting_id=transcript_metadata.get('meetingId'),
-                transcript_id=transcript_metadata.get('id')
+            # Run in executor to avoid blocking event loop
+            vtt_content = await loop.run_in_executor(
+                None,
+                lambda: self.transcript_fetcher.download_transcript_content(
+                    organizer_user_id=user_id_for_transcript,
+                    meeting_id=transcript_metadata.get('meetingId'),
+                    transcript_id=transcript_metadata.get('id')
+                )
             )
 
             # Get SharePoint URL for transcript (for secure user access)
@@ -205,9 +219,13 @@ class TranscriptProcessor(BaseProcessor):
             # Get recording SharePoint URL (if available)
             recording_sharepoint_url = None
             try:
-                recording_sharepoint_url = self.transcript_fetcher.get_recording_sharepoint_url(
-                    organizer_user_id=user_id_for_transcript,
-                    meeting_id=transcript_metadata.get('meetingId')
+                # Run in executor to avoid blocking event loop
+                recording_sharepoint_url = await loop.run_in_executor(
+                    None,
+                    lambda: self.transcript_fetcher.get_recording_sharepoint_url(
+                        organizer_user_id=user_id_for_transcript,
+                        meeting_id=transcript_metadata.get('meetingId')
+                    )
                 )
                 if recording_sharepoint_url:
                     self._log_progress(job, "✓ Found recording SharePoint URL")
@@ -315,17 +333,21 @@ class TranscriptProcessor(BaseProcessor):
         except TranscriptNotFoundError as e:
             self._log_progress(job, f"Transcript not available: {e}", "warning")
 
-            # NEW: Implement exponential backoff retry
-            max_retries = job.max_retries if hasattr(job, 'max_retries') and job.max_retries else 6
+            # Exponential backoff retry: 15min, 30min, 60min max
+            # Transcripts rarely appear after 1 hour, so no point retrying longer
+            max_retries = 3  # 15min + 30min + 60min = max 1hr 45min total
 
-            if job.retry_count < max_retries:
-                # Calculate next retry time: 15min, 30min, 1hr, 2hr, 4hr, 8hr
-                delay_minutes = 15 * (2 ** job.retry_count)
-                next_retry = datetime.utcnow() + timedelta(minutes=delay_minutes)
+            # Handle None retry_count (treat as 0)
+            retry_count = job.retry_count if job.retry_count is not None else 0
+
+            if retry_count < max_retries:
+                # Calculate next retry time: 15min, 30min, 60min
+                delay_minutes = 15 * (2 ** retry_count)
+                next_retry = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
 
                 self._log_progress(
                     job,
-                    f"Transcript not ready. Scheduling retry {job.retry_count + 1}/{max_retries} "
+                    f"Transcript not ready. Scheduling retry {retry_count + 1}/{max_retries} "
                     f"in {delay_minutes} minutes (at {next_retry})"
                 )
 
@@ -334,7 +356,7 @@ class TranscriptProcessor(BaseProcessor):
                     db_job = session.query(JobQueue).filter_by(id=job.id).first()
                     if db_job:
                         db_job.status = "retrying"
-                        db_job.retry_count += 1
+                        db_job.retry_count = retry_count + 1
                         db_job.next_retry_at = next_retry
                         db_job.error_message = f"Transcript not ready: {e}"
                         session.commit()
@@ -345,7 +367,7 @@ class TranscriptProcessor(BaseProcessor):
                     message=f"Transcript not ready, retry scheduled for {next_retry}",
                     retry_scheduled=True,
                     next_retry_at=next_retry.isoformat(),
-                    retry_count=job.retry_count + 1,
+                    retry_count=retry_count + 1,
                     max_retries=max_retries
                 )
             else:

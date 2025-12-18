@@ -6,6 +6,7 @@ Second processor in the job chain (fetch_transcript → generate_summary → dis
 """
 
 import logging
+import asyncio
 from typing import Dict, Any
 from datetime import datetime
 
@@ -161,11 +162,15 @@ class SummaryProcessor(BaseProcessor):
                 if custom_instructions:
                     self._log_progress(job, f"Using custom instructions: {custom_instructions}")
 
-                # Generate enhanced summary
-                enhanced_result: EnhancedSummary = self.summarizer.generate_enhanced_summary(
-                    transcript_segments=transcript.parsed_content,  # Pass raw segments
-                    meeting_metadata=meeting_metadata,
-                    custom_instructions=custom_instructions
+                # Generate enhanced summary (run in executor to avoid blocking event loop)
+                loop = asyncio.get_event_loop()
+                enhanced_result: EnhancedSummary = await loop.run_in_executor(
+                    None,
+                    lambda: self.summarizer.generate_enhanced_summary(
+                        transcript_segments=transcript.parsed_content,  # Pass raw segments
+                        meeting_metadata=meeting_metadata,
+                        custom_instructions=custom_instructions
+                    )
                 )
 
                 summary_text = enhanced_result.overall_summary

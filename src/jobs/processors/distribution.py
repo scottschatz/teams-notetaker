@@ -6,6 +6,7 @@ Third and final processor in the job chain (fetch_transcript → generate_summar
 """
 
 import logging
+import asyncio
 from typing import Dict, Any, List
 from datetime import datetime
 
@@ -232,12 +233,17 @@ class DistributionProcessor(BaseProcessor):
                 try:
                     self._log_progress(job, "Posting summary to Teams meeting chat")
 
-                    chat_message_id = self.chat_poster.post_meeting_summary(
-                        chat_id=meeting.chat_id,
-                        summary_markdown=summary.summary_text,
-                        meeting_metadata=meeting_metadata,
-                        enhanced_summary_data=enhanced_summary_data,
-                        include_header=True
+                    # Run in executor to avoid blocking event loop
+                    loop = asyncio.get_event_loop()
+                    chat_message_id = await loop.run_in_executor(
+                        None,
+                        lambda: self.chat_poster.post_meeting_summary(
+                            chat_id=meeting.chat_id,
+                            summary_markdown=summary.summary_text,
+                            meeting_metadata=meeting_metadata,
+                            enhanced_summary_data=enhanced_summary_data,
+                            include_header=True
+                        )
                     )
 
                     chat_sent = True
@@ -297,15 +303,19 @@ class DistributionProcessor(BaseProcessor):
                         from_email = self.config.app.email_from or "noreply@townsquaremedia.com"
 
                         # Format participants list for email template (deduplicated by email)
-                        # Enrich with photos and job titles
+                        # Enrich with photos and job titles (run in executor to avoid blocking)
+                        loop = asyncio.get_event_loop()
                         seen_emails = set()
                         participants_dict = []
                         for p in participants:
                             email_lower = p.email.lower() if p.email else ""
                             if email_lower and email_lower not in seen_emails:
-                                # Enrich participant with photo and job title
-                                enriched = self.graph_client.enrich_user_with_photo_and_title(
-                                    p.email, p.display_name
+                                # Enrich participant with photo and job title (non-blocking)
+                                enriched = await loop.run_in_executor(
+                                    None,
+                                    lambda email=p.email, name=p.display_name: self.graph_client.enrich_user_with_photo_and_title(
+                                        email, name
+                                    )
                                 )
 
                                 participants_dict.append({
@@ -331,17 +341,22 @@ class DistributionProcessor(BaseProcessor):
                         else:
                             time_str = "Unknown Time"
 
-                        email_message_id = self.email_sender.send_meeting_summary(
-                            from_email=from_email,
-                            to_emails=participant_emails,
-                            subject=f"Meeting Summary: {meeting.subject} ({time_str})",
-                            summary_markdown=summary.summary_text,
-                            meeting_metadata=meeting_metadata,
-                            enhanced_summary_data=enhanced_summary_data,  # NEW: Enhanced data
-                            transcript_content=None,  # REMOVED: Using SharePoint links instead
-                            participants=participants_dict,
-                            transcript_stats=transcript_stats,
-                            include_footer=True
+                        # Run in executor to avoid blocking event loop
+                        loop = asyncio.get_event_loop()
+                        email_message_id = await loop.run_in_executor(
+                            None,
+                            lambda: self.email_sender.send_meeting_summary(
+                                from_email=from_email,
+                                to_emails=participant_emails,
+                                subject=f"Meeting Summary: {meeting.subject} ({time_str})",
+                                summary_markdown=summary.summary_text,
+                                meeting_metadata=meeting_metadata,
+                                enhanced_summary_data=enhanced_summary_data,  # NEW: Enhanced data
+                                transcript_content=None,  # REMOVED: Using SharePoint links instead
+                                participants=participants_dict,
+                                transcript_stats=transcript_stats,
+                                include_footer=True
+                            )
                         )
 
                         email_sent = True

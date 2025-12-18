@@ -240,8 +240,18 @@ class CallRecordsWebhookHandler:
                 return {"status": "duplicate", "call_record_id": call_record_id}
 
             try:
-                # Fetch full callRecord from Graph API
-                call_record = self.graph_client.get(f"/communications/callRecords/{call_record_id}")
+                # Fetch full callRecord from Graph API (including sessions)
+                call_record = self.graph_client.get(
+                    f"/communications/callRecords/{call_record_id}",
+                    params={"$expand": "sessions"}
+                )
+
+                # If sessions weren't expanded, fetch them separately
+                if "sessions" not in call_record or not call_record["sessions"]:
+                    sessions_response = self.graph_client.get(
+                        f"/communications/callRecords/{call_record_id}/sessions"
+                    )
+                    call_record["sessions"] = sessions_response.get("value", [])
 
                 # Extract meeting info
                 online_meeting_id = call_record.get("joinWebUrl")
@@ -340,37 +350,48 @@ class CallRecordsWebhookHandler:
                 return {"status": "error", "error": str(e)}
 
     def _extract_participants(self, call_record: Dict[str, Any]) -> list:
-        """Extract participant list from callRecord."""
+        """Extract participant list from callRecord.
+
+        Note: Call record sessions only include user ID and displayName, NOT email.
+        We must look up each user in Graph API to get their email address.
+        """
         participants = []
+        seen_user_ids = set()
 
         for session_data in call_record.get("sessions", []):
-            caller = session_data.get("caller", {})
-            if caller.get("identity", {}).get("user"):
-                user = caller["identity"]["user"]
-                participants.append({
-                    "email": user.get("userPrincipalName"),
-                    "name": user.get("displayName"),
-                    "role": "attendee"
-                })
+            for endpoint in ["caller", "callee"]:
+                identity = session_data.get(endpoint, {}).get("identity", {})
+                user = identity.get("user")
 
-            callee = session_data.get("callee", {})
-            if callee.get("identity", {}).get("user"):
-                user = callee["identity"]["user"]
-                participants.append({
-                    "email": user.get("userPrincipalName"),
-                    "name": user.get("displayName"),
-                    "role": "attendee"
-                })
+                if user and user.get("id"):
+                    user_id = user["id"]
 
-        # Deduplicate by email
-        seen = set()
-        unique_participants = []
-        for p in participants:
-            if p["email"] and p["email"] not in seen:
-                seen.add(p["email"])
-                unique_participants.append(p)
+                    # Skip if already processed this user
+                    if user_id in seen_user_ids:
+                        continue
+                    seen_user_ids.add(user_id)
 
-        return unique_participants
+                    # Look up user email from Graph API (not included in call record)
+                    email = user.get("userPrincipalName")  # Usually not present
+                    if not email:
+                        try:
+                            user_details = self.graph_client.get(f"/users/{user_id}")
+                            email = user_details.get("userPrincipalName") or user_details.get("mail")
+                            logger.debug(f"Looked up user {user_id}: {email}")
+                        except Exception as e:
+                            logger.warning(f"Could not look up user {user_id}: {e}")
+                            continue
+
+                    if email:
+                        participants.append({
+                            "email": email.lower(),  # Normalize to lowercase
+                            "name": user.get("displayName"),
+                            "role": "attendee",
+                            "user_id": user_id
+                        })
+
+        logger.info(f"Extracted {len(participants)} participants from call record")
+        return participants
 
     def _parse_datetime(self, dt_string: str) -> datetime:
         """Parse ISO datetime string."""
@@ -461,8 +482,15 @@ class CallRecordsWebhookHandler:
                             logger.debug(f"CallRecord {call_record_id} already processed")
                             continue
 
-                    # Extract participants
+                    # Fetch sessions for this call record (not included in list response)
+                    sessions_response = self.graph_client.get(
+                        f"/communications/callRecords/{call_record_id}/sessions"
+                    )
+                    record["sessions"] = sessions_response.get("value", [])
+
+                    # Extract participants from sessions
                     participants = self._extract_participants(record)
+                    logger.debug(f"CallRecord {call_record_id[:16]}... has {len(participants)} participants: {[p.get('email') for p in participants]}")
 
                     # Check for opted-in participants
                     opted_in_participants = [

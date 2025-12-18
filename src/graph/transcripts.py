@@ -261,8 +261,11 @@ class TranscriptFetcher:
                 created_dt = datetime.fromisoformat(created_str.replace('Z', '+00:00'))
 
                 # Make meeting_start_time timezone-aware if it isn't
+                # Note: Database stores naive datetimes in local time (America/New_York)
                 if meeting_start_time.tzinfo is None:
-                    meeting_start_time = meeting_start_time.replace(tzinfo=timezone.utc)
+                    import pytz
+                    eastern = pytz.timezone('America/New_York')
+                    meeting_start_time = eastern.localize(meeting_start_time)
 
                 # Check if times are within tolerance
                 time_diff = abs((created_dt - meeting_start_time).total_seconds() / 60)

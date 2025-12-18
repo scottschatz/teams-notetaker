@@ -303,11 +303,15 @@ class DistributionProcessor(BaseProcessor):
                         from_email = self.config.app.email_from or "noreply@townsquaremedia.com"
 
                         # Format participants list for email template (deduplicated by email/name)
+                        # Only include participants who actually attended (not invitees with attended=False)
                         # Enrich with photos and job titles (run in executor to avoid blocking)
                         loop = asyncio.get_event_loop()
                         seen_identifiers = set()  # Track by email or display_name
                         participants_dict = []
                         for p in participants:
+                            # Skip participants who didn't attend (they go in "Invited" section)
+                            if hasattr(p, 'attended') and p.attended == False:
+                                continue
                             email_lower = p.email.lower() if p.email else ""
                             # Use email as identifier if available, otherwise use display_name
                             identifier = email_lower if email_lower else (p.display_name or "").lower()

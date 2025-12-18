@@ -127,10 +127,22 @@ class TranscriptProcessor(BaseProcessor):
                     f"Using provided transcript_id from webhook notification"
                 )
 
-                # Use online_meeting_id if provided, otherwise fall back to meeting.meeting_id
-                # online_meeting_id is the proper Graph API format (MSp...) while
-                # meeting.meeting_id might be a calendar event ID (AAMk...) for calendar-discovered meetings
-                online_meeting_id = job.input_data.get("online_meeting_id") or meeting.meeting_id
+                # Use online_meeting_id from multiple sources (in priority order):
+                # 1. job.input_data (from webhook notification)
+                # 2. meeting.online_meeting_id (new explicit column)
+                # 3. meeting.meeting_id (legacy - may be calendar event ID for old meetings)
+                online_meeting_id = (
+                    job.input_data.get("online_meeting_id") or
+                    meeting.online_meeting_id or  # NEW: explicit column
+                    meeting.meeting_id
+                )
+
+                # Validate: calendar event IDs (AAMk...) won't work for transcript API
+                if online_meeting_id and online_meeting_id.startswith("AAMk"):
+                    logger.warning(
+                        f"Meeting {meeting.id} has calendar event ID format (AAMk...) "
+                        f"instead of online meeting ID (MSp...). Transcript fetch may fail."
+                    )
 
                 # We have transcript_id - construct the transcript metadata
                 transcript_metadata = {

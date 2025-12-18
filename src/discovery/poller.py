@@ -279,6 +279,11 @@ class MeetingPoller:
             # Create meeting record
             meeting = Meeting(
                 meeting_id=meeting_data["meeting_id"],
+                # Explicit ID types (NEW - prefer these)
+                online_meeting_id=meeting_data.get("online_meeting_id"),
+                calendar_event_id=meeting_data.get("calendar_event_id"),
+                call_record_id=meeting_data.get("call_record_id"),
+                # Meeting metadata
                 subject=meeting_data.get("subject", "No Subject"),
                 organizer_email=meeting_data.get("organizer_email", ""),
                 organizer_name=meeting_data.get("organizer_name", ""),

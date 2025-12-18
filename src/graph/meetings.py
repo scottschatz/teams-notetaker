@@ -279,7 +279,12 @@ class MeetingDiscovery:
                        f"{actual_count} joined (invited: {len(participants)})")
 
             return {
-                "meeting_id": online_meeting.get("id", event["id"]),
+                # Explicit ID types (NEW - prefer these)
+                "online_meeting_id": online_meeting.get("id"),  # MSp... format for transcript API
+                "calendar_event_id": event["id"],  # AAMk... format
+                "call_record_id": call_record.get("call_record_id"),
+                # Legacy meeting_id for backwards compat (prefer online_meeting_id)
+                "meeting_id": online_meeting.get("id") or event["id"],
                 "event_id": event["id"],
                 "subject": event.get("subject", "No Subject"),
                 "organizer_email": organizer_email,
@@ -296,13 +301,17 @@ class MeetingDiscovery:
                 "join_url": join_url,
                 "chat_id": chat_id,
                 "has_transcript": None,
-                "call_record_id": call_record.get("call_record_id"),
             }
         else:
             logger.debug("No call record found, using scheduled stats")
 
             return {
-                "meeting_id": online_meeting.get("id", event["id"]),
+                # Explicit ID types (NEW - prefer these)
+                "online_meeting_id": online_meeting.get("id"),  # MSp... format for transcript API
+                "calendar_event_id": event["id"],  # AAMk... format
+                "call_record_id": None,  # No call record available
+                # Legacy meeting_id for backwards compat (prefer online_meeting_id)
+                "meeting_id": online_meeting.get("id") or event["id"],
                 "event_id": event["id"],
                 "subject": event.get("subject", "No Subject"),
                 "organizer_email": organizer_email,
@@ -337,6 +346,11 @@ class MeetingDiscovery:
             duration_minutes = int(duration.total_seconds() / 60)
 
         return {
+            # Explicit ID types (NEW - prefer these)
+            "online_meeting_id": meeting["id"],  # MSp... format for transcript API
+            "calendar_event_id": None,  # Not available from onlineMeeting API
+            "call_record_id": None,  # Not available from onlineMeeting API
+            # Legacy meeting_id for backwards compat
             "meeting_id": meeting["id"],
             "subject": meeting.get("subject", "No Subject"),
             "start_time": start_time,

@@ -92,7 +92,12 @@ class Meeting(Base):
     __tablename__ = "meetings"
 
     id = Column(Integer, primary_key=True)
-    meeting_id = Column(String(255), unique=True, nullable=False, index=True)  # Graph API ID
+    meeting_id = Column(String(255), unique=True, nullable=False, index=True)  # Graph API ID (legacy - mixed types)
+
+    # Explicit ID types (NEW - prefer these over meeting_id)
+    online_meeting_id = Column(String(500), index=True)  # MSp... format, required for transcript API
+    calendar_event_id = Column(String(500), index=True)  # AAMk... format, from calendar discovery
+    call_record_id = Column(String(500), index=True)     # From callRecords webhook
 
     # Meeting metadata
     subject = Column(String(500))
@@ -622,6 +627,68 @@ class BackfillRun(Base):
 
     def __repr__(self):
         return f"<BackfillRun(id={self.id}, status='{self.status}', started={self.started_at})>"
+
+
+# ============================================================================
+# INBOX MONITORING MODELS (Phase 5)
+# ============================================================================
+
+
+class UserFeedback(Base):
+    """
+    Store feedback received via email from users.
+
+    Feedback can be replies to summary emails or direct emails to the
+    note.taker mailbox. AI analysis provides sentiment and categorization.
+    """
+    __tablename__ = "user_feedback"
+
+    id = Column(Integer, primary_key=True)
+    meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="SET NULL"), index=True)
+    user_email = Column(String(255), nullable=False, index=True)
+    feedback_text = Column(Text, nullable=False)
+    subject = Column(String(500))
+    source_email_id = Column(String(500))  # Graph API message ID
+    in_reply_to = Column(String(500))  # Message ID this is replying to
+    received_at = Column(DateTime, default=func.now(), index=True)
+
+    # AI analysis (populated by feedback processor)
+    ai_sentiment = Column(String(20))  # positive, negative, neutral, suggestion
+    ai_category = Column(String(50))   # bug, feature_request, praise, question, other
+    ai_summary = Column(Text)  # Brief AI summary of feedback
+
+    # Relationship
+    meeting = relationship("Meeting", backref="feedback")
+
+    __table_args__ = (
+        Index("idx_feedback_user_date", "user_email", "received_at"),
+    )
+
+    def __repr__(self):
+        return f"<UserFeedback(id={self.id}, user='{self.user_email}', sentiment='{self.ai_sentiment}')>"
+
+
+class ProcessedInboxMessage(Base):
+    """
+    Track processed emails from the note.taker inbox.
+
+    Prevents duplicate processing of subscribe/unsubscribe/feedback emails.
+    Similar to ProcessedChatMessage but for inbox monitoring.
+    """
+    __tablename__ = "processed_inbox_messages"
+
+    message_id = Column(String(500), primary_key=True)
+    message_type = Column(String(50), index=True)  # subscribe, unsubscribe, feedback, summary_request, unknown
+    processed_at = Column(DateTime, default=func.now(), index=True)
+    user_email = Column(String(255), index=True)
+    result = Column(Text)  # Success/failure details, JSON or plain text
+
+    __table_args__ = (
+        Index("idx_inbox_user_date", "user_email", "processed_at"),
+    )
+
+    def __repr__(self):
+        return f"<ProcessedInboxMessage(id='{self.message_id[:20]}...', type='{self.message_type}')>"
 
 
 # ============================================================================

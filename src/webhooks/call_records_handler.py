@@ -227,8 +227,12 @@ class CallRecordsWebhookHandler:
                             logger.warning(f"Could not fetch meeting details: {e}")
 
                     # Create meeting record with organizer info from notification
+                    # Note: meeting_id from transcript notification is the online_meeting_id (MSp...)
                     meeting = Meeting(
                         meeting_id=meeting_id,
+                        online_meeting_id=meeting_id,  # MSp... format from transcript notification
+                        calendar_event_id=None,  # Not available from transcript notification
+                        call_record_id=None,  # Not available from transcript notification
                         subject=meeting_subject,
                         organizer_email=organizer_email,
                         organizer_name=organizer_name,
@@ -403,9 +407,12 @@ class CallRecordsWebhookHandler:
                         existing_meeting.organizer_user_id = organizer_user_id
                         logger.info(f"Updated organizer_user_id for meeting {meeting_id}")
                 else:
-                    # Create meeting record
+                    # Create meeting record from callRecord notification
                     meeting = Meeting(
                         meeting_id=online_meeting_id,
+                        online_meeting_id=online_meeting_id,  # MSp... format from callRecord
+                        calendar_event_id=None,  # Not available from callRecord
+                        call_record_id=call_record_id,  # The callRecord ID
                         subject=meeting_subject,
                         organizer_email=organizer_email,
                         organizer_name=organizer_name,

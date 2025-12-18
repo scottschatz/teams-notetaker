@@ -167,16 +167,23 @@ class CallRecordsWebhookHandler:
                         except Exception as e:
                             logger.warning(f"Could not fetch organizer details: {e}")
 
-                    # Check if we've already processed this transcript
-                    existing_job = session.query(JobQueue).filter_by(
-                        meeting_id=db_meeting_id,
-                        job_type="fetch_transcript",
-                        status="completed"
+                    # Check if we've already processed THIS SPECIFIC transcript
+                    # (Important for recurring meetings - same meeting_id but different transcript_id)
+                    from sqlalchemy import cast
+                    from sqlalchemy.dialects.postgresql import JSONB
+
+                    existing_job = session.query(JobQueue).filter(
+                        JobQueue.meeting_id == db_meeting_id,
+                        JobQueue.job_type == "fetch_transcript",
+                        JobQueue.status == "completed",
+                        JobQueue.input_data["transcript_id"].astext == transcript_id
                     ).first()
 
                     if existing_job:
-                        logger.info(f"Transcript already processed for meeting {db_meeting_id}")
+                        logger.info(f"Transcript {transcript_id[:20]}... already processed for meeting {db_meeting_id}")
                         return {"status": "duplicate", "meeting_id": db_meeting_id}
+
+                    logger.info(f"New transcript {transcript_id[:20]}... for recurring meeting {db_meeting_id}")
 
                 else:
                     # Fetch organizer details from Graph API if we have the user ID

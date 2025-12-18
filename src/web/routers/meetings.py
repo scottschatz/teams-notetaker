@@ -43,6 +43,12 @@ class MeetingResponse(BaseModel):
     has_distribution: bool = False
     word_count: Optional[int] = None
     speaker_count: Optional[int] = None
+    # Summary/AI fields
+    model: Optional[str] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    total_tokens: Optional[int] = None
+    generation_time_ms: Optional[int] = None
 
     class Config:
         from_attributes = True
@@ -77,12 +83,21 @@ async def list_meetings(
         List of meetings
     """
     with db.get_session() as session:
-        # Join with transcript to get word_count and speaker_count
+        # Join with transcript and summary to get word_count, speaker_count, and AI stats
         query = session.query(
             Meeting,
             Transcript.word_count,
-            Transcript.speaker_count
-        ).outerjoin(Transcript, Meeting.id == Transcript.meeting_id)
+            Transcript.speaker_count,
+            Summary.model,
+            Summary.prompt_tokens,
+            Summary.completion_tokens,
+            Summary.total_tokens,
+            Summary.generation_time_ms
+        ).outerjoin(
+            Transcript, Meeting.id == Transcript.meeting_id
+        ).outerjoin(
+            Summary, Meeting.id == Summary.meeting_id
+        )
 
         if status:
             query = query.filter(Meeting.status == status)
@@ -96,9 +111,9 @@ async def list_meetings(
 
         results = query.offset(skip).limit(limit).all()
 
-        # Build response with transcript data
+        # Build response with transcript and summary data
         meetings = []
-        for meeting, word_count, speaker_count in results:
+        for meeting, word_count, speaker_count, model, prompt_tokens, completion_tokens, total_tokens, generation_time_ms in results:
             # Calculate actual duration if we have start and end times
             actual_duration = None
             if meeting.start_time and meeting.end_time:
@@ -120,7 +135,13 @@ async def list_meetings(
                 "has_summary": meeting.has_summary,
                 "has_distribution": meeting.has_distribution,
                 "word_count": word_count,
-                "speaker_count": speaker_count
+                "speaker_count": speaker_count,
+                # AI/Summary stats
+                "model": model,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "generation_time_ms": generation_time_ms
             }
             meetings.append(MeetingResponse(**meeting_dict))
 

@@ -841,30 +841,10 @@ class EmailSender:
 
 """
 
-        # Key Moments Section (v2.1: simplified, 5-8 entries, clickable timestamps)
+        # Key Moments Section (ordered by importance, timestamp at end)
         if highlights:
-            # Limit to 8 highlights and sort by timestamp (chronological order)
+            # Limit to 8 highlights (already ordered by importance from AI)
             highlights_limited = highlights[:8]
-
-            def parse_timestamp_to_seconds(ts: str) -> int:
-                """Convert MM:SS or H:MM:SS to total seconds for sorting."""
-                if not ts:
-                    return 0
-                try:
-                    parts = ts.split(":")
-                    if len(parts) == 3:  # H:MM:SS
-                        return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-                    elif len(parts) == 2:  # MM:SS
-                        return int(parts[0]) * 60 + int(parts[1])
-                    return 0
-                except:
-                    return 0
-
-            # Sort by timestamp (chronological order)
-            highlights_limited = sorted(
-                highlights_limited,
-                key=lambda h: parse_timestamp_to_seconds(h.get("timestamp", ""))
-            )
 
             html += """        <div class="highlights-section" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 25px 0; border-radius: 4px;">
             <h3 style="margin-top: 0; color: #f57c00;">⚡ Key Moments</h3>
@@ -895,9 +875,9 @@ class EmailSender:
                 else:
                     timestamp_link = f'<span style="font-weight: 700; color: #f57c00;">{timestamp}</span>' if timestamp else ""
 
-                # Single-line format: [timestamp] - description
+                # Single-line format: description (timestamp) - timestamp at end to show it's ordered by importance
                 if timestamp_link:
-                    html += f"""                <li style="margin-bottom: 8px;">{timestamp_link} - {description}</li>
+                    html += f"""                <li style="margin-bottom: 8px;">{description} ({timestamp_link})</li>
 """
                 else:
                     html += f"""                <li style="margin-bottom: 8px;">{description}</li>

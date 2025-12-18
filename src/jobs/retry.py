@@ -47,7 +47,8 @@ def calculate_next_retry(
         delay = max(base_delay_seconds, delay)  # Don't go below base delay
 
     # Calculate next retry time
-    next_retry = datetime.utcnow() + timedelta(seconds=delay)
+    # Use local time since PostgreSQL is configured with America/New_York timezone
+    next_retry = datetime.now() + timedelta(seconds=delay)
 
     return next_retry
 

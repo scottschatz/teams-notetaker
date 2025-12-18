@@ -398,13 +398,16 @@ class MeetingDiscovery:
 
     def _parse_datetime(self, dt_string: Optional[str]) -> Optional[datetime]:
         """
-        Parse ISO datetime string to datetime object.
+        Parse ISO datetime string to UTC-naive datetime object.
+
+        Graph API returns times in UTC (with Z suffix). We store as UTC-naive
+        datetimes, and the display layer converts to Eastern timezone.
 
         Args:
             dt_string: ISO format datetime string
 
         Returns:
-            datetime object or None
+            UTC-naive datetime object or None
         """
         if not dt_string:
             return None
@@ -412,8 +415,18 @@ class MeetingDiscovery:
         try:
             # Handle both with and without timezone
             if dt_string.endswith("Z"):
-                return datetime.fromisoformat(dt_string.replace("Z", "+00:00"))
+                # Parse UTC time and return as naive (strip timezone info)
+                dt = datetime.fromisoformat(dt_string.replace("Z", "+00:00"))
+                return dt.replace(tzinfo=None)  # Store as UTC-naive
+            elif "+" in dt_string or "-" in dt_string[10:]:
+                # Has timezone offset - parse and convert to UTC-naive
+                dt = datetime.fromisoformat(dt_string)
+                if dt.tzinfo:
+                    from datetime import timezone
+                    dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+                return dt
             else:
+                # No timezone - assume already UTC-naive
                 return datetime.fromisoformat(dt_string)
         except Exception as e:
             logger.warning(f"Failed to parse datetime '{dt_string}': {e}")
@@ -645,10 +658,23 @@ class MeetingDiscovery:
                             if user_id and user_id not in unique_participant_ids:
                                 unique_participant_ids.add(user_id)
 
+                                # Call record sessions only have user ID and displayName, NOT email
+                                # Must look up each user in Graph API to get their email
+                                email = user_info.get("userPrincipalName", "")
+                                if not email:
+                                    try:
+                                        user_details = self.client.get(f"/users/{user_id}")
+                                        email = user_details.get("mail") or user_details.get("userPrincipalName", "")
+                                        logger.debug(f"Looked up user {user_id}: {email}")
+                                    except Exception as e:
+                                        logger.warning(f"Could not look up email for user {user_id}: {e}")
+                                        # Still add participant but without email
+                                        email = ""
+
                                 participants.append({
                                     "id": user_id,
                                     "display_name": user_info.get("displayName", "Unknown"),
-                                    "email": user_info.get("userPrincipalName", ""),
+                                    "email": email,
                                 })
                 except Exception as e:
                     logger.warning(f"Could not fetch sessions for call record: {e}")

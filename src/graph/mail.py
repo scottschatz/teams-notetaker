@@ -375,18 +375,38 @@ class EmailSender:
         if invited_count and participant_count != invited_count:
             participant_display = f"{participant_count} <span style='color: #666; font-size: 0.9em;'>({invited_count} invited)</span>"
 
-        # Format start time
+        # Format start time (convert UTC to Eastern)
         if isinstance(start_time, str):
             # If already formatted with timezone (contains EST/EDT), use as-is
             if " EST" in start_time or " EDT" in start_time:
                 start_time_formatted = start_time
             else:
                 try:
-                    from datetime import datetime
+                    from datetime import datetime, timezone
+                    from zoneinfo import ZoneInfo
                     dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                    start_time_formatted = dt.strftime("%B %d, %Y at %I:%M %p")
+                    # Convert to Eastern time
+                    eastern = ZoneInfo("America/New_York")
+                    dt_eastern = dt.astimezone(eastern)
+                    # Format with timezone abbreviation (EST or EDT)
+                    tz_abbr = dt_eastern.strftime("%Z")
+                    start_time_formatted = dt_eastern.strftime(f"%B %d, %Y at %I:%M %p {tz_abbr}")
                 except:
                     start_time_formatted = start_time
+        elif hasattr(start_time, 'strftime'):
+            # It's a datetime object
+            try:
+                from zoneinfo import ZoneInfo
+                from datetime import timezone
+                eastern = ZoneInfo("America/New_York")
+                if start_time.tzinfo is None:
+                    # Assume UTC if naive
+                    start_time = start_time.replace(tzinfo=timezone.utc)
+                dt_eastern = start_time.astimezone(eastern)
+                tz_abbr = dt_eastern.strftime("%Z")
+                start_time_formatted = dt_eastern.strftime(f"%B %d, %Y at %I:%M %p {tz_abbr}")
+            except:
+                start_time_formatted = start_time.strftime("%B %d, %Y at %I:%M %p")
         else:
             start_time_formatted = str(start_time)
 
@@ -1127,18 +1147,38 @@ class EmailSender:
         meeting_id = meeting_metadata.get("meeting_id", "")
         dashboard_url = f"http://localhost:8000/meetings/{meeting_id}" if meeting_id else ""
 
-        # Format start time
+        # Format start time (convert UTC to Eastern)
         if isinstance(start_time, str):
             # If already formatted with timezone (contains EST/EDT), use as-is
             if " EST" in start_time or " EDT" in start_time:
                 start_time_formatted = start_time
             else:
                 try:
-                    from datetime import datetime
+                    from datetime import datetime, timezone
+                    from zoneinfo import ZoneInfo
                     dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-                    start_time_formatted = dt.strftime("%B %d, %Y at %I:%M %p")
+                    # Convert to Eastern time
+                    eastern = ZoneInfo("America/New_York")
+                    dt_eastern = dt.astimezone(eastern)
+                    # Format with timezone abbreviation (EST or EDT)
+                    tz_abbr = dt_eastern.strftime("%Z")
+                    start_time_formatted = dt_eastern.strftime(f"%B %d, %Y at %I:%M %p {tz_abbr}")
                 except:
                     start_time_formatted = start_time
+        elif hasattr(start_time, 'strftime'):
+            # It's a datetime object
+            try:
+                from zoneinfo import ZoneInfo
+                from datetime import timezone
+                eastern = ZoneInfo("America/New_York")
+                if start_time.tzinfo is None:
+                    # Assume UTC if naive
+                    start_time = start_time.replace(tzinfo=timezone.utc)
+                dt_eastern = start_time.astimezone(eastern)
+                tz_abbr = dt_eastern.strftime("%Z")
+                start_time_formatted = dt_eastern.strftime(f"%B %d, %Y at %I:%M %p {tz_abbr}")
+            except:
+                start_time_formatted = start_time.strftime("%B %d, %Y at %I:%M %p")
         else:
             start_time_formatted = str(start_time)
 

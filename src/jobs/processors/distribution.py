@@ -277,23 +277,6 @@ class DistributionProcessor(BaseProcessor):
             # THEN send email (if enabled)
             if self.config.app.email_enabled:
                 try:
-                    # DEBUG MODE: Filter recipients if debug_mode is enabled
-                    if hasattr(self.config.app, 'debug_mode') and self.config.app.debug_mode:
-                        if hasattr(self.config.app, 'debug_email_recipients') and self.config.app.debug_email_recipients:
-                            original_count = len(participant_emails)
-                            participant_emails = [
-                                email for email in participant_emails
-                                if email in self.config.app.debug_email_recipients
-                            ]
-                            self._log_progress(
-                                job,
-                                f"⚠️ DEBUG MODE: Filtered {original_count} recipients to {len(participant_emails)} debug recipients",
-                                "warning"
-                            )
-                        else:
-                            self._log_progress(job, "⚠️ DEBUG MODE enabled but no debug recipients configured, skipping email", "warning")
-                            participant_emails = []
-
                     if not participant_emails:
                         self._log_progress(job, "No email recipients after filtering", "warning")
                         email_sent = False
@@ -398,6 +381,20 @@ class DistributionProcessor(BaseProcessor):
 
                             except Exception as e:
                                 self._log_progress(job, f"Could not fetch meeting invitees: {e}", "warning")
+
+                        # Fallback: Also include participants with attended=False from database
+                        # This catches cases where join_url is None or API lookup failed
+                        invitee_emails_so_far = {inv["email"].lower() for inv in invitees_list if inv.get("email")}
+                        for p in participants:
+                            if hasattr(p, 'attended') and p.attended == False:
+                                email_lower = p.email.lower() if p.email else ""
+                                if email_lower and email_lower not in invitee_emails_so_far:
+                                    invitees_list.append({
+                                        "email": p.email,
+                                        "name": p.display_name
+                                    })
+                                    invitee_emails_so_far.add(email_lower)
+                                    self._log_progress(job, f"Added invitee from DB (attended=False): {p.display_name}")
 
                         # Format meeting time in Eastern timezone for subject
                         import pytz

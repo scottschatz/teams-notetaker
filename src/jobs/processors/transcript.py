@@ -114,75 +114,95 @@ class TranscriptProcessor(BaseProcessor):
             )
 
         try:
-            # Fetch transcript using new getAllTranscripts approach
-            # We use find_transcript_by_thread_id since we have calendar data
-            self._log_progress(
-                job,
-                f"Searching for transcript by organizer {meeting.organizer_name} ({organizer_user_id})"
-            )
-
-            # Try to find transcript by matching meeting start time
-            # (Calendar meeting IDs don't match transcript meeting IDs)
+            loop = asyncio.get_event_loop()
             transcript_metadata = None
             user_id_for_transcript = organizer_user_id
 
-            try:
-                # Run in executor to avoid blocking event loop
-                loop = asyncio.get_event_loop()
-                transcript_metadata = await loop.run_in_executor(
-                    None,
-                    lambda: self.transcript_fetcher.find_transcript_by_time(
-                        organizer_user_id=organizer_user_id,
-                        meeting_start_time=meeting.start_time,
-                        tolerance_minutes=30
-                    )
+            # Check if transcript_id was provided directly (from webhook notification)
+            # This is more reliable than time-based matching
+            provided_transcript_id = job.input_data.get("transcript_id")
+            if provided_transcript_id:
+                self._log_progress(
+                    job,
+                    f"Using provided transcript_id from webhook notification"
                 )
-            except Exception as e:
-                # If 403 error accessing organizer's transcripts, try using a pilot user's ID
-                if "403" in str(e) or "not allowed" in str(e).lower():
-                    self._log_progress(
-                        job,
-                        f"Cannot access organizer's transcripts (403), trying pilot user fallback",
-                        "warning"
+
+                # Use online_meeting_id if provided, otherwise fall back to meeting.meeting_id
+                # online_meeting_id is the proper Graph API format (MSp...) while
+                # meeting.meeting_id might be a calendar event ID (AAMk...) for calendar-discovered meetings
+                online_meeting_id = job.input_data.get("online_meeting_id") or meeting.meeting_id
+
+                # We have transcript_id - construct the transcript metadata
+                transcript_metadata = {
+                    'id': provided_transcript_id,
+                    'meetingId': online_meeting_id,
+                    'createdDateTime': None  # Not needed when we have the ID
+                }
+            else:
+                # No transcript_id provided - fall back to time-based matching
+                self._log_progress(
+                    job,
+                    f"Searching for transcript by organizer {meeting.organizer_name} ({organizer_user_id})"
+                )
+
+            # If we don't have transcript metadata yet, search by time
+            if not transcript_metadata:
+                try:
+                    # Run in executor to avoid blocking event loop
+                    transcript_metadata = await loop.run_in_executor(
+                        None,
+                        lambda: self.transcript_fetcher.find_transcript_by_time(
+                            organizer_user_id=organizer_user_id,
+                            meeting_start_time=meeting.start_time,
+                            tolerance_minutes=30
+                        )
                     )
+                except Exception as e:
+                    # If 403 error accessing organizer's transcripts, try using a pilot user's ID
+                    if "403" in str(e) or "not allowed" in str(e).lower():
+                        self._log_progress(
+                            job,
+                            f"Cannot access organizer's transcripts (403), trying pilot user fallback",
+                            "warning"
+                        )
 
-                    # Get a pilot user ID as fallback (someone who attended the meeting)
-                    with self.db.get_session() as session:
-                        from src.core.database import MeetingParticipant
-                        pilot_participant = session.query(MeetingParticipant).filter(
-                            MeetingParticipant.meeting_id == meeting_id,
-                            MeetingParticipant.is_pilot_user == True,
-                            MeetingParticipant.email != meeting.organizer_email
-                        ).first()
+                        # Get a pilot user ID as fallback (someone who attended the meeting)
+                        with self.db.get_session() as session:
+                            from src.core.database import MeetingParticipant
+                            pilot_participant = session.query(MeetingParticipant).filter(
+                                MeetingParticipant.meeting_id == meeting_id,
+                                MeetingParticipant.is_pilot_user == True,
+                                MeetingParticipant.email != meeting.organizer_email
+                            ).first()
 
-                        if pilot_participant:
-                            # Get user ID for pilot participant
-                            from src.graph.meetings import MeetingDiscovery
-                            discovery = MeetingDiscovery(self.graph_client)
-                            pilot_user_id = discovery._get_user_id(pilot_participant.email)
+                            if pilot_participant:
+                                # Get user ID for pilot participant
+                                from src.graph.meetings import MeetingDiscovery
+                                discovery = MeetingDiscovery(self.graph_client)
+                                pilot_user_id = discovery._get_user_id(pilot_participant.email)
 
-                            if pilot_user_id:
-                                self._log_progress(
-                                    job,
-                                    f"Trying to access transcript via pilot user {pilot_participant.email}",
-                                    "info"
-                                )
-                                # Run in executor to avoid blocking event loop
-                                transcript_metadata = await loop.run_in_executor(
-                                    None,
-                                    lambda: self.transcript_fetcher.find_transcript_by_time(
-                                        organizer_user_id=pilot_user_id,
-                                        meeting_start_time=meeting.start_time,
-                                        tolerance_minutes=30
+                                if pilot_user_id:
+                                    self._log_progress(
+                                        job,
+                                        f"Trying to access transcript via pilot user {pilot_participant.email}",
+                                        "info"
                                     )
-                                )
-                                user_id_for_transcript = pilot_user_id
+                                    # Run in executor to avoid blocking event loop
+                                    transcript_metadata = await loop.run_in_executor(
+                                        None,
+                                        lambda: self.transcript_fetcher.find_transcript_by_time(
+                                            organizer_user_id=pilot_user_id,
+                                            meeting_start_time=meeting.start_time,
+                                            tolerance_minutes=30
+                                        )
+                                    )
+                                    user_id_for_transcript = pilot_user_id
+                                else:
+                                    raise e
                             else:
                                 raise e
-                        else:
-                            raise e
-                else:
-                    raise e
+                    else:
+                        raise e
 
             if not transcript_metadata:
                 # No transcript found

@@ -14,7 +14,7 @@ from ..processors.base import BaseProcessor, register_processor
 from ...ai.claude_client import ClaudeClient
 from ...ai.summarizer import MeetingSummarizer, EnhancedMeetingSummarizer, SingleCallSummarizer, EnhancedSummary
 from ...utils.vtt_parser import format_transcript_for_summary
-from ...core.database import Summary, Transcript, Meeting, JobQueue, MeetingParticipant
+from ...core.database import Summary, Transcript, Meeting, MeetingParticipant
 from ...core.exceptions import SummaryGenerationError, ClaudeAPIError
 
 
@@ -187,9 +187,9 @@ class SummaryProcessor(BaseProcessor):
                 key_numbers = enhanced_result.key_numbers  # FIX: Extract key_numbers
                 metadata = enhanced_result.metadata
 
-                input_tokens = metadata.get("total_tokens", 0)  # Approximate
-                output_tokens = metadata.get("total_tokens", 0)  # We don't track separately yet
-                total_tokens = metadata.get("total_tokens", 0)
+                input_tokens = metadata.get("input_tokens", 0)
+                output_tokens = metadata.get("output_tokens", 0)
+                total_tokens = metadata.get("total_tokens", input_tokens + output_tokens)
                 cost = metadata.get("total_cost", 0.0)
                 model = metadata.get("model", "unknown")
                 generation_time_ms = metadata.get("generation_time_ms", 0)
@@ -267,20 +267,14 @@ class SummaryProcessor(BaseProcessor):
                 if meeting_in_session:
                     meeting_in_session.has_summary = True
 
-                # Create next job in chain: distribute
-                next_job = JobQueue(
-                    job_type="distribute",
-                    meeting_id=meeting_id,
-                    input_data={"meeting_id": meeting_id},
-                    priority=5
-                )
-                session.add(next_job)
+                # NOTE: Distribution job is already created by job chain (enqueue_meeting_jobs)
+                # Do NOT create another distribute job here - it causes duplicate emails
 
                 session.commit()
 
                 self._log_progress(
                     job,
-                    f"✓ Enhanced summary saved (v{version}), distribution job enqueued: "
+                    f"✓ Enhanced summary saved (v{version}): "
                     f"{len(action_items)} actions, {len(decisions)} decisions, "
                     f"{len(topics)} topics, {len(highlights)} highlights, "
                     f"{len(mentions)} mentions"

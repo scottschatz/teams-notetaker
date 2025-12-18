@@ -221,25 +221,105 @@ class MeetingFilter:
         """
         Check if meeting has at least one pilot user.
 
+        Checks both:
+        1. Calendar invite participants (from meeting_data)
+        2. Actual participants from call record (if available)
+
+        This handles cases where pilot users join via meeting link
+        without being on the original calendar invite.
+
         Args:
             meeting_data: Meeting data
 
         Returns:
             Tuple of (has_pilot: bool, reason: str)
         """
+        # First check calendar invite participants
         participants = meeting_data.get("participants", [])
 
-        if not participants:
-            return False, "No participants found"
-
-        # Check each participant
         for participant in participants:
             email = participant.get("email", "")
             if self.db.is_pilot_user(email):
-                logger.debug(f"Meeting has pilot user: {email}")
+                logger.debug(f"Meeting has pilot user (from invite): {email}")
                 return True, f"Has pilot user: {email}"
 
-        return False, "No pilot users in meeting"
+        # If no pilot users in invite, check call record for actual participants
+        # This catches users who joined via link without being invited
+        call_record_id = meeting_data.get("call_record_id")
+        if call_record_id and self.graph_client:
+            try:
+                actual_participants = self._get_call_record_participants(call_record_id)
+                for participant in actual_participants:
+                    email = participant.get("email", "")
+                    if email and self.db.is_pilot_user(email):
+                        logger.info(f"Meeting has pilot user (from call record): {email}")
+                        return True, f"Has pilot user (joined via link): {email}"
+            except Exception as e:
+                logger.warning(f"Could not check call record participants: {e}")
+
+        # No pilot users found anywhere
+        if not participants:
+            return False, "No participants found"
+        return False, "No pilot users in meeting (checked invite and call record)"
+
+    def _get_call_record_participants(self, call_record_id: str) -> List[Dict[str, str]]:
+        """
+        Get actual participants from a call record.
+
+        Args:
+            call_record_id: Call record ID
+
+        Returns:
+            List of participant dicts with 'email' and 'display_name'
+        """
+        participants = []
+        seen_ids = set()
+
+        try:
+            # Fetch sessions from call record
+            sessions_response = self.graph_client.get(
+                f"/communications/callRecords/{call_record_id}/sessions"
+            )
+            sessions = sessions_response.get("value", [])
+
+            for session in sessions:
+                for role in ["caller", "callee"]:
+                    participant = session.get(role, {})
+                    if not participant:
+                        continue
+
+                    identity = participant.get("identity", {})
+                    user_info = identity.get("user", {})
+
+                    if not user_info:
+                        continue
+
+                    user_id = user_info.get("id")
+                    if user_id and user_id not in seen_ids:
+                        seen_ids.add(user_id)
+
+                        # Try to get email from Graph API
+                        email = ""
+                        try:
+                            user_details = self.graph_client.get(
+                                f"/users/{user_id}",
+                                params={"$select": "mail,userPrincipalName"}
+                            )
+                            email = user_details.get("mail") or user_details.get("userPrincipalName", "")
+                        except Exception:
+                            pass
+
+                        participants.append({
+                            "email": email,
+                            "display_name": user_info.get("displayName", "")
+                        })
+
+            logger.debug(f"Found {len(participants)} actual participants in call record")
+            return participants
+
+        except Exception as e:
+            logger.warning(f"Error fetching call record participants: {e}")
+            return []
 
     def _get_active_exclusions(self) -> List[Exclusion]:
         """

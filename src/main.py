@@ -504,15 +504,18 @@ cli.add_command(webhooks)
 
 
 @cli.command()
-@click.option("--loop", is_flag=True, help="Run continuously (for systemd)")
-@click.option("--interval", type=int, help="Polling interval in minutes (default from config)")
+@click.option("--loop", is_flag=True, help="Run continuously (for systemd) - backfill once then worker only")
+@click.option("--poll-loop", is_flag=True, help="Run continuous polling loop (legacy mode)")
+@click.option("--interval", type=int, help="Polling interval in minutes (for --poll-loop)")
 @click.option("--dry-run", is_flag=True, help="Discover meetings but don't enqueue")
-def run(loop, interval, dry_run):
+@click.option("--skip-backfill", is_flag=True, help="Skip initial backfill discovery")
+def run(loop, poll_loop, interval, dry_run, skip_backfill):
     """Run meeting discovery and processing.
 
     Example:
-        python -m src.main run                    # Run once
-        python -m src.main run --loop             # Run continuously (for systemd)
+        python -m src.main run                    # Run once (single discovery)
+        python -m src.main run --loop             # Backfill + worker (for systemd with webhooks)
+        python -m src.main run --poll-loop        # Continuous polling (legacy mode)
         python -m src.main run --dry-run          # Dry run (no enqueue)
     """
     from src.discovery.poller import MeetingPoller
@@ -523,7 +526,33 @@ def run(loop, interval, dry_run):
     config = get_config()
 
     if loop:
-        click.echo("🚀 Starting continuous mode (poller + worker)")
+        # Primary mode: backfill once on startup, then run worker only
+        # Webhooks handle ongoing meeting discovery
+        click.echo("🚀 Starting worker mode (webhook-driven)")
+        click.echo("   Webhooks discover meetings, worker processes jobs")
+        click.echo("   Press Ctrl+C to stop")
+        click.echo("")
+
+        # Run one-time backfill discovery (catch meetings since last run)
+        if not skip_backfill:
+            click.echo("📋 Running startup backfill...")
+            poller = MeetingPoller(config)
+            stats = poller.run_discovery(dry_run=dry_run)
+            click.echo(f"   Backfill: {stats['discovered']} discovered, {stats['queued']} queued, {stats['skipped']} skipped")
+            click.echo("")
+
+        # Start worker and run continuously
+        click.echo("👷 Starting job worker...")
+        worker = JobWorker(
+            config=config,
+            max_concurrent=config.app.max_concurrent_jobs,
+            job_timeout=config.app.job_timeout_minutes * 60
+        )
+        worker.run()  # This blocks and runs the worker loop
+
+    elif poll_loop:
+        # Legacy mode: continuous polling (for environments without webhooks)
+        click.echo("🚀 Starting continuous polling mode (legacy)")
         click.echo("   Press Ctrl+C to stop")
         click.echo("")
 

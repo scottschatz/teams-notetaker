@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, and_, or_
 
 from ..core.database import (
-    DatabaseManager, JobQueue, Meeting
+    DatabaseManager, JobQueue, Meeting, Summary
 )
 from ..jobs.retry import calculate_next_retry, get_retry_strategy
 from ..core.exceptions import JobQueueError
@@ -56,7 +56,7 @@ class JobQueueManager:
         """
         self.db = db
 
-    def enqueue_meeting_jobs(self, meeting_id: int, priority: int = 5) -> List[int]:
+    def enqueue_meeting_jobs(self, meeting_id: int, priority: int = 5, force_regenerate: bool = False) -> List[int]:
         """
         Enqueue 3-job chain for meeting processing.
 
@@ -68,6 +68,7 @@ class JobQueueManager:
         Args:
             meeting_id: Meeting ID to process
             priority: Job priority (1-10, higher = more important)
+            force_regenerate: If True, increment summary version to force new summary
 
         Returns:
             List of created job IDs [fetch_job_id, summary_job_id, distribute_job_id]
@@ -91,6 +92,16 @@ class JobQueueManager:
                 logger.warning(f"Jobs already exist for meeting {meeting_id}, skipping enqueue")
                 return []
 
+            # Determine next version if force regenerate
+            next_version = 1
+            if force_regenerate:
+                latest_summary = session.query(Summary).filter_by(
+                    meeting_id=meeting_id
+                ).order_by(Summary.version.desc()).first()
+                if latest_summary:
+                    next_version = latest_summary.version + 1
+                logger.info(f"Force regenerate: will create summary v{next_version} for meeting {meeting_id}")
+
             logger.info(f"Enqueueing 3-job chain for meeting {meeting_id} (priority: {priority})")
 
             # Job 1: Fetch transcript (no dependencies)
@@ -106,12 +117,16 @@ class JobQueueManager:
             session.flush()  # Get job1.id
 
             # Job 2: Generate summary (depends on job1)
+            summary_input = {"meeting_id": meeting_id}
+            if force_regenerate:
+                summary_input["version"] = next_version
+
             job2 = JobQueue(
                 job_type='generate_summary',
                 meeting_id=meeting_id,
                 priority=priority,
                 status="pending",
-                input_data={"meeting_id": meeting_id},
+                input_data=summary_input,
                 depends_on_job_id=job1.id,
                 max_retries=3
             )

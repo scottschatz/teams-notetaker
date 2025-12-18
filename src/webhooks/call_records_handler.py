@@ -199,15 +199,42 @@ class CallRecordsWebhookHandler:
                         except Exception as e:
                             logger.warning(f"Could not fetch organizer details: {e}")
 
+                    # Fetch meeting details (subject, times) from onlineMeetings API
+                    meeting_subject = "Teams Meeting"
+                    # Default to current UTC time (naive) if not available
+                    meeting_start_time = datetime.utcnow()
+                    meeting_end_time = datetime.utcnow()
+                    if organizer_user_id and meeting_id:
+                        try:
+                            meeting_details = self.graph_client.get(
+                                f"/users/{organizer_user_id}/onlineMeetings/{meeting_id}"
+                            )
+                            meeting_subject = meeting_details.get("subject") or "Teams Meeting"
+                            if meeting_details.get("startDateTime"):
+                                # Parse UTC time and store as UTC-naive
+                                dt = datetime.fromisoformat(
+                                    meeting_details["startDateTime"].replace("Z", "+00:00")
+                                )
+                                meeting_start_time = dt.replace(tzinfo=None)
+                            if meeting_details.get("endDateTime"):
+                                # Parse UTC time and store as UTC-naive
+                                dt = datetime.fromisoformat(
+                                    meeting_details["endDateTime"].replace("Z", "+00:00")
+                                )
+                                meeting_end_time = dt.replace(tzinfo=None)
+                            logger.info(f"Fetched meeting details: {meeting_subject}")
+                        except Exception as e:
+                            logger.warning(f"Could not fetch meeting details: {e}")
+
                     # Create meeting record with organizer info from notification
                     meeting = Meeting(
                         meeting_id=meeting_id,
-                        subject="Teams Meeting",  # We don't have subject from transcript notification
+                        subject=meeting_subject,
                         organizer_email=organizer_email,
                         organizer_name=organizer_name,
                         organizer_user_id=organizer_user_id,
-                        start_time=datetime.now(timezone.utc),
-                        end_time=datetime.now(timezone.utc),
+                        start_time=meeting_start_time,
+                        end_time=meeting_end_time,
                         status="queued",
                         participant_count=1  # At least the organizer
                     )
@@ -347,21 +374,17 @@ class CallRecordsWebhookHandler:
                 meeting_subject = "Unknown Meeting"
                 if organizer_user_id and online_meeting_id:
                     try:
-                        # Try to find the meeting subject via the organizer's online meetings
-                        # Query by joinWebUrl since we have that from the callRecord
-                        join_url = online_meeting_id  # online_meeting_id is the joinWebUrl
-                        # Note: Graph API may not support filtering by joinWebUrl reliably
-                        # Try listing recent meetings and matching by joinWebUrl
+                        # online_meeting_id is the joinWebUrl
+                        join_url = online_meeting_id
+                        # Use $filter to query by joinWebUrl (required by Graph API)
                         meetings_response = self.graph_client.get(
                             f"/users/{organizer_user_id}/onlineMeetings",
-                            params={"$top": "50", "$orderby": "createdDateTime desc"}
+                            params={"$filter": f"joinWebUrl eq '{join_url}'"}
                         )
                         meetings = meetings_response.get("value", [])
-                        for meeting in meetings:
-                            if meeting.get("joinWebUrl") == join_url:
-                                meeting_subject = meeting.get("subject") or "Teams Meeting"
-                                logger.info(f"Found meeting subject: {meeting_subject}")
-                                break
+                        if meetings:
+                            meeting_subject = meetings[0].get("subject") or "Teams Meeting"
+                            logger.info(f"Found meeting subject: {meeting_subject}")
                     except Exception as e:
                         # Many callRecords are ad-hoc calls without scheduled meetings
                         logger.debug(f"Could not look up meeting subject for {organizer_user_id}: {e}")
@@ -400,11 +423,13 @@ class CallRecordsWebhookHandler:
 
                     logger.info(f"Created meeting {meeting_id}: {meeting.subject}")
 
-                    # Add participants
+                    # Add participants (skip internal participants without email)
                     from ..core.database import MeetingParticipant
+                    participants_added = 0
                     for p in participants:
                         display_name = p.get("name") or "Unknown"
                         participant_type = p.get("type", "internal")
+                        email = p.get("email", "")
 
                         # For PSTN participants, include phone number in display name
                         if participant_type == "pstn" and p.get("phone"):
@@ -420,15 +445,24 @@ class CallRecordsWebhookHandler:
                             if display_name and not display_name.endswith("(External)"):
                                 display_name = f"{display_name} (External)"
 
+                        # Skip internal participants without email (can't distribute to them)
+                        elif participant_type == "internal" and not email:
+                            logger.debug(f"Skipping participant without email: {display_name}")
+                            continue
+
                         participant = MeetingParticipant(
                             meeting_id=meeting_id,
-                            email=p.get("email"),
+                            email=email,
                             display_name=display_name,
                             role=p.get("role", "attendee"),
                             attended=True,
                             participant_type=participant_type
                         )
                         session.add(participant)
+                        participants_added += 1
+
+                    if participants_added > 0:
+                        logger.info(f"Added {participants_added} participants to meeting {meeting_id}")
 
                     # Fetch and store invitees (people invited but may not have attended)
                     # This provides correct name spellings for AI summary generation
@@ -614,11 +648,16 @@ class CallRecordsWebhookHandler:
         return participants
 
     def _parse_datetime(self, dt_string: str) -> datetime:
-        """Parse ISO datetime string."""
+        """Parse ISO datetime string to UTC-naive datetime.
+
+        Graph API returns times in UTC. We store as UTC-naive and the
+        display layer converts to Eastern timezone.
+        """
         if not dt_string:
             return None
         try:
-            return datetime.fromisoformat(dt_string.replace("Z", "+00:00"))
+            dt = datetime.fromisoformat(dt_string.replace("Z", "+00:00"))
+            return dt.replace(tzinfo=None)  # Store as UTC-naive
         except:
             return None
 
@@ -807,12 +846,21 @@ class CallRecordsWebhookHandler:
                         stats["skipped_no_optin"] += 1
 
                         # Still mark as processed to avoid re-checking
-                        with self.db.get_session() as session:
-                            session.add(ProcessedCallRecord(
-                                call_record_id=call_record_id,
-                                source="backfill"
-                            ))
-                            session.commit()
+                        try:
+                            with self.db.get_session() as session:
+                                # Check if already exists first
+                                existing = session.query(ProcessedCallRecord).filter_by(
+                                    call_record_id=call_record_id
+                                ).first()
+                                if not existing:
+                                    session.add(ProcessedCallRecord(
+                                        call_record_id=call_record_id,
+                                        source="backfill"
+                                    ))
+                                    session.commit()
+                        except Exception as e:
+                            # Duplicate key or other error - just skip
+                            logger.debug(f"Could not mark {call_record_id} as processed: {e}")
                         continue
 
                     # Process the callRecord (creates meeting and tries to fetch transcript)

@@ -130,8 +130,13 @@ class MeetingPoller:
                         logger.info(f"Skipping meeting '{meeting_data['subject']}': {reason}")
                         stats["skipped"] += 1
 
-                        # Still save to database but mark as skipped
-                        if not dry_run:
+                        # Only save to database if permanently rejected (not just "waiting")
+                        # Meetings that haven't ended yet will be discovered again on next poll
+                        is_temporary_skip = any(phrase in reason.lower() for phrase in [
+                            "wait", "not yet", "hasn't ended", "buffer", "more min"
+                        ])
+
+                        if not dry_run and not is_temporary_skip:
                             self._save_meeting(meeting_data, status="skipped")
 
                         continue
@@ -292,23 +297,30 @@ class MeetingPoller:
 
             meeting_id = meeting.id
 
-            # Save participants
+            # Save participants (skip those without valid email)
+            participants_added = 0
             for participant_data in meeting_data.get("participants", []):
+                email = participant_data.get("email", "")
+                if not email:
+                    logger.debug(f"Skipping participant without email: {participant_data.get('display_name', 'Unknown')}")
+                    continue
+
                 # Check if participant is in pilot users
-                is_pilot = self.db.is_pilot_user(participant_data["email"])
+                is_pilot = self.db.is_pilot_user(email)
 
                 participant = MeetingParticipant(
                     meeting_id=meeting_id,
-                    email=participant_data["email"],
+                    email=email,
                     display_name=participant_data.get("display_name", ""),
                     role=participant_data.get("role", "attendee"),
                     is_pilot_user=is_pilot
                 )
                 session.add(participant)
+                participants_added += 1
 
             session.commit()
 
-            logger.debug(f"Saved meeting {meeting_id} with {len(meeting_data.get('participants', []))} participants")
+            logger.debug(f"Saved meeting {meeting_id} with {participants_added} participants (of {len(meeting_data.get('participants', []))} total)")
 
             return meeting_id
 

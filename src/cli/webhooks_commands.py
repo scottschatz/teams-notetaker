@@ -4,6 +4,7 @@ CLI commands for webhook management (Azure Relay integration).
 
 import click
 import asyncio
+import logging
 import sys
 from pathlib import Path
 
@@ -15,6 +16,8 @@ from src.core.database import DatabaseManager
 from src.graph.client import GraphAPIClient
 from src.webhooks.azure_relay_listener import AzureRelayWebhookListener
 from src.webhooks.call_records_handler import CallRecordsWebhookHandler
+
+logger = logging.getLogger(__name__)
 
 
 @click.group()
@@ -40,7 +43,7 @@ def listen_command(backfill):
 
 
 async def start_webhook_listener(backfill: bool = True):
-    """Start the Azure Relay webhook listener."""
+    """Start the Azure Relay webhook listener with automatic subscription management."""
     config = get_config()
 
     # Validate Azure Relay configuration
@@ -66,16 +69,31 @@ async def start_webhook_listener(backfill: bool = True):
     graph_client = GraphAPIClient(config.graph_api)
     handler = CallRecordsWebhookHandler(db, graph_client)
 
-    # Backfill recent meetings
-    if backfill and config.app.webhook_backfill_hours > 0:
-        click.echo(f"📊 Backfilling meetings from last {config.app.webhook_backfill_hours} hours...")
+    # === AUTOMATIC SUBSCRIPTION MANAGEMENT ===
+    from src.webhooks.subscription_manager import SubscriptionManager
+    sub_manager = SubscriptionManager(config, graph_client)
+
+    click.echo("📡 Ensuring webhook subscription is active...")
+    if sub_manager.ensure_subscription():
+        click.echo("✅ Webhook subscription active")
+    else:
+        click.echo("⚠️  Could not ensure subscription (will retry in background)")
+    click.echo()
+
+    # === SMART BACKFILL (only to last processed meeting) ===
+    if backfill:
+        click.echo("📊 Running smart backfill...")
         try:
-            await handler.backfill_recent_meetings(config.app.webhook_backfill_hours)
-            click.echo("✅ Backfill complete")
-            click.echo()
+            backfill_hours = await get_smart_backfill_hours(db, config)
+            if backfill_hours > 0:
+                click.echo(f"   Looking back {backfill_hours} hours to last processed meeting")
+                await handler.backfill_recent_meetings(backfill_hours)
+                click.echo("✅ Backfill complete")
+            else:
+                click.echo("✅ No backfill needed (recent meetings already processed)")
         except Exception as e:
             click.echo(f"⚠️  Backfill failed: {e}")
-            click.echo()
+        click.echo()
 
     # Create Azure Relay listener
     listener = AzureRelayWebhookListener(
@@ -84,6 +102,10 @@ async def start_webhook_listener(backfill: bool = True):
         shared_access_key_name=config.azure_relay.key_name,
         shared_access_key=config.azure_relay.key
     )
+
+    # Start subscription manager in background
+    click.echo("🔄 Starting subscription manager (auto-renews every 6h, recreates daily at 3am UTC)")
+    sub_manager_task = asyncio.create_task(sub_manager.start_background_manager())
 
     # Start listening
     click.echo("🎧 Starting listener...")
@@ -94,21 +116,88 @@ async def start_webhook_listener(backfill: bool = True):
         await listener.start(callback=handler.handle_notification)
     except KeyboardInterrupt:
         click.echo("\n\n🛑 Stopping listener...")
+        sub_manager.stop()
+        sub_manager_task.cancel()
         await listener.stop()
         click.echo("✅ Listener stopped")
 
 
+async def get_smart_backfill_hours(db: DatabaseManager, config) -> int:
+    """
+    Calculate how many hours to look back based on last processed meeting.
+
+    Returns:
+        Number of hours to look back (0 if no backfill needed)
+    """
+    from datetime import datetime, timezone
+    from src.core.database import Meeting, ProcessedCallRecord
+
+    try:
+        with db.get_session() as session:
+            # Find the most recent processed call record
+            latest_call = session.query(ProcessedCallRecord).order_by(
+                ProcessedCallRecord.processed_at.desc()
+            ).first()
+
+            # Also check the most recent meeting
+            latest_meeting = session.query(Meeting).order_by(
+                Meeting.discovered_at.desc()
+            ).first()
+
+            now = datetime.now(timezone.utc)
+
+            # Determine when we last successfully processed something
+            last_processed = None
+
+            if latest_call and latest_call.processed_at:
+                last_processed = latest_call.processed_at
+                if last_processed.tzinfo is None:
+                    last_processed = last_processed.replace(tzinfo=timezone.utc)
+
+            if latest_meeting and latest_meeting.discovered_at:
+                meeting_time = latest_meeting.discovered_at
+                if meeting_time.tzinfo is None:
+                    meeting_time = meeting_time.replace(tzinfo=timezone.utc)
+
+                if last_processed is None or meeting_time > last_processed:
+                    last_processed = meeting_time
+
+            if last_processed is None:
+                # No history, use config default
+                return config.app.webhook_backfill_hours
+
+            # Calculate hours since last processed
+            hours_since = (now - last_processed).total_seconds() / 3600
+
+            if hours_since < 1:
+                # Processed within last hour, no backfill needed
+                return 0
+
+            # Add a small buffer (1 hour) to catch any edge cases
+            backfill_hours = int(hours_since) + 1
+
+            # Cap at configured max
+            return min(backfill_hours, config.app.webhook_backfill_hours)
+
+    except Exception as e:
+        logger.error(f"Error calculating smart backfill: {e}")
+        return config.app.webhook_backfill_hours
+
+
 @webhooks.command("subscribe")
-@click.option("--expiration-days", default=180, help="Subscription expiration in days (max 180)")
-def subscribe_command(expiration_days):
+@click.option("--expiration-minutes", default=4200, help="Subscription expiration in minutes (max 4230, ~2.9 days)")
+def subscribe_command(expiration_minutes):
     """
     Create Microsoft Graph subscription for callRecords.
 
     This subscribes to org-wide meeting notifications via your Azure Relay endpoint.
 
+    NOTE: callRecords subscriptions have a max expiration of 4230 minutes (~2.9 days).
+    Set up automatic renewal with the renew-all command.
+
     Example:
         python -m src.main webhooks subscribe
-        python -m src.main webhooks subscribe --expiration-days 90
+        python -m src.main webhooks subscribe --expiration-minutes 1440  # 24 hours
     """
     config = get_config()
 
@@ -125,8 +214,8 @@ def subscribe_command(expiration_days):
 
         graph_client = GraphAPIClient(config.graph_api)
 
-        # Calculate expiration (max 180 days for callRecords)
-        expiry = datetime.utcnow() + timedelta(days=min(expiration_days, 180))
+        # Calculate expiration (max 4230 minutes for callRecords, ~2.9 days)
+        expiry = datetime.utcnow() + timedelta(minutes=min(expiration_minutes, 4230))
 
         # Build subscription
         subscription = {
@@ -152,8 +241,9 @@ def subscribe_command(expiration_days):
         click.echo(f"Subscription ID: {response['id']}")
         click.echo(f"Expires: {response['expirationDateTime']}")
         click.echo()
-        click.echo("💾 Save this subscription ID to renew it before expiration:")
-        click.echo(f"   python -m src.main webhooks renew --subscription-id {response['id']}")
+        click.echo("⚠️  IMPORTANT: callRecords subscriptions expire in ~2.9 days max!")
+        click.echo("   Set up automatic renewal with systemd timer:")
+        click.echo("   python -m src.main webhooks renew-all")
         click.echo()
 
     except Exception as e:
@@ -309,8 +399,8 @@ def renew_all_command(min_hours_remaining):
                     # Transcript subscriptions: use 60 minutes to avoid lifecycleNotificationUrl requirement
                     new_expiry = now + timedelta(minutes=60)
                 else:
-                    # CallRecords subscriptions: max 180 days
-                    new_expiry = now + timedelta(days=180)
+                    # CallRecords subscriptions: max 4230 minutes (~2.9 days)
+                    new_expiry = now + timedelta(minutes=4200)
 
                 # Renew subscription
                 update_payload = {

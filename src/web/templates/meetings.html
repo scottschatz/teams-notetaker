@@ -20,172 +20,148 @@
     </div>
 
     <!-- Meetings Table -->
-    <div class="bg-white shadow overflow-hidden sm:rounded-lg">
+    <div class="bg-white shadow sm:rounded-lg">
         <div class="overflow-x-auto">
-            <table class="min-w-full divide-y divide-gray-200">
+            <table class="min-w-full divide-y divide-gray-200 text-sm">
                 <thead class="bg-gray-50">
                     <tr>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">ID</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Subject</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Organizer</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Start Time</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Participants</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Words</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Speakers</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Model</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tokens</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
-                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase w-6"></th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Org</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Start</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Dur</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Words</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Spk</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Model</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">In/Out</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Cost</th>
+                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
+                        <th class="px-1 py-1 text-right text-xs font-medium text-gray-500 uppercase w-16"></th>
                     </tr>
                 </thead>
-                <tbody class="bg-white divide-y divide-gray-200">
-                    <template x-for="meeting in meetings" :key="meeting.id">
-                            <!-- Main row -->
-                            <tr class="hover:bg-gray-50" :class="{'bg-blue-50': expandedMeeting === meeting.id}">
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <button @click="toggleExpand(meeting.id)"
-                                            x-show="meeting.has_distribution"
-                                            class="text-gray-400 hover:text-gray-600">
-                                        <svg class="w-5 h-5 transform transition-transform"
-                                             :class="{'rotate-90': expandedMeeting === meeting.id}"
-                                             fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                <template x-for="meeting in meetings" :key="meeting.id">
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <!-- Main row -->
+                        <tr class="hover:bg-gray-50" :class="{'bg-blue-50': expandedMeeting === meeting.id}">
+                            <td class="px-1 py-1 whitespace-nowrap">
+                                <button @click="toggleExpand(meeting.id)"
+                                        x-show="meeting.has_distribution"
+                                        class="text-gray-400 hover:text-gray-600">
+                                    <svg class="w-4 h-4 transform transition-transform"
+                                         :class="{'rotate-90': expandedMeeting === meeting.id}"
+                                         fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                    </svg>
+                                </button>
+                            </td>
+                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.id"></td>
+                            <td class="px-1 py-1 font-medium text-gray-900 text-xs max-w-[200px] truncate" x-text="meeting.subject" :title="meeting.subject"></td>
+                            <td class="px-1 py-1 whitespace-nowrap text-gray-900 text-xs" x-text="meeting.organizer_name?.split(' ')[0]" :title="meeting.organizer_name"></td>
+                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="formatDateTime(meeting.start_time)"></td>
+                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.duration_minutes ? meeting.duration_minutes + 'm' : '-'"></td>
+                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.participant_count || '-'"></td>
+                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.word_count ? (meeting.word_count/1000).toFixed(1)+'k' : '-'"></td>
+                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.speaker_count || '-'"></td>
+                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="formatModel(meeting.model)"></td>
+                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="formatTokens(meeting)"></td>
+                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="formatCost(meeting)"></td>
+                            <td class="px-1 py-1 whitespace-nowrap">
+                                <span class="px-1 inline-flex text-xs leading-5 font-semibold rounded-full cursor-help"
+                                      :class="{
+                                          'bg-green-100 text-green-800': meeting.status === 'completed',
+                                          'bg-blue-100 text-blue-800': meeting.status === 'processing',
+                                          'bg-yellow-100 text-yellow-800': meeting.status === 'queued',
+                                          'bg-gray-100 text-gray-800': meeting.status === 'discovered',
+                                          'bg-gray-100 text-gray-600': meeting.status === 'skipped',
+                                          'bg-red-100 text-red-800': meeting.status === 'failed'
+                                      }"
+                                      :title="meeting.status === 'skipped' && !meeting.has_transcript ? 'Skipped: No transcript available' : ''"
+                                      x-text="meeting.status">
+                                </span>
+                            </td>
+                            <td class="px-1 py-1 whitespace-nowrap text-right text-sm font-medium">
+                                <div class="flex justify-end space-x-1">
+                                    <!-- Reprocess button -->
+                                    <button
+                                        @click="reprocessMeeting(meeting.id)"
+                                        class="text-blue-600 hover:text-blue-900"
+                                        title="Reprocess"
+                                    >
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
                                         </svg>
                                     </button>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="text-sm text-gray-500" x-text="meeting.id"></div>
-                                </td>
-                                <td class="px-6 py-4">
-                                    <div class="text-sm font-medium text-gray-900" x-text="meeting.subject"></div>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="text-sm text-gray-900" x-text="meeting.organizer_name"></div>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="text-sm text-gray-500" x-text="formatDateTime(meeting.start_time)"></div>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="text-sm text-gray-500" x-text="meeting.duration_minutes + ' min'"></div>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="text-sm text-gray-500" x-text="meeting.participant_count || '-'"></div>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="text-sm text-gray-500" x-text="meeting.word_count || '-'"></div>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="text-sm text-gray-500" x-text="meeting.speaker_count || '-'"></div>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="text-sm text-gray-500" x-text="formatModel(meeting.model)"></div>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="text-sm text-gray-500" x-text="formatTokens(meeting)"></div>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <div class="text-sm text-gray-500" x-text="formatCost(meeting)"></div>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
-                                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full cursor-help"
-                                          :class="{
-                                              'bg-green-100 text-green-800': meeting.status === 'completed',
-                                              'bg-blue-100 text-blue-800': meeting.status === 'processing',
-                                              'bg-yellow-100 text-yellow-800': meeting.status === 'queued',
-                                              'bg-gray-100 text-gray-800': meeting.status === 'discovered',
-                                              'bg-gray-100 text-gray-600': meeting.status === 'skipped',
-                                              'bg-red-100 text-red-800': meeting.status === 'failed'
-                                          }"
-                                          :title="meeting.status === 'skipped' && !meeting.has_transcript ? 'Skipped: No transcript available' : ''"
-                                          x-text="meeting.status">
-                                    </span>
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                    <div class="flex justify-end space-x-2">
-                                        <!-- Reprocess button -->
+
+                                    <!-- Resend dropdown -->
+                                    <div x-data="{ open: false }" class="relative" x-show="meeting.has_summary">
                                         <button
-                                            @click="reprocessMeeting(meeting.id)"
-                                            class="text-blue-600 hover:text-blue-900"
-                                            title="Reprocess"
+                                            @click="open = !open"
+                                            class="text-green-600 hover:text-green-900"
+                                            title="Resend Summary"
                                         >
-                                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
                                             </svg>
                                         </button>
-
-                                        <!-- Resend dropdown -->
-                                        <div x-data="{ open: false }" class="relative" x-show="meeting.has_summary">
-                                            <button
-                                                @click="open = !open"
-                                                class="text-green-600 hover:text-green-900"
-                                                title="Resend Summary"
-                                            >
-                                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                                                </svg>
-                                            </button>
-                                            <div
-                                                x-show="open"
-                                                @click.away="open = false"
-                                                class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10"
-                                                style="display: none;"
-                                            >
-                                                <div class="py-1">
-                                                    <a @click="resendSummary(meeting.id, 'organizer'); open = false" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">To Organizer</a>
-                                                    <a @click="resendSummary(meeting.id, 'subscribers'); open = false" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">To Subscribers</a>
-                                                    <a @click="resendSummary(meeting.id, 'both'); open = false" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">To Both</a>
-                                                </div>
+                                        <div
+                                            x-show="open"
+                                            @click.away="open = false"
+                                            class="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10"
+                                            style="display: none;"
+                                        >
+                                            <div class="py-1">
+                                                <a @click="resendSummary(meeting.id, 'organizer'); open = false" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">To Organizer</a>
+                                                <a @click="resendSummary(meeting.id, 'subscribers'); open = false" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">To Subscribers</a>
+                                                <a @click="resendSummary(meeting.id, 'both'); open = false" class="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 cursor-pointer">To Both</a>
                                             </div>
                                         </div>
                                     </div>
-                                </td>
-                            </tr>
+                                </div>
+                            </td>
+                        </tr>
 
-                            <!-- Expanded distribution details row -->
-                            <tr x-show="expandedMeeting === meeting.id" class="bg-blue-50">
-                                <td colspan="14" class="px-6 py-4">
-                                    <div class="pl-12">
-                                        <h4 class="text-sm font-semibold text-gray-700 mb-3">Distribution Details</h4>
-                                        <template x-if="distributionDetails[meeting.id] && distributionDetails[meeting.id].length > 0">
-                                            <table class="min-w-full divide-y divide-gray-300">
-                                                <thead class="bg-gray-100">
+                        <!-- Expanded distribution details row -->
+                        <tr x-show="expandedMeeting === meeting.id" x-cloak class="bg-blue-50">
+                            <td colspan="14" class="px-6 py-4">
+                                <div class="pl-8">
+                                    <h4 class="text-sm font-semibold text-gray-700 mb-3">Distribution Details</h4>
+                                    <template x-if="distributionDetails[meeting.id] && distributionDetails[meeting.id].length > 0">
+                                        <table class="min-w-full divide-y divide-gray-300">
+                                            <thead class="bg-gray-100">
+                                                <tr>
+                                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Recipient</th>
+                                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Type</th>
+                                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Sent At</th>
+                                                    <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Status</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody class="divide-y divide-gray-200">
+                                                <template x-for="dist in distributionDetails[meeting.id]" :key="dist.id">
                                                     <tr>
-                                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Recipient</th>
-                                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Type</th>
-                                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Method</th>
-                                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Sent At</th>
-                                                        <th class="px-4 py-2 text-left text-xs font-medium text-gray-600">Status</th>
+                                                        <td class="px-4 py-2 text-sm text-gray-900" x-text="dist.recipient_email"></td>
+                                                        <td class="px-4 py-2 text-sm text-gray-600" x-text="dist.recipient_type"></td>
+                                                        <td class="px-4 py-2 text-sm text-gray-600" x-text="formatDateTime(dist.sent_at)"></td>
+                                                        <td class="px-4 py-2 text-sm">
+                                                            <span class="px-2 py-1 text-xs rounded-full"
+                                                                  :class="dist.status === 'sent' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
+                                                                  x-text="dist.status">
+                                                            </span>
+                                                        </td>
                                                     </tr>
-                                                </thead>
-                                                <tbody class="divide-y divide-gray-200">
-                                                    <template x-for="dist in distributionDetails[meeting.id]" :key="dist.id">
-                                                        <tr>
-                                                            <td class="px-4 py-2 text-sm text-gray-900" x-text="dist.recipient_email"></td>
-                                                            <td class="px-4 py-2 text-sm text-gray-600" x-text="dist.recipient_type"></td>
-                                                            <td class="px-4 py-2 text-sm text-gray-600" x-text="dist.delivery_method"></td>
-                                                            <td class="px-4 py-2 text-sm text-gray-600" x-text="formatDateTime(dist.sent_at)"></td>
-                                                            <td class="px-4 py-2 text-sm">
-                                                                <span class="px-2 py-1 text-xs rounded-full"
-                                                                      :class="dist.status === 'sent' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'"
-                                                                      x-text="dist.status">
-                                                                </span>
-                                                            </td>
-                                                        </tr>
-                                                    </template>
-                                                </tbody>
-                                            </table>
-                                        </template>
-                                        <template x-if="!distributionDetails[meeting.id] || distributionDetails[meeting.id].length === 0">
-                                            <p class="text-sm text-gray-500">No distribution records found.</p>
-                                        </template>
-                                    </div>
-                                </td>
-                            </tr>
-                    </template>
-                </tbody>
+                                                </template>
+                                            </tbody>
+                                        </table>
+                                    </template>
+                                    <template x-if="!distributionDetails[meeting.id] || distributionDetails[meeting.id].length === 0">
+                                        <p class="text-sm text-gray-500">Loading distribution details...</p>
+                                    </template>
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </template>
             </table>
 
             <div x-show="meetings.length === 0" class="px-4 py-12 text-center text-gray-500">
@@ -232,17 +208,22 @@ function meetingsData() {
         async loadDistribution(meetingId) {
             try {
                 const response = await fetch(`/api/meetings/${meetingId}/distribution`);
-                this.distributionDetails[meetingId] = await response.json();
+                const data = await response.json();
+                // Force reactivity by creating new object
+                this.distributionDetails = {...this.distributionDetails, [meetingId]: data};
             } catch (error) {
                 console.error('Failed to load distribution details:', error);
-                this.distributionDetails[meetingId] = [];
+                this.distributionDetails = {...this.distributionDetails, [meetingId]: []};
             }
         },
 
         formatDateTime(dateString) {
             if (!dateString) return 'Unknown';
-            const date = new Date(dateString);
-            return date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+            // Database stores UTC times - append Z if no timezone indicator
+            const hasTimezone = /[Z]$|[+-]\d{2}:\d{2}$/.test(dateString);
+            let date = hasTimezone ? new Date(dateString) : new Date(dateString + 'Z');
+            return date.toLocaleDateString('en-US', {timeZone: 'America/New_York'}) + ' ' +
+                   date.toLocaleTimeString('en-US', {timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit'});
         },
 
         formatModel(model) {
@@ -256,10 +237,11 @@ function meetingsData() {
 
         formatTokens(meeting) {
             if (!meeting.total_tokens) return '-';
-            // Show prompt/completion breakdown
+            // Show prompt/completion breakdown in k format
             const prompt = meeting.prompt_tokens || 0;
             const completion = meeting.completion_tokens || 0;
-            return `${prompt.toLocaleString()}/${completion.toLocaleString()}`;
+            const fmtK = (n) => n >= 1000 ? (n/1000).toFixed(1)+'k' : n;
+            return `${fmtK(prompt)}/${fmtK(completion)}`;
         },
 
         formatCost(meeting) {

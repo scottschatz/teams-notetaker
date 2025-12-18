@@ -10,7 +10,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from datetime import datetime
 
-from ...core.database import DatabaseManager, Meeting, Summary, Transcript, MeetingParticipant
+from sqlalchemy import func
+from ...core.database import DatabaseManager, Meeting, Summary, Transcript, MeetingParticipant, JobQueue
 from ...core.config import get_config
 from ...jobs.queue import JobQueueManager
 
@@ -83,7 +84,13 @@ async def list_meetings(
         List of meetings
     """
     with db.get_session() as session:
-        # Join with transcript and summary to get word_count, speaker_count, and AI stats
+        # Subquery to get the latest summary version for each meeting
+        latest_summary_version = session.query(
+            Summary.meeting_id,
+            func.max(Summary.version).label('max_version')
+        ).group_by(Summary.meeting_id).subquery()
+
+        # Join with transcript and LATEST summary to get word_count, speaker_count, and AI stats
         query = session.query(
             Meeting,
             Transcript.word_count,
@@ -96,7 +103,12 @@ async def list_meetings(
         ).outerjoin(
             Transcript, Meeting.id == Transcript.meeting_id
         ).outerjoin(
-            Summary, Meeting.id == Summary.meeting_id
+            latest_summary_version,
+            Meeting.id == latest_summary_version.c.meeting_id
+        ).outerjoin(
+            Summary,
+            (Meeting.id == Summary.meeting_id) &
+            (Summary.version == latest_summary_version.c.max_version)
         )
 
         if status:
@@ -219,11 +231,11 @@ async def reprocess_meeting(
         if not meeting:
             raise HTTPException(status_code=404, detail="Meeting not found")
 
-        # Enqueue jobs
+        # Enqueue jobs with force_regenerate=True to create new summary version
         queue = JobQueueManager(db)
-        job_ids = queue.enqueue_meeting_jobs(meeting_id, priority=10)  # High priority
+        job_ids = queue.enqueue_meeting_jobs(meeting_id, priority=10, force_regenerate=True)
 
-        logger.info(f"Reprocessing meeting {meeting_id} (jobs: {job_ids})")
+        logger.info(f"Reprocessing meeting {meeting_id} with force_regenerate (jobs: {job_ids})")
 
         return {
             "success": True,
@@ -261,17 +273,21 @@ async def resend_summary(
             raise HTTPException(status_code=404, detail="No summary found for this meeting")
 
         # Create a new distribution job with target parameter
-        queue = JobQueueManager(db)
-        job_data = {
-            "meeting_id": meeting_id,
-            "resend_target": target  # Special flag for distribution processor
-        }
-
-        job_id = queue.create_job(
+        from datetime import datetime
+        job = JobQueue(
             job_type="distribute",
-            input_data=job_data,
-            priority=10  # High priority
+            meeting_id=meeting_id,
+            input_data={
+                "meeting_id": meeting_id,
+                "resend_target": target  # Special flag for distribution processor
+            },
+            priority=10,  # High priority
+            status="pending",
+            created_at=datetime.now()
         )
+        session.add(job)
+        session.commit()
+        job_id = job.id
 
         logger.info(f"Resending summary for meeting {meeting_id} to {target} (job: {job_id})")
 
@@ -305,9 +321,9 @@ async def get_distribution_details(
 
         return [{
             "id": d.id,
-            "recipient_email": d.recipient_email,
-            "recipient_type": d.recipient_type,
-            "delivery_method": d.delivery_method,
+            "recipient_email": d.recipient,
+            "recipient_type": d.distribution_type,
+            "delivery_method": d.distribution_type,
             "sent_at": d.sent_at.isoformat() if d.sent_at else None,
             "status": d.status
         } for d in distributions]

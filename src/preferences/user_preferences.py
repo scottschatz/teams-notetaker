@@ -48,6 +48,29 @@ class PreferenceManager:
         """
         self.db = db
 
+    def _normalize_email(self, email: str) -> str:
+        """
+        Normalize email for comparison.
+
+        Handles Microsoft email aliases by removing dots from local part.
+        Example: Scott.Schatz@domain.com -> scottschatz@domain.com
+
+        Args:
+            email: Email address to normalize
+
+        Returns:
+            Normalized email (lowercase, dots removed from local part)
+        """
+        if not email:
+            return ""
+        email = email.lower().strip()
+        if "@" in email:
+            local, domain = email.split("@", 1)
+            # Remove dots from local part (handles aliases like Scott.Schatz vs sschatz)
+            local = local.replace(".", "")
+            return f"{local}@{domain}"
+        return email
+
     def get_user_preference(self, email: str) -> bool:
         """
         Get user's email preference.
@@ -56,28 +79,40 @@ class PreferenceManager:
             email: User email address
 
         Returns:
-            True if user wants emails, False if opted out
+            True if user is subscribed, False otherwise
 
         Default:
-            Returns True if no preference set (opt-in by default)
+            Returns False if no preference set (must explicitly subscribe)
+
+        Note:
+            Uses email normalization to handle aliases (Scott.Schatz -> scottschatz)
         """
         try:
-            email = email.lower().strip()
+            if not email:
+                # No email = can't have preference, default to False (not subscribed)
+                return False
+
+            # Normalize the input email for lookup
+            normalized_input = self._normalize_email(email)
 
             with self.db.get_session() as session:
-                pref = session.query(UserPreference).filter_by(user_email=email).first()
+                # Get all subscribers and normalize for comparison
+                all_prefs = session.query(UserPreference).filter_by(receive_emails=True).all()
 
-                if not pref:
-                    # Default: user receives emails
-                    logger.debug(f"No preference found for {email}, defaulting to opt-in")
-                    return True
+                for pref in all_prefs:
+                    # Normalize stored email and compare
+                    if self._normalize_email(pref.user_email) == normalized_input:
+                        logger.debug(f"Subscription match: {email} -> {pref.user_email}")
+                        return True
 
-                return pref.receive_emails
+                # No match found
+                logger.debug(f"No subscription found for {email} (normalized: {normalized_input}), skipping")
+                return False
 
         except Exception as e:
             logger.error(f"Error getting user preference for {email}: {e}")
-            # On error, default to sending emails (fail-open)
-            return True
+            # On error, default to NOT sending (fail-closed for non-subscribers)
+            return False
 
     def set_user_preference(
         self,

@@ -11,7 +11,7 @@ import re
 from typing import Dict, Any
 from datetime import datetime, timedelta, timezone
 
-from ..core.database import DatabaseManager, Meeting, JobQueue, ProcessedCallRecord
+from ..core.database import DatabaseManager, Meeting, JobQueue, ProcessedCallRecord, MeetingParticipant
 from ..graph.client import GraphAPIClient
 from ..preferences.user_preferences import PreferenceManager
 
@@ -124,6 +124,11 @@ class CallRecordsWebhookHandler:
             resource = notification.get("resource")
             resource_data = notification.get("resourceData", {})
 
+            # Extract user ID from resource path (if present)
+            # Format: users('{userId}')/onlineMeetings('{encodedMeetingId}')/transcripts('{encodedTranscriptId}')
+            user_match = re.search(r"users\(['\"]?([^'\"()]+)['\"]?\)", resource)
+            organizer_user_id = user_match.group(1) if user_match else None
+
             # Extract meeting ID and transcript ID from resource path
             # Format can be either:
             #   communications/onlineMeetings/{meetingId}/transcripts/{transcriptId}
@@ -137,7 +142,7 @@ class CallRecordsWebhookHandler:
             meeting_id = match.group(1)
             transcript_id = match.group(2)
 
-            logger.info(f"Transcript ready: meeting={meeting_id}, transcript={transcript_id}")
+            logger.info(f"Transcript ready: meeting={meeting_id}, transcript={transcript_id}, organizer={organizer_user_id}")
 
             with self.db.get_session() as session:
                 # Check if meeting already exists
@@ -149,6 +154,18 @@ class CallRecordsWebhookHandler:
                     logger.info(f"Meeting {existing_meeting.id} already exists, updating status")
                     existing_meeting.status = "queued"
                     db_meeting_id = existing_meeting.id
+
+                    # Update organizer info if missing and we have it from notification
+                    if organizer_user_id and not existing_meeting.organizer_user_id:
+                        existing_meeting.organizer_user_id = organizer_user_id
+                        # Fetch organizer details
+                        try:
+                            user_info = self.graph_client.get(f"/users/{organizer_user_id}")
+                            existing_meeting.organizer_email = user_info.get("mail") or user_info.get("userPrincipalName")
+                            existing_meeting.organizer_name = user_info.get("displayName")
+                            logger.info(f"Updated organizer info for meeting {db_meeting_id}")
+                        except Exception as e:
+                            logger.warning(f"Could not fetch organizer details: {e}")
 
                     # Check if we've already processed this transcript
                     existing_job = session.query(JobQueue).filter_by(
@@ -162,33 +179,44 @@ class CallRecordsWebhookHandler:
                         return {"status": "duplicate", "meeting_id": db_meeting_id}
 
                 else:
-                    # Need to fetch meeting details from Graph API
-                    try:
-                        meeting_info = self.graph_client.get(f"/communications/onlineMeetings/{meeting_id}")
-                    except Exception as e:
-                        logger.warning(f"Could not fetch meeting details: {e}")
-                        # Create minimal meeting record
-                        meeting_info = {
-                            "subject": "Teams Meeting",
-                            "startDateTime": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-                            "endDateTime": datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-                        }
+                    # Fetch organizer details from Graph API if we have the user ID
+                    organizer_email = None
+                    organizer_name = None
+                    if organizer_user_id:
+                        try:
+                            user_info = self.graph_client.get(f"/users/{organizer_user_id}")
+                            organizer_email = user_info.get("mail") or user_info.get("userPrincipalName")
+                            organizer_name = user_info.get("displayName")
+                            logger.info(f"Fetched organizer info: {organizer_name} <{organizer_email}>")
+                        except Exception as e:
+                            logger.warning(f"Could not fetch organizer details: {e}")
 
-                    # Create meeting record
+                    # Create meeting record with organizer info from notification
                     meeting = Meeting(
                         meeting_id=meeting_id,
-                        subject=meeting_info.get("subject", "Teams Meeting"),
-                        organizer_email=meeting_info.get("participants", {}).get("organizer", {}).get("upn"),
-                        organizer_name=meeting_info.get("participants", {}).get("organizer", {}).get("identity", {}).get("user", {}).get("displayName"),
-                        start_time=self._parse_datetime(meeting_info.get("startDateTime")),
-                        end_time=self._parse_datetime(meeting_info.get("endDateTime")),
-                        join_url=meeting_info.get("joinWebUrl"),
-                        chat_id=meeting_info.get("chatInfo", {}).get("threadId"),
-                        status="queued"
+                        subject="Teams Meeting",  # We don't have subject from transcript notification
+                        organizer_email=organizer_email,
+                        organizer_name=organizer_name,
+                        organizer_user_id=organizer_user_id,
+                        start_time=datetime.now(timezone.utc),
+                        end_time=datetime.now(timezone.utc),
+                        status="queued",
+                        participant_count=1  # At least the organizer
                     )
                     session.add(meeting)
                     session.flush()
                     db_meeting_id = meeting.id
+
+                    # Add organizer as participant so they receive the email
+                    if organizer_email:
+                        participant = MeetingParticipant(
+                            meeting_id=db_meeting_id,
+                            email=organizer_email,
+                            display_name=organizer_name or organizer_email,
+                            role="organizer"
+                        )
+                        session.add(participant)
+                        logger.info(f"Added organizer {organizer_email} as participant")
 
                     logger.info(f"Created meeting {db_meeting_id}: {meeting.subject}")
 

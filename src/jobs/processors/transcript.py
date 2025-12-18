@@ -272,15 +272,26 @@ class TranscriptProcessor(BaseProcessor):
 
                 transcript_id = transcript.id
 
-                # Update meeting with recording URL
-                meeting.has_transcript = True
-                meeting.status = "processing"
-                if recording_sharepoint_url:
-                    meeting.recording_sharepoint_url = recording_sharepoint_url
+                # Update meeting (query in THIS session to avoid detached object bug)
+                meeting_in_session = session.query(Meeting).filter_by(id=meeting_id).first()
+                if meeting_in_session:
+                    meeting_in_session.has_transcript = True
+                    meeting_in_session.status = "processing"
+                    if recording_sharepoint_url:
+                        meeting_in_session.recording_sharepoint_url = recording_sharepoint_url
+
+                # Create next job in chain: generate_summary
+                next_job = JobQueue(
+                    job_type="generate_summary",
+                    meeting_id=meeting_id,
+                    input_data={"meeting_id": meeting_id},
+                    priority=5
+                )
+                session.add(next_job)
 
                 session.commit()
 
-            self._log_progress(job, f"✓ Transcript saved to database (id: {transcript_id})")
+            self._log_progress(job, f"✓ Transcript saved, summary job enqueued (id: {transcript_id})")
 
             # Check chat for preference commands (opt-in/opt-out system)
             await self._check_chat_for_commands(meeting)

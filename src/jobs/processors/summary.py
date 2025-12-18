@@ -13,7 +13,7 @@ from ..processors.base import BaseProcessor, register_processor
 from ...ai.claude_client import ClaudeClient
 from ...ai.summarizer import MeetingSummarizer, EnhancedMeetingSummarizer, SingleCallSummarizer, EnhancedSummary
 from ...utils.vtt_parser import format_transcript_for_summary
-from ...core.database import Summary, Transcript
+from ...core.database import Summary, Transcript, Meeting, JobQueue
 from ...core.exceptions import SummaryGenerationError, ClaudeAPIError
 
 
@@ -252,14 +252,25 @@ class SummaryProcessor(BaseProcessor):
                     if previous_summary:
                         previous_summary.superseded_by = summary_id
 
-                # Update meeting
-                meeting.has_summary = True
+                # Update meeting (query it in THIS session to avoid detached object bug)
+                meeting_in_session = session.query(Meeting).filter_by(id=meeting_id).first()
+                if meeting_in_session:
+                    meeting_in_session.has_summary = True
+
+                # Create next job in chain: distribute
+                next_job = JobQueue(
+                    job_type="distribute",
+                    meeting_id=meeting_id,
+                    input_data={"meeting_id": meeting_id},
+                    priority=5
+                )
+                session.add(next_job)
 
                 session.commit()
 
                 self._log_progress(
                     job,
-                    f"✓ Enhanced summary saved (v{version}): "
+                    f"✓ Enhanced summary saved (v{version}), distribution job enqueued: "
                     f"{len(action_items)} actions, {len(decisions)} decisions, "
                     f"{len(topics)} topics, {len(highlights)} highlights, "
                     f"{len(mentions)} mentions"

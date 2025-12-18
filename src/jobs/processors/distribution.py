@@ -383,9 +383,11 @@ class DistributionProcessor(BaseProcessor):
             else:
                 self._log_progress(job, "Email distribution disabled in config", "info")
 
-            # Update meeting status
-            meeting.has_distribution = True
-            meeting.status = "completed"
+            # Update meeting status (query it in THIS session to avoid detached object bug)
+            meeting_in_session = session.query(Meeting).filter_by(id=meeting_id).first()
+            if meeting_in_session:
+                meeting_in_session.has_distribution = True
+                meeting_in_session.status = "completed"
 
             session.commit()
 

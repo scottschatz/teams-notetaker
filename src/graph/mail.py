@@ -848,7 +848,7 @@ class EmailSender:
 
             html += """        <div class="highlights-section" style="background: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 25px 0; border-radius: 4px;">
             <h3 style="margin-top: 0; color: #f57c00;">⚡ Key Moments</h3>
-            <ul style="list-style: none; padding-left: 0;">
+            <ol style="padding-left: 20px; margin: 0;">
 """
             for highlight in highlights_limited:
                 # Use 'description' field from updated HIGHLIGHTS_PROMPT
@@ -888,13 +888,13 @@ class EmailSender:
                 import urllib.parse
                 encoded_chat_id = urllib.parse.quote(chat_id)
                 chat_url = f"https://teams.microsoft.com/l/chat/{encoded_chat_id}/0"
-                html += f"""            </ul>
+                html += f"""            </ol>
             <p style="margin-top: 10px;"><a href="{chat_url}" style="color: #f57c00;">See full timeline in Teams →</a></p>
         </div>
 
 """
             else:
-                html += """            </ul>
+                html += """            </ol>
         </div>
 
 """

@@ -38,6 +38,7 @@ Guidelines:
 - Include both immediate tasks and follow-up items
 - Do NOT include hypothetical or conditional tasks ("if we decide to...")
 - **CRITICAL: Bold all participant names using **Name** markdown syntax**
+- **CRITICAL: Verify assignee attribution by checking the <v SpeakerName> tags - only assign to people who explicitly accepted the task**
 
 Example action_items entry:
 {{
@@ -69,6 +70,7 @@ Guidelines:
 - If a decision was reversed or changed, include the FINAL decision only
 - Focus on decisions with business impact, not procedural ones
 - **CRITICAL: Bold all participant names using **Name** markdown syntax**
+- **CRITICAL: Verify who made each decision by checking the <v SpeakerName> tags - attribute decisions to the person who actually stated or approved them**
 
 Example decisions entry:
 {{
@@ -98,6 +100,7 @@ Guidelines:
 - Balance positive and negative highlights
 - Skip procedural or minor moments
 - **CRITICAL: Bold all participant names using **Name** markdown syntax**
+- **CRITICAL: Verify speaker attribution is ACCURATE - check the <v SpeakerName> tags in the transcript to confirm who actually said something before attributing it to them**
 
 Example highlights entry:
 {{

@@ -47,9 +47,6 @@
                         <th @click="sortBy('subject')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Subject <span x-show="sortColumn === 'subject'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
                         </th>
-                        <th @click="sortBy('call_type')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" title="Call Type">
-                            Type <span x-show="sortColumn === 'call_type'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
-                        </th>
                         <th @click="sortBy('organizer_name')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Organizer <span x-show="sortColumn === 'organizer_name'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
                         </th>
@@ -105,17 +102,6 @@
                             </td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.id"></td>
                             <td class="px-2 py-2 font-medium text-gray-900 text-xs max-w-[250px] truncate" x-text="meeting.subject" :title="meeting.subject"></td>
-                            <td class="px-2 py-2 whitespace-nowrap">
-                                <span class="px-1 inline-flex text-xs leading-5 font-semibold rounded-full"
-                                      :class="{
-                                          'bg-blue-100 text-blue-800': meeting.call_type === 'groupCall',
-                                          'bg-cyan-100 text-cyan-800': meeting.call_type === 'peerToPeer',
-                                          'bg-gray-100 text-gray-600': !meeting.call_type || meeting.call_type === 'unknown'
-                                      }"
-                                      x-text="formatCallType(meeting.call_type)"
-                                      :title="getCallTypeTooltip(meeting.call_type)">
-                                </span>
-                            </td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-900 text-xs" x-text="meeting.organizer_name" :title="meeting.organizer_email"></td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatDateTime(meeting.start_time)"></td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.duration_minutes ? meeting.duration_minutes + 'm' : '-'"></td>
@@ -528,22 +514,6 @@ function meetingsData() {
             const endTime = hasTimezone1 ? new Date(meeting.end_time) : new Date(meeting.end_time + 'Z');
             const discoveredAt = hasTimezone2 ? new Date(meeting.discovered_at) : new Date(meeting.discovered_at + 'Z');
             return `Meeting ended: ${this.formatDateTime(meeting.end_time)}\nWebhook received: ${this.formatDateTime(meeting.discovered_at)}`;
-        },
-
-        formatCallType(callType) {
-            if (!callType || callType === 'unknown') return '-';
-            if (callType === 'groupCall') return 'group';
-            if (callType === 'peerToPeer') return '1:1';
-            return callType;
-        },
-
-        getCallTypeTooltip(callType) {
-            const tooltips = {
-                'groupCall': 'Group call with 3+ participants',
-                'peerToPeer': '1-on-1 call between two people',
-                'unknown': 'Call type not determined'
-            };
-            return tooltips[callType] || 'Unknown call type';
         },
 
         getStatusDisplay(meeting) {

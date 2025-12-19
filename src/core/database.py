@@ -114,6 +114,7 @@ class Meeting(Base):
     recording_url = Column(String(1000))  # Recording URL (if available) - DEPRECATED, use recording_sharepoint_url
     recording_sharepoint_url = Column(String(1000))  # SharePoint recording URL (NEW - respects permissions)
     chat_id = Column(String(255))  # Teams chat thread ID
+    graph_transcript_id = Column(String(500))  # Graph API transcript ID (from webhook, avoids time-based search)
 
     # Chat monitoring (NEW)
     last_chat_check = Column(DateTime)  # When we last checked chat for commands

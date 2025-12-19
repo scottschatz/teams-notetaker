@@ -120,12 +120,17 @@ class TranscriptProcessor(BaseProcessor):
             user_id_for_transcript = organizer_user_id
 
             # Check if transcript_id was provided directly (from webhook notification)
+            # or stored on the meeting record (from webhook arriving after backfill)
             # This is more reliable than time-based matching
-            provided_transcript_id = job.input_data.get("transcript_id")
+            provided_transcript_id = (
+                job.input_data.get("transcript_id") or
+                meeting.graph_transcript_id  # Fallback: stored from webhook
+            )
             if provided_transcript_id:
+                source = "job input" if job.input_data.get("transcript_id") else "meeting record"
                 self._log_progress(
                     job,
-                    f"Using provided transcript_id from webhook notification"
+                    f"Using transcript_id from {source} (skipping time-based search)"
                 )
 
                 # Use online_meeting_id from multiple sources (in priority order):

@@ -167,6 +167,11 @@ class CallRecordsWebhookHandler:
                         except Exception as e:
                             logger.warning(f"Could not fetch organizer details: {e}")
 
+                    # Store transcript_id from webhook (helps backfill-created meetings)
+                    if transcript_id and not existing_meeting.graph_transcript_id:
+                        existing_meeting.graph_transcript_id = transcript_id
+                        logger.info(f"Stored graph_transcript_id for meeting {db_meeting_id}")
+
                     # Check if we've already processed THIS SPECIFIC transcript
                     # (Important for recurring meetings - same meeting_id but different transcript_id)
                     from sqlalchemy import cast
@@ -241,7 +246,8 @@ class CallRecordsWebhookHandler:
                         start_time=meeting_start_time,
                         end_time=meeting_end_time,
                         status="queued",
-                        participant_count=1  # At least the organizer
+                        participant_count=1,  # At least the organizer
+                        graph_transcript_id=transcript_id  # Store for backfill reliability
                     )
                     session.add(meeting)
                     session.flush()

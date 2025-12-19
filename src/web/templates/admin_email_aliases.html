@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}Email Aliases - Teams Notetaker{% endblock %}
+
+{% block content %}
+<div class="min-h-screen">
+    <h1 class="text-3xl font-bold text-gray-900 mb-6">Email Aliases</h1>
+    <p class="text-gray-600 mb-6">
+        This page shows all known email aliases mapped to primary emails and Azure AD user IDs.
+        Users may send from different aliases, but preferences are matched using the Azure AD user ID (stable) or primary email.
+    </p>
+
+    <div class="max-w-7xl mx-auto">
+        <!-- Stats -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700">Total Aliases</h3>
+                <p class="text-3xl font-bold text-blue-600">{{ total_aliases }}</p>
+            </div>
+            <div class="bg-white rounded-lg shadow p-6">
+                <h3 class="text-lg font-semibold text-gray-700">Unique Users</h3>
+                <p class="text-3xl font-bold text-green-600">{{ total_users }}</p>
+            </div>
+        </div>
+
+        <!-- Users with Aliases -->
+        <div class="bg-white rounded-lg shadow overflow-hidden mb-8">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h2 class="text-xl font-bold text-gray-900">Users with Known Aliases</h2>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Azure AD ID</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Primary Email</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">All Known Aliases</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {% for user in users %}
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4">
+                                <div class="text-sm font-medium text-gray-900">{{ user.display_name or 'Unknown' }}</div>
+                            </td>
+                            <td class="px-6 py-4">
+                                <div class="text-xs font-mono text-gray-500">{{ user.user_id[:8] }}...</div>
+                            </td>
+                            <td class="px-6 py-4">
+                                <div class="text-sm text-blue-600 font-medium">{{ user.primary_email }}</div>
+                            </td>
+                            <td class="px-6 py-4">
+                                <div class="flex flex-wrap gap-2">
+                                    {% for alias in user.aliases %}
+                                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                                        {% if alias.is_primary %}bg-blue-100 text-blue-800{% else %}bg-gray-100 text-gray-800{% endif %}">
+                                        {{ alias.email }}
+                                        {% if alias.is_primary %}<span class="ml-1">(primary)</span>{% endif %}
+                                    </span>
+                                    {% endfor %}
+                                </div>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="4" class="px-6 py-8 text-center text-gray-500">
+                                No email aliases have been cached yet. Aliases are cached when users send emails to the note.taker inbox.
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Orphan Aliases (no user_id) -->
+        {% if orphan_aliases %}
+        <div class="bg-white rounded-lg shadow overflow-hidden">
+            <div class="px-6 py-4 border-b border-gray-200">
+                <h2 class="text-xl font-bold text-gray-900">Unlinked Aliases</h2>
+                <p class="text-sm text-gray-600 mt-1">
+                    These aliases don't have an Azure AD user ID. They may be external users or couldn't be resolved.
+                </p>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Primary Email</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Display Name</th>
+                            <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Resolved At</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        {% for alias in orphan_aliases %}
+                        <tr class="hover:bg-gray-50">
+                            <td class="px-6 py-4 text-sm text-gray-900">{{ alias.email }}</td>
+                            <td class="px-6 py-4 text-sm text-gray-600">{{ alias.primary_email }}</td>
+                            <td class="px-6 py-4 text-sm text-gray-600">{{ alias.display_name or '-' }}</td>
+                            <td class="px-6 py-4 text-sm text-gray-500">
+                                {{ alias.resolved_at.strftime('%Y-%m-%d %H:%M') if alias.resolved_at else '-' }}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- How it works -->
+        <div class="bg-blue-50 rounded-lg p-6 mt-8">
+            <h3 class="text-lg font-semibold text-blue-900 mb-2">How Email Alias Resolution Works</h3>
+            <ul class="text-sm text-blue-800 space-y-2">
+                <li><strong>1. User sends email</strong> - When someone sends to note.taker@townsquaremedia.com, we capture their "from" address</li>
+                <li><strong>2. Graph API lookup</strong> - We query Microsoft Graph API to get their primary email and Azure AD user ID</li>
+                <li><strong>3. Cache mapping</strong> - The alias-to-primary mapping is stored here so we don't need to query again</li>
+                <li><strong>4. Preference matching</strong> - When checking preferences, we match by user ID (most reliable) or any known alias</li>
+            </ul>
+            <p class="text-sm text-blue-700 mt-4">
+                <strong>Note:</strong> The Azure AD user ID never changes, even if someone changes their name or email address.
+                This ensures preferences persist through name changes.
+            </p>
+        </div>
+    </div>
+</div>
+{% endblock %}

@@ -9,13 +9,14 @@ Periodically checks inbox for commands and processes them:
 
 import logging
 from typing import Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from .email_parser import EmailCommandParser, EmailCommandType, ParsedEmailCommand
 from .inbox_reader import InboxReader
 from ..graph.client import GraphAPIClient
-from ..core.database import DatabaseManager, ProcessedInboxMessage, UserFeedback
+from ..core.database import DatabaseManager, ProcessedInboxMessage, UserFeedback, EmailAlias
 from ..preferences.user_preferences import PreferenceManager
+from ..core.exceptions import GraphAPIError
 
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,119 @@ class InboxMonitor:
         self.parser = EmailCommandParser()
         self.pref_manager = PreferenceManager(db)
 
+    # Cache TTL for email aliases (7 days) - after this we re-fetch from Graph API
+    ALIAS_CACHE_TTL_DAYS = 7
+
+    def _is_cache_expired(self, cached: EmailAlias) -> bool:
+        """Check if a cached email alias record has expired."""
+        if not cached.resolved_at:
+            return True
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        age = now - cached.resolved_at
+        return age > timedelta(days=self.ALIAS_CACHE_TTL_DAYS)
+
+    def _resolve_primary_email(self, sender_email: str, sender_name: str = "") -> str:
+        """
+        Resolve an email alias to the user's primary email address.
+
+        Users may send from aliases (e.g., scott.s@company.com) but their
+        primary email (sschatz@company.com) is what appears in meeting
+        participant lists. We need to use the primary email for preference
+        matching.
+
+        The mapping is cached in the database to avoid repeated Graph API calls.
+        Cache expires after ALIAS_CACHE_TTL_DAYS days and is refreshed from Graph API.
+
+        Args:
+            sender_email: The email address from the incoming message
+            sender_name: Optional display name from the email
+
+        Returns:
+            The user's primary email address, or original if lookup fails
+        """
+        alias_lower = sender_email.lower().strip()
+
+        # Check database cache first
+        with self.db.get_session() as session:
+            cached = session.query(EmailAlias).filter_by(alias_email=alias_lower).first()
+            if cached and not self._is_cache_expired(cached):
+                # Update last_used_at timestamp (naive UTC for database)
+                cached.last_used_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                session.commit()
+                logger.debug(f"Email alias cache hit: {alias_lower} -> {cached.primary_email}")
+                return cached.primary_email
+            elif cached:
+                logger.debug(f"Email alias cache expired for {alias_lower}, refreshing from Graph API")
+
+        # Not in cache or expired - look up via Graph API
+        try:
+            user_info = self.graph_client.get(
+                f"/users/{alias_lower}",
+                params={"$select": "id,mail,userPrincipalName,displayName"}
+            )
+
+            # Get user ID (stable GUID that never changes)
+            user_id = user_info.get("id")
+
+            # Get primary email (prefer 'mail' field, fall back to UPN)
+            primary_email = user_info.get("mail") or user_info.get("userPrincipalName", "")
+            primary_email = primary_email.lower().strip()
+            display_name = user_info.get("displayName", sender_name)
+
+            # Cache the result in database (set resolved_at for cache expiration tracking)
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            with self.db.get_session() as session:
+                # Store alias -> primary mapping with user ID
+                alias_record = EmailAlias(
+                    alias_email=alias_lower,
+                    primary_email=primary_email or alias_lower,
+                    user_id=user_id,
+                    display_name=display_name,
+                    resolved_at=now,
+                    last_used_at=now
+                )
+                session.merge(alias_record)  # Use merge to handle duplicates
+
+                # If this was an alias, also store primary -> primary
+                if primary_email and primary_email != alias_lower:
+                    primary_record = EmailAlias(
+                        alias_email=primary_email,
+                        primary_email=primary_email,
+                        user_id=user_id,
+                        display_name=display_name,
+                        resolved_at=now,
+                        last_used_at=now
+                    )
+                    session.merge(primary_record)
+
+                session.commit()
+
+            if primary_email and primary_email != alias_lower:
+                logger.info(f"Resolved email alias: {alias_lower} -> {primary_email} (user_id: {user_id})")
+                return primary_email
+            else:
+                return alias_lower
+
+        except GraphAPIError as e:
+            # User not found or API error - cache the original email with expiration
+            # so we retry later (user might become resolvable)
+            logger.warning(f"Could not resolve email {alias_lower}: {e}")
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            with self.db.get_session() as session:
+                alias_record = EmailAlias(
+                    alias_email=alias_lower,
+                    primary_email=alias_lower,  # Same as alias since we can't resolve
+                    display_name=sender_name,
+                    resolved_at=now,  # Set so cache can expire and retry
+                    last_used_at=now
+                )
+                session.merge(alias_record)
+                session.commit()
+            return alias_lower
+        except Exception as e:
+            logger.error(f"Unexpected error resolving email {alias_lower}: {e}")
+            return alias_lower
+
     async def check_inbox(self) -> Dict[str, Any]:
         """
         Check inbox for new commands and process them.
@@ -79,8 +193,8 @@ class InboxMonitor:
         }
 
         try:
-            # Calculate lookback time
-            since = datetime.utcnow() - timedelta(minutes=self.lookback_minutes)
+            # Calculate lookback time (naive UTC for Graph API)
+            since = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(minutes=self.lookback_minutes)
 
             # Get recent messages
             messages = self.inbox_reader.get_recent_messages(since)
@@ -175,23 +289,29 @@ class InboxMonitor:
         message_id = msg.get("internet_message_id") or msg.get("id")
 
         try:
-            # Update user preference
-            self.pref_manager.set_email_preference(
-                user_email=parsed.sender_email,
-                wants_email=True,
-                source="inbox_command"
+            # Resolve email alias to primary email (for matching with meeting participants)
+            primary_email = self._resolve_primary_email(parsed.sender_email, parsed.sender_name)
+
+            # Update user preference using primary email
+            self.pref_manager.set_user_preference(
+                email=primary_email,
+                receive_emails=True,
+                updated_by="inbox_command"
             )
 
-            logger.info(f"User subscribed via email: {parsed.sender_email}")
+            if primary_email != parsed.sender_email:
+                logger.info(f"User subscribed via email: {parsed.sender_email} (resolved to {primary_email})")
+            else:
+                logger.info(f"User subscribed via email: {parsed.sender_email}")
 
-            # Send confirmation
+            # Send confirmation to original sender address
             self._send_subscribe_confirmation(parsed.sender_email, parsed.sender_name)
 
             # Mark as read
             self.inbox_reader.mark_as_read(msg.get("id"))
 
-            # Record processing
-            self._mark_processed(message_id, "subscribe", parsed.sender_email, "Successfully subscribed")
+            # Record processing with primary email
+            self._mark_processed(message_id, "subscribe", primary_email, f"Successfully subscribed (from: {parsed.sender_email})")
 
             return "subscribed"
 
@@ -205,23 +325,29 @@ class InboxMonitor:
         message_id = msg.get("internet_message_id") or msg.get("id")
 
         try:
-            # Update user preference
-            self.pref_manager.set_email_preference(
-                user_email=parsed.sender_email,
-                wants_email=False,
-                source="inbox_command"
+            # Resolve email alias to primary email (for matching with meeting participants)
+            primary_email = self._resolve_primary_email(parsed.sender_email, parsed.sender_name)
+
+            # Update user preference using primary email
+            self.pref_manager.set_user_preference(
+                email=primary_email,
+                receive_emails=False,
+                updated_by="inbox_command"
             )
 
-            logger.info(f"User unsubscribed via email: {parsed.sender_email}")
+            if primary_email != parsed.sender_email:
+                logger.info(f"User unsubscribed via email: {parsed.sender_email} (resolved to {primary_email})")
+            else:
+                logger.info(f"User unsubscribed via email: {parsed.sender_email}")
 
-            # Send confirmation
+            # Send confirmation to original sender address
             self._send_unsubscribe_confirmation(parsed.sender_email, parsed.sender_name)
 
             # Mark as read
             self.inbox_reader.mark_as_read(msg.get("id"))
 
-            # Record processing
-            self._mark_processed(message_id, "unsubscribe", parsed.sender_email, "Successfully unsubscribed")
+            # Record processing with primary email
+            self._mark_processed(message_id, "unsubscribe", primary_email, f"Successfully unsubscribed (from: {parsed.sender_email})")
 
             return "unsubscribed"
 
@@ -235,10 +361,13 @@ class InboxMonitor:
         message_id = msg.get("internet_message_id") or msg.get("id")
 
         try:
-            # Store feedback in database
+            # Resolve email alias to primary email
+            primary_email = self._resolve_primary_email(parsed.sender_email, parsed.sender_name)
+
+            # Store feedback in database using primary email
             with self.db.get_session() as session:
                 feedback = UserFeedback(
-                    user_email=parsed.sender_email,
+                    user_email=primary_email,
                     feedback_text=parsed.body or parsed.subject,
                     subject=parsed.subject,
                     source_email_id=message_id,
@@ -248,14 +377,14 @@ class InboxMonitor:
 
             logger.info(f"Stored feedback from {parsed.sender_email}: {parsed.subject[:50]}")
 
-            # Send acknowledgment
+            # Send acknowledgment to original sender address
             self._send_feedback_acknowledgment(parsed.sender_email, parsed.sender_name)
 
             # Mark as read
             self.inbox_reader.mark_as_read(msg.get("id"))
 
-            # Record processing
-            self._mark_processed(message_id, "feedback", parsed.sender_email, "Feedback stored")
+            # Record processing with primary email
+            self._mark_processed(message_id, "feedback", primary_email, "Feedback stored")
 
             return "feedback"
 

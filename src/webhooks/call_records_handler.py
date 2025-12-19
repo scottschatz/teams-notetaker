@@ -202,8 +202,8 @@ class CallRecordsWebhookHandler:
                     # Fetch meeting details (subject, times) from onlineMeetings API
                     meeting_subject = "Teams Meeting"
                     # Default to current UTC time (naive) if not available
-                    meeting_start_time = datetime.utcnow()
-                    meeting_end_time = datetime.utcnow()
+                    meeting_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
+                    meeting_end_time = datetime.now(timezone.utc).replace(tzinfo=None)
                     if organizer_user_id and meeting_id:
                         try:
                             meeting_details = self.graph_client.get(

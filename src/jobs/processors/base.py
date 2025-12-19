@@ -7,7 +7,7 @@ inherit from BaseProcessor and implement the process() method.
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 
 from src.core.database import DatabaseManager, Meeting, JobQueue
@@ -165,7 +165,7 @@ class BaseProcessor(ABC):
         output = {
             "success": success,
             "message": message,
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(timezone.utc).replace(tzinfo=None).isoformat(),
             "processor": self.__class__.__name__,
         }
 

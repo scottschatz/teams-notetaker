@@ -692,6 +692,30 @@ class ProcessedInboxMessage(Base):
         return f"<ProcessedInboxMessage(id='{self.message_id[:20]}...', type='{self.message_type}')>"
 
 
+class EmailAlias(Base):
+    """
+    Maps email aliases to primary email addresses and Azure AD user IDs.
+
+    Users may send from aliases (e.g., scott.s@company.com) but their
+    primary email (sschatz@company.com) is what appears in meeting participant
+    lists. This table caches the mapping to avoid repeated Graph API calls.
+
+    The user_id (Azure AD object ID) is stable and never changes, even if
+    the user's email changes (e.g., after marriage or department change).
+    """
+    __tablename__ = "email_aliases"
+
+    alias_email = Column(String(255), primary_key=True)  # The alias email (lowercase)
+    primary_email = Column(String(255), nullable=False, index=True)  # User's primary email
+    user_id = Column(String(50), index=True)  # Azure AD object ID (stable GUID)
+    display_name = Column(String(500))  # User's display name
+    resolved_at = Column(DateTime, default=func.now())
+    last_used_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    def __repr__(self):
+        return f"<EmailAlias(alias='{self.alias_email}', primary='{self.primary_email}', user_id='{self.user_id}')>"
+
+
 # ============================================================================
 # DATABASE MANAGER
 # ============================================================================

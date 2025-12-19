@@ -6,6 +6,7 @@ Handles API authentication, token counting, and error handling.
 """
 
 import logging
+import time
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import anthropic
@@ -61,7 +62,90 @@ class ClaudeClient:
         self.config = config
         self._client = Anthropic(api_key=config.api_key)
 
+        self.max_retries = 3  # Max retry attempts for transient errors
         logger.info(f"ClaudeClient initialized (model: {config.model})")
+
+    def _make_api_call_with_retry(
+        self,
+        model: str,
+        max_tokens: int,
+        temperature: float,
+        system: str,
+        messages: List[Dict],
+        stop_sequences: Optional[List[str]] = None,
+        retry_count: int = 0
+    ):
+        """
+        Make Claude API call with retry logic for transient errors.
+
+        Handles:
+        - Rate limiting (429): Wait based on retry-after or exponential backoff
+        - Server errors (5xx): Retry with exponential backoff
+        - Overloaded errors: Retry with backoff
+
+        Args:
+            model: Model to use
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            system: System prompt
+            messages: Messages array
+            stop_sequences: Optional stop sequences
+            retry_count: Current retry attempt (internal)
+
+        Returns:
+            API response object
+
+        Raises:
+            RateLimitError: If rate limited and max retries exceeded
+            ClaudeAPIError: If API error and max retries exceeded
+        """
+        try:
+            return self._client.messages.create(
+                model=model,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                system=system,
+                messages=messages,
+                stop_sequences=stop_sequences
+            )
+
+        except AnthropicRateLimitError as e:
+            # Rate limited - retry with backoff
+            if retry_count < self.max_retries:
+                # Try to get retry-after from headers, default to exponential backoff
+                wait_time = min(2 ** retry_count * 10, 60)  # 10s, 20s, 40s, max 60s
+                logger.warning(
+                    f"Claude API rate limited, waiting {wait_time}s before retry "
+                    f"{retry_count + 1}/{self.max_retries}: {e}"
+                )
+                time.sleep(wait_time)
+                return self._make_api_call_with_retry(
+                    model, max_tokens, temperature, system, messages,
+                    stop_sequences, retry_count + 1
+                )
+            else:
+                logger.error(f"Claude API rate limit exceeded after {self.max_retries} retries")
+                raise RateLimitError(f"Claude API rate limited after {self.max_retries} retries: {e}")
+
+        except APIError as e:
+            # Check if it's a retryable server error (5xx or overloaded)
+            is_server_error = hasattr(e, 'status_code') and e.status_code >= 500
+            is_overloaded = 'overloaded' in str(e).lower()
+
+            if (is_server_error or is_overloaded) and retry_count < self.max_retries:
+                wait_time = min(2 ** retry_count * 5, 30)  # 5s, 10s, 20s, max 30s
+                logger.warning(
+                    f"Claude API server error, waiting {wait_time}s before retry "
+                    f"{retry_count + 1}/{self.max_retries}: {e}"
+                )
+                time.sleep(wait_time)
+                return self._make_api_call_with_retry(
+                    model, max_tokens, temperature, system, messages,
+                    stop_sequences, retry_count + 1
+                )
+            else:
+                logger.error(f"Claude API error: {e}", exc_info=True)
+                raise ClaudeAPIError(f"Claude API request failed: {e}")
 
     def generate_text(
         self,
@@ -135,9 +219,9 @@ class ClaudeClient:
                 messages = [{"role": "user", "content": user_prompt}]
                 logger.info(f"Generating text with {self.config.model} (max_tokens: {max_tokens}, temp: {temperature})")
 
-            # Make API request
+            # Make API request with retry logic for transient errors
             start_time = datetime.now()
-            response = self._client.messages.create(
+            response = self._make_api_call_with_retry(
                 model=self.config.model,
                 max_tokens=max_tokens,
                 temperature=temperature,
@@ -199,13 +283,9 @@ class ClaudeClient:
                 "cache_read_tokens": cache_read_tokens
             }
 
-        except AnthropicRateLimitError as e:
-            logger.error(f"Claude API rate limit exceeded: {e}")
-            raise RateLimitError(f"Claude API rate limited: {e}")
-
-        except APIError as e:
-            logger.error(f"Claude API error: {e}", exc_info=True)
-            raise ClaudeAPIError(f"Claude API request failed: {e}")
+        except (RateLimitError, ClaudeAPIError):
+            # Re-raise errors from retry helper
+            raise
 
         except Exception as e:
             logger.error(f"Unexpected error calling Claude API: {e}", exc_info=True)

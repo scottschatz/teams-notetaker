@@ -9,7 +9,7 @@ import logging
 from typing import Optional, List
 from datetime import datetime
 
-from ..core.database import DatabaseManager, UserPreference, MeetingPreference, Meeting
+from ..core.database import DatabaseManager, UserPreference, MeetingPreference, Meeting, EmailAlias
 
 
 logger = logging.getLogger(__name__)
@@ -71,6 +71,93 @@ class PreferenceManager:
             return f"{local}@{domain}"
         return email
 
+    def _get_primary_email(self, email: str) -> str:
+        """
+        Look up the primary email for an alias using the email_aliases cache.
+
+        This handles cases where users have different aliases (e.g., sschatz vs scottschatz)
+        that the simple dot-removal normalization can't handle.
+
+        Args:
+            email: Email address (possibly an alias)
+
+        Returns:
+            Primary email if found in cache, otherwise original email
+        """
+        if not email:
+            return ""
+        email = email.lower().strip()
+
+        try:
+            with self.db.get_session() as session:
+                alias_record = session.query(EmailAlias).filter_by(alias_email=email).first()
+                if alias_record and alias_record.primary_email:
+                    return alias_record.primary_email.lower()
+        except Exception as e:
+            logger.debug(f"Error looking up primary email for {email}: {e}")
+
+        return email
+
+    def _get_user_id(self, email: str) -> Optional[str]:
+        """
+        Look up the Azure AD user ID for an email.
+
+        The user ID is stable and never changes, even if the user's email changes.
+
+        Args:
+            email: Email address
+
+        Returns:
+            Azure AD user ID (GUID) if found, otherwise None
+        """
+        if not email:
+            return None
+        email = email.lower().strip()
+
+        try:
+            with self.db.get_session() as session:
+                alias_record = session.query(EmailAlias).filter_by(alias_email=email).first()
+                if alias_record and alias_record.user_id:
+                    return alias_record.user_id
+        except Exception as e:
+            logger.debug(f"Error looking up user ID for {email}: {e}")
+
+        return None
+
+    def _get_all_emails_for_user(self, email: str) -> List[str]:
+        """
+        Get all known email aliases for a user.
+
+        Uses the user_id to find all aliases that belong to the same user.
+
+        Args:
+            email: Any email address for the user
+
+        Returns:
+            List of all known email addresses for this user
+        """
+        if not email:
+            return []
+        email = email.lower().strip()
+
+        try:
+            with self.db.get_session() as session:
+                # First get the user_id for this email
+                alias_record = session.query(EmailAlias).filter_by(alias_email=email).first()
+                if not alias_record or not alias_record.user_id:
+                    return [email]
+
+                # Get all aliases with same user_id
+                all_aliases = session.query(EmailAlias).filter_by(
+                    user_id=alias_record.user_id
+                ).all()
+
+                return [a.alias_email for a in all_aliases]
+        except Exception as e:
+            logger.debug(f"Error getting all emails for user {email}: {e}")
+
+        return [email]
+
     def get_user_preference(self, email: str) -> bool:
         """
         Get user's email preference.
@@ -85,28 +172,92 @@ class PreferenceManager:
             Returns False if no preference set (must explicitly subscribe)
 
         Note:
-            Uses email normalization to handle aliases (Scott.Schatz -> scottschatz)
+            Uses indexed SQL queries for O(1) lookups:
+            1. First resolves email to user_id and all known aliases
+            2. Uses single SQL query with IN clause on indexed columns
+            3. Falls back to normalized email matching if needed
         """
         try:
             if not email:
                 # No email = can't have preference, default to False (not subscribed)
                 return False
 
-            # Normalize the input email for lookup
+            email_lower = email.lower().strip()
             normalized_input = self._normalize_email(email)
 
             with self.db.get_session() as session:
-                # Get all subscribers and normalize for comparison
-                all_prefs = session.query(UserPreference).filter_by(receive_emails=True).all()
+                # Step 1: Build list of all emails to check (using alias table)
+                emails_to_check = {email_lower, normalized_input}
 
-                for pref in all_prefs:
-                    # Normalize stored email and compare
-                    if self._normalize_email(pref.user_email) == normalized_input:
-                        logger.debug(f"Subscription match: {email} -> {pref.user_email}")
+                # Look up this email in alias table
+                alias_record = session.query(EmailAlias).filter_by(alias_email=email_lower).first()
+
+                user_id = None
+                if alias_record:
+                    # Add primary email to check list
+                    if alias_record.primary_email:
+                        emails_to_check.add(alias_record.primary_email.lower())
+                        emails_to_check.add(self._normalize_email(alias_record.primary_email))
+
+                    # Get user_id for matching
+                    user_id = alias_record.user_id
+
+                    # If we have user_id, get ALL aliases for this user
+                    if user_id:
+                        all_aliases = session.query(EmailAlias.alias_email).filter_by(
+                            user_id=user_id
+                        ).all()
+                        for (alias_email,) in all_aliases:
+                            emails_to_check.add(alias_email.lower())
+
+                # Step 2: Check if any subscriber has user_id match (most reliable)
+                if user_id:
+                    # Find all subscriber emails that have same user_id in alias table
+                    subscribed_with_same_user_id = session.query(UserPreference).join(
+                        EmailAlias,
+                        UserPreference.user_email == EmailAlias.alias_email
+                    ).filter(
+                        EmailAlias.user_id == user_id,
+                        UserPreference.receive_emails == True
+                    ).first()
+
+                    if subscribed_with_same_user_id:
+                        logger.debug(
+                            f"Subscription match by user_id: {email} -> "
+                            f"{subscribed_with_same_user_id.user_email} (id: {user_id})"
+                        )
+                        return True
+
+                # Step 3: Direct lookup on all known email variants (indexed query)
+                from sqlalchemy import func
+                direct_match = session.query(UserPreference).filter(
+                    UserPreference.receive_emails == True,
+                    func.lower(UserPreference.user_email).in_(emails_to_check)
+                ).first()
+
+                if direct_match:
+                    logger.debug(f"Subscription match by email: {email} -> {direct_match.user_email}")
+                    return True
+
+                # Step 4: Check if any subscriber's primary email matches our emails
+                # (reverse lookup - subscriber used alias, we're checking primary)
+                subscriber_aliases = session.query(EmailAlias.alias_email).filter(
+                    EmailAlias.primary_email.in_(emails_to_check)
+                ).all()
+
+                if subscriber_aliases:
+                    subscriber_alias_emails = [a[0].lower() for a in subscriber_aliases]
+                    reverse_match = session.query(UserPreference).filter(
+                        UserPreference.receive_emails == True,
+                        func.lower(UserPreference.user_email).in_(subscriber_alias_emails)
+                    ).first()
+
+                    if reverse_match:
+                        logger.debug(f"Subscription match by reverse alias: {email} -> {reverse_match.user_email}")
                         return True
 
                 # No match found
-                logger.debug(f"No subscription found for {email} (normalized: {normalized_input}), skipping")
+                logger.debug(f"No subscription found for {email} (user_id: {user_id})")
                 return False
 
         except Exception as e:

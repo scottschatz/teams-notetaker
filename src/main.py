@@ -568,7 +568,24 @@ async def _run_consolidated_service(config, db, graph_client, handler):
     print("")
 
     print("🎧 Listening for webhooks... (Ctrl+C to stop)")
+    print("📅 Periodic backfill: every hour with 2h lookback")
     print("")
+
+    # Periodic backfill to catch missed webhooks (runs every hour)
+    async def periodic_backfill():
+        """Run backfill every hour to catch missed webhook notifications."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        while True:
+            await asyncio.sleep(3600)  # Wait 1 hour
+            try:
+                logger.info("🔄 Running hourly backfill (2h lookback)...")
+                stats = await handler.backfill_recent_meetings(lookback_hours=2)
+                logger.info(f"✅ Hourly backfill: {stats['call_records_found']} records, "
+                          f"{stats['meetings_created']} new, {stats['skipped_no_optin']} skipped")
+            except Exception as e:
+                logger.error(f"Hourly backfill error: {e}")
 
     # Run all components concurrently
     try:
@@ -576,6 +593,7 @@ async def _run_consolidated_service(config, db, graph_client, handler):
             listener.start(callback=handler.handle_notification),
             worker.start(),
             sub_manager.start_background_manager(),
+            periodic_backfill(),  # NEW: hourly safety net backfill
         )
     except KeyboardInterrupt:
         print("\n🛑 Shutting down...")

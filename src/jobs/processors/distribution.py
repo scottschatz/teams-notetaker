@@ -105,43 +105,45 @@ class DistributionProcessor(BaseProcessor):
             if not summary:
                 raise DistributionError(f"No summary found for meeting {meeting_id}")
 
-            # Get participants
-            participants = session.query(MeetingParticipant).filter_by(
-                meeting_id=meeting_id
-            ).all()
-
-            if not participants:
-                self._log_progress(job, "No participants found, skipping distribution", "warning")
-                return self._create_output_data(
-                    success=True,
-                    message="No participants to distribute to",
-                    email_sent=False,
-                    chat_sent=False,
-                    distribution_count=0
-                )
-
-            participant_emails = [p.email for p in participants if p.email]
-
-            self._log_progress(
-                job,
-                f"Found {len(participant_emails)} participant email(s)"
-            )
-
-            # Handle send_to_email: send to specific email only (bypasses all other logic)
+            # Handle send_to_email first: bypasses participant lookup entirely
             if send_to_email:
                 participant_emails = [send_to_email]
+                participants = []  # Not needed for send_to_email
                 self._log_progress(job, f"Sending to specific email: {send_to_email}")
-            # Filter by resend_target if specified
-            elif resend_target:
-                if resend_target == 'organizer':
-                    # Only send to organizer
-                    participant_emails = [meeting.organizer_email] if meeting.organizer_email else []
-                    self._log_progress(job, f"Resending to organizer only: {meeting.organizer_email}")
-                elif resend_target == 'subscribers':
-                    # Only send to subscribers (filter out organizer)
-                    participant_emails = [e for e in participant_emails if e != meeting.organizer_email]
-                    self._log_progress(job, f"Resending to subscribers only (excluding organizer)")
-                # 'both' or any other value: send to all (no filtering)
+            else:
+                # Get participants from database
+                participants = session.query(MeetingParticipant).filter_by(
+                    meeting_id=meeting_id
+                ).all()
+
+                if not participants:
+                    self._log_progress(job, "No participants found, skipping distribution", "warning")
+                    return self._create_output_data(
+                        success=True,
+                        message="No participants to distribute to",
+                        email_sent=False,
+                        chat_sent=False,
+                        distribution_count=0
+                    )
+
+                participant_emails = [p.email for p in participants if p.email]
+
+                self._log_progress(
+                    job,
+                    f"Found {len(participant_emails)} participant email(s)"
+                )
+
+                # Filter by resend_target if specified
+                if resend_target:
+                    if resend_target == 'organizer':
+                        # Only send to organizer
+                        participant_emails = [meeting.organizer_email] if meeting.organizer_email else []
+                        self._log_progress(job, f"Resending to organizer only: {meeting.organizer_email}")
+                    elif resend_target == 'subscribers':
+                        # Only send to subscribers (filter out organizer)
+                        participant_emails = [e for e in participant_emails if e != meeting.organizer_email]
+                        self._log_progress(job, f"Resending to subscribers only (excluding organizer)")
+                    # 'both' or any other value: send to all (no filtering)
 
             # Filter by preferences using priority logic (opt-in/opt-out system)
             # Skip filtering if bypass_opt_in is set or send_to_email is specified

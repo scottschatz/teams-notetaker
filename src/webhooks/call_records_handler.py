@@ -330,22 +330,24 @@ class CallRecordsWebhookHandler:
                 # Get participants first (more efficient to check this before API calls)
                 participants = self._extract_participants(call_record)
 
-                # Skip 1-on-1 calls (less than 3 participants) - only capture group meetings
-                if len(participants) < 3:
-                    logger.info(f"Skipping 1-on-1 call with {len(participants)} participants")
-                    session.add(ProcessedCallRecord(
-                        call_record_id=call_record_id,
-                        source=source
-                    ))
-                    session.commit()
-                    return {"status": "skipped", "reason": "1-on-1 call (< 3 participants)"}
-
                 # Check if any participants have opted-in (for auto-processing decision)
+                # Do this BEFORE the <3 filter so pilot users can test with small meetings
                 opted_in_participants = [
                     p for p in participants
                     if p.get("email") and self.pref_manager.get_user_preference(p["email"])
                 ]
                 has_opted_in = len(opted_in_participants) > 0
+
+                # Skip 1-on-1 calls (less than 3 participants) - but allow if pilot user is present
+                # This lets opted-in users test with small meetings while filtering general 1-on-1s
+                if len(participants) < 3 and not has_opted_in:
+                    logger.info(f"Skipping 1-on-1 call with {len(participants)} participants (no pilot users)")
+                    session.add(ProcessedCallRecord(
+                        call_record_id=call_record_id,
+                        source=source
+                    ))
+                    session.commit()
+                    return {"status": "skipped", "reason": "1-on-1 call (< 3 participants, no pilot users)"}
 
                 # Always capture transcript, but only auto-process if opted-in participants exist
                 if has_opted_in:

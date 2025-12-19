@@ -14,8 +14,8 @@
             <input type="text" x-model="searchFilter" @input="applyFilters()" placeholder="Search subject, organizer..."
                    class="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 w-64">
             <!-- Active filters indicator -->
-            <template x-if="statusFilter || sourceFilter">
-                <button @click="statusFilter = ''; sourceFilter = ''; applyFilters()"
+            <template x-if="statusFilter || sourceFilter || organizerFilter || modelFilter || recFilter || tscFilter">
+                <button @click="statusFilter = ''; sourceFilter = ''; organizerFilter = ''; modelFilter = ''; recFilter = ''; tscFilter = ''; applyFilters()"
                         class="text-xs text-blue-600 hover:text-blue-800 flex items-center space-x-1">
                     <span>Clear filters</span>
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -39,8 +39,29 @@
                         <th @click="sortBy('subject')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Subject <span x-show="sortColumn === 'subject'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
                         </th>
-                        <th @click="sortBy('organizer_name')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
-                            Organizer <span x-show="sortColumn === 'organizer_name'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase relative" x-data="{ open: false }">
+                            <div class="flex items-center space-x-1">
+                                <span @click="sortBy('organizer_name')" class="cursor-pointer hover:text-gray-700">
+                                    Organizer <span x-show="sortColumn === 'organizer_name'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                                </span>
+                                <button @click.stop="open = !open" class="p-0.5 rounded hover:bg-gray-200" :class="{'bg-blue-100': organizerFilter}">
+                                    <svg class="w-3 h-3" :class="{'text-blue-600': organizerFilter, 'text-gray-400': !organizerFilter}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div x-show="open" @click.away="open = false" x-cloak
+                                 class="absolute z-50 mt-1 left-0 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[160px] max-h-64 overflow-y-auto">
+                                <button @click="organizerFilter = ''; applyFilters(); open = false"
+                                        class="block w-full text-left px-3 py-1 text-xs hover:bg-gray-100"
+                                        :class="{'bg-blue-50 font-semibold': !organizerFilter}">All</button>
+                                <template x-for="org in getUniqueOrganizers()" :key="org">
+                                    <button @click="organizerFilter = org; applyFilters(); open = false"
+                                            class="block w-full text-left px-3 py-1 text-xs hover:bg-gray-100 truncate"
+                                            :class="{'bg-blue-50 font-semibold': organizerFilter === org}"
+                                            x-text="org"></button>
+                                </template>
+                            </div>
                         </th>
                         <th @click="sortBy('start_time')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Start <span x-show="sortColumn === 'start_time'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
@@ -48,14 +69,45 @@
                         <th @click="sortBy('duration_minutes')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Dur <span x-show="sortColumn === 'duration_minutes'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
                         </th>
-                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                        <th @click="sortBy('participant_count')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" title="Participant count">
+                            # <span x-show="sortColumn === 'participant_count'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
                         <th @click="sortBy('word_count')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Words <span x-show="sortColumn === 'word_count'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
                         </th>
-                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Spk</th>
-                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Model</th>
-                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">In/Out</th>
-                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cost</th>
+                        <th @click="sortBy('speaker_count')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            Spk <span x-show="sortColumn === 'speaker_count'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase relative" x-data="{ open: false }">
+                            <div class="flex items-center space-x-1">
+                                <span @click="sortBy('model')" class="cursor-pointer hover:text-gray-700">
+                                    Model <span x-show="sortColumn === 'model'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                                </span>
+                                <button @click.stop="open = !open" class="p-0.5 rounded hover:bg-gray-200" :class="{'bg-blue-100': modelFilter}">
+                                    <svg class="w-3 h-3" :class="{'text-blue-600': modelFilter, 'text-gray-400': !modelFilter}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div x-show="open" @click.away="open = false" x-cloak
+                                 class="absolute z-50 mt-1 left-0 bg-white border border-gray-200 rounded-lg shadow-lg py-1 min-w-[100px]">
+                                <button @click="modelFilter = ''; applyFilters(); open = false"
+                                        class="block w-full text-left px-3 py-1 text-xs hover:bg-gray-100"
+                                        :class="{'bg-blue-50 font-semibold': !modelFilter}">All</button>
+                                <template x-for="m in getUniqueModels()" :key="m">
+                                    <button @click="modelFilter = m; applyFilters(); open = false"
+                                            class="block w-full text-left px-3 py-1 text-xs hover:bg-gray-100 capitalize"
+                                            :class="{'bg-blue-50 font-semibold': modelFilter === m}"
+                                            x-text="m"></button>
+                                </template>
+                            </div>
+                        </th>
+                        <th @click="sortBy('total_tokens')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            In/Out <span x-show="sortColumn === 'total_tokens'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th @click="sortBy('total_tokens')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" title="Estimated cost based on token usage">
+                            Cost <span x-show="sortColumn === 'total_tokens'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
                         <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase relative" x-data="{ open: false }">
                             <div class="flex items-center space-x-1">
                                 <span @click="sortBy('discovery_source')" class="cursor-pointer hover:text-gray-700">
@@ -131,8 +183,48 @@
                                         :class="{'bg-blue-50 font-semibold': statusFilter === 'skipped'}">Skipped</button>
                             </div>
                         </th>
-                        <th class="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase" title="Chat Event Signals: Recording Started / Transcript Available">
-                            Rec/Tsc
+                        <th class="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase relative" x-data="{ open: false }">
+                            <div class="flex items-center justify-center space-x-1">
+                                <span title="Chat Event Signals: Recording Started / Transcript Available">Rec/Tsc</span>
+                                <button @click.stop="open = !open" class="p-0.5 rounded hover:bg-gray-200" :class="{'bg-blue-100': recFilter || tscFilter}">
+                                    <svg class="w-3 h-3" :class="{'text-blue-600': recFilter || tscFilter, 'text-gray-400': !recFilter && !tscFilter}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/>
+                                    </svg>
+                                </button>
+                            </div>
+                            <div x-show="open" @click.away="open = false" x-cloak
+                                 class="absolute z-50 mt-1 right-0 bg-white border border-gray-200 rounded-lg shadow-lg py-2 px-3 min-w-[140px]">
+                                <div class="text-xs font-semibold text-gray-600 mb-1">Recording Started</div>
+                                <div class="flex space-x-1 mb-2">
+                                    <button @click="recFilter = ''; applyFilters()"
+                                            class="px-2 py-0.5 text-xs rounded"
+                                            :class="{'bg-blue-500 text-white': !recFilter, 'bg-gray-100': recFilter}">All</button>
+                                    <button @click="recFilter = 'true'; applyFilters()"
+                                            class="px-2 py-0.5 text-xs rounded"
+                                            :class="{'bg-green-500 text-white': recFilter === 'true', 'bg-gray-100': recFilter !== 'true'}">✓</button>
+                                    <button @click="recFilter = 'false'; applyFilters()"
+                                            class="px-2 py-0.5 text-xs rounded"
+                                            :class="{'bg-red-400 text-white': recFilter === 'false', 'bg-gray-100': recFilter !== 'false'}">✗</button>
+                                    <button @click="recFilter = 'null'; applyFilters()"
+                                            class="px-2 py-0.5 text-xs rounded"
+                                            :class="{'bg-gray-400 text-white': recFilter === 'null', 'bg-gray-100': recFilter !== 'null'}">–</button>
+                                </div>
+                                <div class="text-xs font-semibold text-gray-600 mb-1">Transcript Available</div>
+                                <div class="flex space-x-1">
+                                    <button @click="tscFilter = ''; applyFilters()"
+                                            class="px-2 py-0.5 text-xs rounded"
+                                            :class="{'bg-blue-500 text-white': !tscFilter, 'bg-gray-100': tscFilter}">All</button>
+                                    <button @click="tscFilter = 'true'; applyFilters()"
+                                            class="px-2 py-0.5 text-xs rounded"
+                                            :class="{'bg-green-500 text-white': tscFilter === 'true', 'bg-gray-100': tscFilter !== 'true'}">✓</button>
+                                    <button @click="tscFilter = 'false'; applyFilters()"
+                                            class="px-2 py-0.5 text-xs rounded"
+                                            :class="{'bg-red-400 text-white': tscFilter === 'false', 'bg-gray-100': tscFilter !== 'false'}">✗</button>
+                                    <button @click="tscFilter = 'null'; applyFilters()"
+                                            class="px-2 py-0.5 text-xs rounded"
+                                            :class="{'bg-gray-400 text-white': tscFilter === 'null', 'bg-gray-100': tscFilter !== 'null'}">–</button>
+                                </div>
+                            </div>
                         </th>
                         <th class="px-2 py-2 text-right text-xs font-medium text-gray-500 uppercase w-16"></th>
                     </tr>
@@ -369,6 +461,10 @@ function meetingsData() {
         searchFilter: '',
         statusFilter: '',
         sourceFilter: '',
+        organizerFilter: '',
+        modelFilter: '',
+        recFilter: '',  // '', 'true', 'false'
+        tscFilter: '',  // '', 'true', 'false'
         sortColumn: 'id',
         sortDirection: 'desc',
         expandedMeeting: null,
@@ -422,6 +518,39 @@ function meetingsData() {
             // Source filter
             if (this.sourceFilter) {
                 filtered = filtered.filter(m => m.discovery_source === this.sourceFilter);
+            }
+
+            // Organizer filter
+            if (this.organizerFilter) {
+                filtered = filtered.filter(m => m.organizer_name === this.organizerFilter);
+            }
+
+            // Model filter
+            if (this.modelFilter) {
+                filtered = filtered.filter(m => {
+                    if (!m.model) return false;
+                    return m.model.toLowerCase().includes(this.modelFilter.toLowerCase());
+                });
+            }
+
+            // Recording started filter
+            if (this.recFilter) {
+                filtered = filtered.filter(m => {
+                    if (this.recFilter === 'true') return m.recording_started === true;
+                    if (this.recFilter === 'false') return m.recording_started === false;
+                    if (this.recFilter === 'null') return m.recording_started === null || m.recording_started === undefined;
+                    return true;
+                });
+            }
+
+            // Transcript available filter
+            if (this.tscFilter) {
+                filtered = filtered.filter(m => {
+                    if (this.tscFilter === 'true') return m.transcript_available === true;
+                    if (this.tscFilter === 'false') return m.transcript_available === false;
+                    if (this.tscFilter === 'null') return m.transcript_available === null || m.transcript_available === undefined;
+                    return true;
+                });
             }
 
             // Sort
@@ -641,6 +770,30 @@ function meetingsData() {
             }
 
             return parts.join(' | ') || 'Unknown';
+        },
+
+        // Get unique organizer names for filter dropdown
+        getUniqueOrganizers() {
+            const organizers = new Set();
+            this.allMeetings.forEach(m => {
+                if (m.organizer_name) organizers.add(m.organizer_name);
+            });
+            return Array.from(organizers).sort();
+        },
+
+        // Get unique model types for filter dropdown
+        getUniqueModels() {
+            const models = new Set();
+            this.allMeetings.forEach(m => {
+                if (m.model) {
+                    // Normalize model names
+                    if (m.model.includes('haiku')) models.add('haiku');
+                    else if (m.model.includes('sonnet')) models.add('sonnet');
+                    else if (m.model.includes('opus')) models.add('opus');
+                    else models.add(m.model);
+                }
+            });
+            return Array.from(models).sort();
         },
 
         formatModel(model) {

@@ -233,6 +233,7 @@ class CallRecordsWebhookHandler:
                         online_meeting_id=meeting_id,  # MSp... format from transcript notification
                         calendar_event_id=None,  # Not available from transcript notification
                         call_record_id=None,  # Not available from transcript notification
+                        discovery_source="webhook",  # Discovered via webhook notification
                         subject=meeting_subject,
                         organizer_email=organizer_email,
                         organizer_name=organizer_name,
@@ -394,8 +395,14 @@ class CallRecordsWebhookHandler:
                         logger.debug(f"Could not look up meeting subject for {organizer_user_id}: {e}")
 
                 # Check if meeting already exists in database
-                existing_meeting = session.query(Meeting).filter_by(
-                    meeting_id=online_meeting_id
+                # Check multiple fields for deduplication (webhook vs calendar discovery)
+                from sqlalchemy import or_
+                existing_meeting = session.query(Meeting).filter(
+                    or_(
+                        Meeting.meeting_id == online_meeting_id,
+                        Meeting.online_meeting_id == online_meeting_id,
+                        Meeting.join_url == online_meeting_id
+                    )
                 ).first()
 
                 if existing_meeting:
@@ -413,6 +420,7 @@ class CallRecordsWebhookHandler:
                         online_meeting_id=online_meeting_id,  # MSp... format from callRecord
                         calendar_event_id=None,  # Not available from callRecord
                         call_record_id=call_record_id,  # The callRecord ID
+                        discovery_source="webhook",  # Discovered via webhook notification
                         subject=meeting_subject,
                         organizer_email=organizer_email,
                         organizer_name=organizer_name,

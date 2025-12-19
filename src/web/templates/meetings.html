@@ -7,14 +7,24 @@
     <div class="flex justify-between items-center mb-6">
         <h1 class="text-3xl font-bold text-gray-900">Meetings</h1>
 
-        <!-- User Filter -->
+        <!-- Filters -->
         <div class="flex items-center space-x-4">
-            <label class="text-sm text-gray-700">Filter by participant:</label>
-            <select x-model="userFilter" @change="loadMeetings()"
-                    class="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500">
-                <option value="">All Meetings</option>
-                <option value="sschatz@townsquaremedia.com">Scott Schatz</option>
-                <option value="joeainsworth@townsquaremedia.com">Joe Ainsworth</option>
+            <input type="text" x-model="searchFilter" @input="applyFilters()" placeholder="Search..."
+                   class="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 w-48">
+            <select x-model="statusFilter" @change="applyFilters()"
+                    class="px-3 py-1 border border-gray-300 rounded-lg text-sm">
+                <option value="">All Statuses</option>
+                <option value="completed">Completed</option>
+                <option value="processing">Processing</option>
+                <option value="discovered">Discovered</option>
+                <option value="failed">Failed</option>
+                <option value="skipped">Skipped</option>
+            </select>
+            <select x-model="sourceFilter" @change="applyFilters()"
+                    class="px-3 py-1 border border-gray-300 rounded-lg text-sm">
+                <option value="">All Sources</option>
+                <option value="webhook">Webhook</option>
+                <option value="calendar">Calendar</option>
             </select>
         </div>
     </div>
@@ -25,27 +35,47 @@
             <table class="min-w-full divide-y divide-gray-200 text-sm">
                 <thead class="bg-gray-50">
                     <tr>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase w-6"></th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">ID</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Subject</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Org</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Start</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Dur</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">#</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Words</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Spk</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Model</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">In/Out</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Cost</th>
-                        <th class="px-1 py-1 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
-                        <th class="px-1 py-1 text-right text-xs font-medium text-gray-500 uppercase w-16"></th>
+                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase w-6"></th>
+                        <th @click="sortBy('id')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            ID <span x-show="sortColumn === 'id'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th @click="sortBy('subject')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            Subject <span x-show="sortColumn === 'subject'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th @click="sortBy('organizer_name')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            Organizer <span x-show="sortColumn === 'organizer_name'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th @click="sortBy('start_time')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            Start <span x-show="sortColumn === 'start_time'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th @click="sortBy('duration_minutes')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            Dur <span x-show="sortColumn === 'duration_minutes'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                        <th @click="sortBy('word_count')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            Words <span x-show="sortColumn === 'word_count'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Spk</th>
+                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Model</th>
+                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">In/Out</th>
+                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cost</th>
+                        <th @click="sortBy('discovery_source')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            Source <span x-show="sortColumn === 'discovery_source'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th @click="sortBy('discovered_at')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            Discovered <span x-show="sortColumn === 'discovered_at'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th @click="sortBy('status')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            Status <span x-show="sortColumn === 'status'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th class="px-2 py-2 text-right text-xs font-medium text-gray-500 uppercase w-16"></th>
                     </tr>
                 </thead>
                 <template x-for="meeting in meetings" :key="meeting.id">
                     <tbody class="bg-white divide-y divide-gray-200">
                         <!-- Main row -->
                         <tr class="hover:bg-gray-50" :class="{'bg-blue-50': expandedMeeting === meeting.id}">
-                            <td class="px-1 py-1 whitespace-nowrap">
+                            <td class="px-2 py-2 whitespace-nowrap">
                                 <button @click="toggleExpand(meeting.id)"
                                         x-show="meeting.has_distribution"
                                         class="text-gray-400 hover:text-gray-600">
@@ -56,18 +86,29 @@
                                     </svg>
                                 </button>
                             </td>
-                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.id"></td>
-                            <td class="px-1 py-1 font-medium text-gray-900 text-xs max-w-[200px] truncate" x-text="meeting.subject" :title="meeting.subject"></td>
-                            <td class="px-1 py-1 whitespace-nowrap text-gray-900 text-xs" x-text="meeting.organizer_name?.split(' ')[0]" :title="meeting.organizer_name"></td>
-                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="formatDateTime(meeting.start_time)"></td>
-                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.duration_minutes ? meeting.duration_minutes + 'm' : '-'"></td>
-                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.participant_count || '-'"></td>
-                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.word_count ? (meeting.word_count/1000).toFixed(1)+'k' : '-'"></td>
-                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.speaker_count || '-'"></td>
-                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="formatModel(meeting.model)"></td>
-                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="formatTokens(meeting)"></td>
-                            <td class="px-1 py-1 whitespace-nowrap text-gray-500 text-xs" x-text="formatCost(meeting)"></td>
-                            <td class="px-1 py-1 whitespace-nowrap">
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.id"></td>
+                            <td class="px-2 py-2 font-medium text-gray-900 text-xs max-w-[250px] truncate" x-text="meeting.subject" :title="meeting.subject"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-900 text-xs" x-text="meeting.organizer_name" :title="meeting.organizer_email"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatDateTime(meeting.start_time)"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.duration_minutes ? meeting.duration_minutes + 'm' : '-'"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.participant_count || '-'"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.word_count ? (meeting.word_count/1000).toFixed(1)+'k' : '-'"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.speaker_count || '-'"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatModel(meeting.model)"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatTokens(meeting)"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatCost(meeting)"></td>
+                            <td class="px-2 py-2 whitespace-nowrap">
+                                <span class="px-1 inline-flex text-xs leading-5 font-semibold rounded-full"
+                                      :class="{
+                                          'bg-purple-100 text-purple-800': meeting.discovery_source === 'webhook',
+                                          'bg-orange-100 text-orange-800': meeting.discovery_source === 'calendar',
+                                          'bg-gray-100 text-gray-600': !meeting.discovery_source
+                                      }"
+                                      x-text="meeting.discovery_source || '-'">
+                                </span>
+                            </td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatDateTimeShort(meeting.discovered_at)"></td>
+                            <td class="px-2 py-2 whitespace-nowrap">
                                 <span class="px-1 inline-flex text-xs leading-5 font-semibold rounded-full cursor-help"
                                       :class="{
                                           'bg-green-100 text-green-800': meeting.status === 'completed',
@@ -81,7 +122,7 @@
                                       x-text="meeting.status">
                                 </span>
                             </td>
-                            <td class="px-1 py-1 whitespace-nowrap text-right text-sm font-medium">
+                            <td class="px-2 py-2 whitespace-nowrap text-right text-sm font-medium">
                                 <div class="flex justify-end space-x-1">
                                     <!-- Reprocess button -->
                                     <button
@@ -124,7 +165,7 @@
 
                         <!-- Expanded distribution details row -->
                         <tr x-show="expandedMeeting === meeting.id" x-cloak class="bg-blue-50">
-                            <td colspan="14" class="px-6 py-4">
+                            <td colspan="16" class="px-6 py-4">
                                 <div class="pl-8">
                                     <h4 class="text-sm font-semibold text-gray-700 mb-3">Distribution Details</h4>
                                     <template x-if="distributionDetails[meeting.id] && distributionDetails[meeting.id].length > 0">
@@ -168,28 +209,149 @@
                 No meetings found
             </div>
         </div>
+
+        <!-- Pagination -->
+        <div x-show="allMeetings.length > 0" class="px-4 py-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between">
+            <div class="text-sm text-gray-500">
+                Showing <span x-text="((currentPage - 1) * pageSize) + 1"></span> to
+                <span x-text="Math.min(currentPage * pageSize, allMeetings.length)"></span> of
+                <span x-text="allMeetings.length"></span> meetings
+            </div>
+            <div class="flex items-center space-x-2">
+                <button @click="prevPage()" :disabled="currentPage === 1"
+                        class="px-3 py-1 border rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100">
+                    Previous
+                </button>
+                <span class="text-sm text-gray-600">
+                    Page <span x-text="currentPage"></span> of <span x-text="totalPages || 1"></span>
+                </span>
+                <button @click="nextPage()" :disabled="currentPage >= totalPages"
+                        class="px-3 py-1 border rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100">
+                    Next
+                </button>
+            </div>
+        </div>
     </div>
 </div>
 
 <script>
 function meetingsData() {
     return {
+        allMeetings: [],
         meetings: [],
-        userFilter: '',
+        searchFilter: '',
+        statusFilter: '',
+        sourceFilter: '',
+        sortColumn: 'id',
+        sortDirection: 'desc',
         expandedMeeting: null,
         distributionDetails: {},
+        // Pagination
+        currentPage: 1,
+        pageSize: 100,
+        totalPages: 1,
 
         async loadMeetings() {
             try {
-                let url = '/api/meetings/?limit=50';
-                if (this.userFilter) {
-                    url += `&participant=${encodeURIComponent(this.userFilter)}`;
+                console.log('Fetching meetings...');
+                const response = await fetch('/api/meetings/?limit=500');
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
                 }
-                const response = await fetch(url);
-                this.meetings = await response.json();
+                const data = await response.json();
+                console.log('API response:', data);
+                console.log('Is array:', Array.isArray(data), 'Length:', data?.length);
+
+                // Ensure we have an array
+                this.allMeetings = Array.isArray(data) ? data : [];
+                console.log('allMeetings set to', this.allMeetings.length, 'items');
+                this.applyFilters();
             } catch (error) {
                 console.error('Failed to load meetings:', error);
+                this.allMeetings = [];
+                this.meetings = [];
             }
+        },
+
+        applyFilters() {
+            let filtered = [...this.allMeetings];
+
+            // Text search
+            if (this.searchFilter) {
+                const search = this.searchFilter.toLowerCase();
+                filtered = filtered.filter(m =>
+                    (m.subject && m.subject.toLowerCase().includes(search)) ||
+                    (m.organizer_name && m.organizer_name.toLowerCase().includes(search)) ||
+                    (m.organizer_email && m.organizer_email.toLowerCase().includes(search)) ||
+                    (m.id && m.id.toString().includes(search))
+                );
+            }
+
+            // Status filter
+            if (this.statusFilter) {
+                filtered = filtered.filter(m => m.status === this.statusFilter);
+            }
+
+            // Source filter
+            if (this.sourceFilter) {
+                filtered = filtered.filter(m => m.discovery_source === this.sourceFilter);
+            }
+
+            // Sort
+            filtered.sort((a, b) => {
+                let aVal = a[this.sortColumn];
+                let bVal = b[this.sortColumn];
+
+                // Handle nulls
+                if (aVal === null || aVal === undefined) aVal = '';
+                if (bVal === null || bVal === undefined) bVal = '';
+
+                // Compare
+                if (typeof aVal === 'string') {
+                    aVal = aVal.toLowerCase();
+                    bVal = (bVal || '').toLowerCase();
+                }
+
+                if (aVal < bVal) return this.sortDirection === 'asc' ? -1 : 1;
+                if (aVal > bVal) return this.sortDirection === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            // Pagination
+            this.totalPages = Math.max(1, Math.ceil(filtered.length / this.pageSize));
+            if (this.currentPage > this.totalPages) this.currentPage = 1;
+            const start = (this.currentPage - 1) * this.pageSize;
+            this.meetings = filtered.slice(start, start + this.pageSize);
+            console.log('Filtered to', this.meetings.length, 'meetings on page', this.currentPage);
+        },
+
+        sortBy(column) {
+            if (this.sortColumn === column) {
+                this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+            } else {
+                this.sortColumn = column;
+                this.sortDirection = 'desc';
+            }
+            this.applyFilters();
+        },
+
+        nextPage() {
+            if (this.currentPage < this.totalPages) {
+                this.currentPage++;
+                this.applyFilters();
+            }
+        },
+
+        prevPage() {
+            if (this.currentPage > 1) {
+                this.currentPage--;
+                this.applyFilters();
+            }
+        },
+
+        goToPage(page) {
+            this.currentPage = page;
+            this.applyFilters();
         },
 
         async toggleExpand(meetingId) {
@@ -223,6 +385,15 @@ function meetingsData() {
             const hasTimezone = /[Z]$|[+-]\d{2}:\d{2}$/.test(dateString);
             let date = hasTimezone ? new Date(dateString) : new Date(dateString + 'Z');
             return date.toLocaleDateString('en-US', {timeZone: 'America/New_York'}) + ' ' +
+                   date.toLocaleTimeString('en-US', {timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit'});
+        },
+
+        formatDateTimeShort(dateString) {
+            if (!dateString) return '-';
+            // Database stores UTC times - append Z if no timezone indicator
+            const hasTimezone = /[Z]$|[+-]\d{2}:\d{2}$/.test(dateString);
+            let date = hasTimezone ? new Date(dateString) : new Date(dateString + 'Z');
+            return date.toLocaleDateString('en-US', {timeZone: 'America/New_York', month: 'short', day: 'numeric'}) + ' ' +
                    date.toLocaleTimeString('en-US', {timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit'});
         },
 

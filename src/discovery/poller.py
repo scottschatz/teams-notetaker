@@ -240,13 +240,21 @@ class MeetingPoller:
         Check if meeting already exists in database.
 
         Args:
-            meeting_id: Graph API meeting ID
+            meeting_id: Graph API meeting ID (joinUrl or calendar event ID)
 
         Returns:
             True if meeting exists
         """
+        from sqlalchemy import or_
         with self.db.get_session() as session:
-            exists = session.query(Meeting).filter_by(meeting_id=meeting_id).first() is not None
+            # Check multiple fields for deduplication (calendar vs webhook discovery)
+            exists = session.query(Meeting).filter(
+                or_(
+                    Meeting.meeting_id == meeting_id,
+                    Meeting.online_meeting_id == meeting_id,
+                    Meeting.join_url == meeting_id
+                )
+            ).first() is not None
             return exists
 
     def _save_meeting(self, meeting_data: Dict[str, Any], status: str) -> int:
@@ -268,6 +276,8 @@ class MeetingPoller:
                 online_meeting_id=meeting_data.get("online_meeting_id"),
                 calendar_event_id=meeting_data.get("calendar_event_id"),
                 call_record_id=meeting_data.get("call_record_id"),
+                # Discovery metadata
+                discovery_source="calendar",  # Discovered via calendar polling
                 # Meeting metadata
                 subject=meeting_data.get("subject", "No Subject"),
                 organizer_email=meeting_data.get("organizer_email", ""),

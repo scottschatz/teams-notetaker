@@ -503,20 +503,102 @@ cli.add_command(webhooks)
 # ============================================================================
 
 
-@cli.command()
-@click.option("--loop", is_flag=True, help="Run continuously (for systemd) - backfill once then worker only")
-@click.option("--poll-loop", is_flag=True, help="Run continuous polling loop (legacy mode)")
+async def _run_consolidated_service(config, db, graph_client, handler):
+    """
+    Run the consolidated service: webhook listener + job worker.
+
+    Both run concurrently in the same async event loop.
+    """
+    import asyncio
+    import signal
+    from src.jobs.worker import JobWorker
+    from src.webhooks.azure_relay_listener import AzureRelayWebhookListener
+    from src.webhooks.subscription_manager import SubscriptionManager
+
+    print("🔗 Starting webhook listener...")
+
+    # Check if Azure Relay is configured
+    if not config.azure_relay.is_configured():
+        print("⚠️  Azure Relay not configured - running worker only (no real-time webhooks)")
+        print("   Add AZURE_RELAY_* settings to .env for real-time discovery")
+        print("")
+
+        # Just run the worker
+        worker = JobWorker(
+            config=config,
+            db=db,
+            max_concurrent=config.app.max_concurrent_jobs,
+            job_timeout=config.app.job_timeout_minutes * 60
+        )
+        await worker.start()
+        return
+
+    # Create Azure Relay listener
+    listener = AzureRelayWebhookListener(
+        relay_namespace=config.azure_relay.namespace,
+        hybrid_connection_name=config.azure_relay.hybrid_connection,
+        shared_access_key_name=config.azure_relay.key_name,
+        shared_access_key=config.azure_relay.key
+    )
+
+    # Subscription manager (auto-renews webhook subscriptions)
+    sub_manager = SubscriptionManager(config, graph_client)
+
+    print(f"   Namespace: {config.azure_relay.namespace}")
+    print(f"   Webhook URL: {config.azure_relay.webhook_url}")
+
+    # Ensure subscription is active
+    print("📡 Ensuring webhook subscription is active...")
+    if sub_manager.ensure_subscription():
+        print("   ✅ Webhook subscription active")
+    else:
+        print("   ⚠️  Could not ensure subscription (will retry)")
+    print("")
+
+    # Create worker
+    print("👷 Starting job worker...")
+    worker = JobWorker(
+        config=config,
+        db=db,
+        max_concurrent=config.app.max_concurrent_jobs,
+        job_timeout=config.app.job_timeout_minutes * 60
+    )
+    print(f"   Worker ID: {worker.worker_id}")
+    print(f"   Max concurrent jobs: {config.app.max_concurrent_jobs}")
+    print("")
+
+    print("🎧 Listening for webhooks... (Ctrl+C to stop)")
+    print("")
+
+    # Run all components concurrently
+    try:
+        await asyncio.gather(
+            listener.start(callback=handler.handle_notification),
+            worker.start(),
+            sub_manager.start_background_manager(),
+        )
+    except KeyboardInterrupt:
+        print("\n🛑 Shutting down...")
+    finally:
+        sub_manager.stop()
+        await worker.stop()
+        await listener.stop()
+        print("✅ Service stopped")
+
+
+@cli.command("start")
+@click.option("--service", is_flag=True, default=True, help="Run as consolidated service (webhook listener + worker)")
+@click.option("--poll-loop", is_flag=True, help="Run continuous polling loop (legacy mode, no webhooks)")
 @click.option("--interval", type=int, help="Polling interval in minutes (for --poll-loop)")
 @click.option("--dry-run", is_flag=True, help="Discover meetings but don't enqueue")
 @click.option("--skip-backfill", is_flag=True, help="Skip initial backfill discovery")
-def run(loop, poll_loop, interval, dry_run, skip_backfill):
-    """Run meeting discovery and processing.
+def start(service, poll_loop, interval, dry_run, skip_backfill):
+    """Start the Teams Notetaker service.
 
     Example:
-        python -m src.main run                    # Run once (single discovery)
-        python -m src.main run --loop             # Backfill + worker (for systemd with webhooks)
-        python -m src.main run --poll-loop        # Continuous polling (legacy mode)
-        python -m src.main run --dry-run          # Dry run (no enqueue)
+        python -m src.main start                  # Start consolidated service (default)
+        python -m src.main start --skip-backfill  # Start without backfill
+        python -m src.main start --poll-loop      # Legacy polling mode (no webhooks)
     """
     from src.discovery.poller import MeetingPoller
     from src.jobs.worker import JobWorker
@@ -525,30 +607,46 @@ def run(loop, poll_loop, interval, dry_run, skip_backfill):
 
     config = get_config()
 
-    if loop:
-        # Primary mode: backfill once on startup, then run worker only
-        # Webhooks handle ongoing meeting discovery
-        click.echo("🚀 Starting worker mode (webhook-driven)")
-        click.echo("   Webhooks discover meetings, worker processes jobs")
+    if service and not poll_loop:
+        # Consolidated service: backfill + webhook listener + worker (all-in-one)
+        click.echo("🚀 Starting Teams Notetaker Service")
+        click.echo("   • Webhook listener for real-time meeting discovery")
+        click.echo("   • Job worker for transcript/summary processing")
         click.echo("   Press Ctrl+C to stop")
         click.echo("")
 
-        # Run one-time backfill discovery (catch meetings since last run)
+        from src.webhooks.call_records_handler import CallRecordsWebhookHandler
+        from src.graph.client import GraphAPIClient
+        from src.core.database import DatabaseManager
+
+        db = DatabaseManager(config.database.connection_string)
+        graph_client = GraphAPIClient(config.graph_api)
+        handler = CallRecordsWebhookHandler(db, graph_client)
+
+        # Run one-time backfill using callRecords API (org-wide)
+        # NO CAP - goes back to last successful webhook, catches everything missed
         if not skip_backfill:
-            click.echo("📋 Running startup backfill...")
-            poller = MeetingPoller(config)
-            stats = poller.run_discovery(dry_run=dry_run)
-            click.echo(f"   Backfill: {stats['discovered']} discovered, {stats['queued']} queued, {stats['skipped']} skipped")
+            click.echo("📋 Running org-wide callRecords backfill...")
+
+            # Calculate hours since last successful processing (no cap)
+            from src.cli.webhooks_commands import get_smart_backfill_hours
+            backfill_hours = asyncio.run(get_smart_backfill_hours(db, config))
+
+            if backfill_hours > 0:
+                click.echo(f"   Looking back {backfill_hours} hours to last processed meeting...")
+                stats = asyncio.run(handler.backfill_recent_meetings(
+                    lookback_hours=backfill_hours
+                ))
+                click.echo(f"   ✅ Backfill: {stats['call_records_found']} callRecords, "
+                          f"{stats['meetings_created']} new meetings, "
+                          f"{stats['jobs_created']} jobs, "
+                          f"{stats['skipped_no_optin']} skipped (no opt-in)")
+            else:
+                click.echo("   ✅ No backfill needed (processed within last hour)")
             click.echo("")
 
-        # Start worker and run continuously
-        click.echo("👷 Starting job worker...")
-        worker = JobWorker(
-            config=config,
-            max_concurrent=config.app.max_concurrent_jobs,
-            job_timeout=config.app.job_timeout_minutes * 60
-        )
-        worker.run()  # This blocks and runs the worker loop
+        # Start consolidated service (webhook listener + worker)
+        asyncio.run(_run_consolidated_service(config, db, graph_client, handler))
 
     elif poll_loop:
         # Legacy mode: continuous polling (for environments without webhooks)

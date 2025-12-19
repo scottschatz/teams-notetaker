@@ -174,10 +174,10 @@ async def get_smart_backfill_hours(db: DatabaseManager, config) -> int:
                 return 0
 
             # Add a small buffer (1 hour) to catch any edge cases
+            # NO CAP - backfill everything missed (service could be down for days)
             backfill_hours = int(hours_since) + 1
 
-            # Cap at configured max
-            return min(backfill_hours, config.app.webhook_backfill_hours)
+            return backfill_hours
 
     except Exception as e:
         logger.error(f"Error calculating smart backfill: {e}")

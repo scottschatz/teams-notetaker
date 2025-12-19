@@ -224,39 +224,32 @@ async def get_recent_logs(
     """
     import os
 
-    # Map service to log file
-    log_files = {
-        "worker": "logs/worker.log",
-        "webhook": None,  # Uses journalctl
-        "web": None  # Uses journalctl
+    # Map service to systemd service name
+    service_map = {
+        "poller": "teams-notetaker-poller",  # Consolidated service (webhooks + worker)
+        "web": "teams-notetaker-web",
+        # Legacy mappings (redirect to poller)
+        "worker": "teams-notetaker-poller",
+        "webhook": "teams-notetaker-poller"
     }
 
     log_entries = []
 
-    if service == "worker" and os.path.exists("logs/worker.log"):
-        # Read from file
-        try:
-            with open("logs/worker.log", "r") as f:
-                all_lines = f.readlines()
-                log_entries = [line.strip() for line in all_lines[-lines:]]
-        except Exception as e:
-            log_entries = [f"Error reading log: {e}"]
-    else:
-        # Use journalctl for systemd services
-        try:
-            service_name = f"teams-notetaker-{service}"
-            result = subprocess.run(
-                ["journalctl", "--user", "-u", service_name, "-n", str(lines), "--no-pager", "-o", "short"],
-                capture_output=True,
-                text=True,
-                timeout=5
-            )
-            if result.returncode == 0:
-                log_entries = [line for line in result.stdout.strip().split("\n") if line]
-            else:
-                log_entries = [f"Error: {result.stderr}"]
-        except Exception as e:
-            log_entries = [f"Error getting logs: {e}"]
+    # Use journalctl for all systemd services
+    try:
+        service_name = service_map.get(service, f"teams-notetaker-{service}")
+        result = subprocess.run(
+            ["journalctl", "--user", "-u", service_name, "-n", str(lines), "--no-pager", "-o", "short"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            log_entries = [line for line in result.stdout.strip().split("\n") if line]
+        else:
+            log_entries = [f"Error: {result.stderr}"]
+    except Exception as e:
+        log_entries = [f"Error getting logs: {e}"]
 
     return {
         "service": service,

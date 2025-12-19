@@ -238,10 +238,18 @@ class JobWorker:
                     timeout=self.job_timeout
                 )
 
-                # Mark as completed
-                self.queue.mark_completed(job.id, result)
-
-                logger.info(f"✓ Job {job.id} completed successfully")
+                # Check if processor scheduled a retry (e.g., transcript not ready yet)
+                if result and result.get("retry_scheduled"):
+                    # Processor already updated job status to "retrying" - don't override
+                    logger.info(
+                        f"↻ Job {job.id} scheduled for retry "
+                        f"({result.get('retry_count', '?')}/{result.get('max_retries', '?')}) "
+                        f"at {result.get('next_retry_at', 'unknown')}"
+                    )
+                else:
+                    # Mark as completed
+                    self.queue.mark_completed(job.id, result)
+                    logger.info(f"✓ Job {job.id} completed successfully")
 
             except asyncio.TimeoutError:
                 logger.error(f"✗ Job {job.id} timed out after {self.job_timeout}s")

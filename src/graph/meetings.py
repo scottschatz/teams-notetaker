@@ -280,11 +280,13 @@ class MeetingDiscovery:
 
             return {
                 # Explicit ID types (NEW - prefer these)
-                "online_meeting_id": online_meeting.get("id"),  # MSp... format for transcript API
+                # NOTE: Calendar events don't have online_meeting.id (MSp... format)
+                # Use joinUrl instead for deduplication with webhook discoveries
+                "online_meeting_id": join_url or None,  # joinUrl for matching with webhooks
                 "calendar_event_id": event["id"],  # AAMk... format
                 "call_record_id": call_record.get("call_record_id"),
-                # Legacy meeting_id for backwards compat (prefer online_meeting_id)
-                "meeting_id": online_meeting.get("id") or event["id"],
+                # Legacy meeting_id for backwards compat (use joinUrl for dedup, fallback to event ID)
+                "meeting_id": join_url or event["id"],
                 "event_id": event["id"],
                 "subject": event.get("subject", "No Subject"),
                 "organizer_email": organizer_email,
@@ -307,11 +309,13 @@ class MeetingDiscovery:
 
             return {
                 # Explicit ID types (NEW - prefer these)
-                "online_meeting_id": online_meeting.get("id"),  # MSp... format for transcript API
+                # NOTE: Calendar events don't have online_meeting.id (MSp... format)
+                # Use joinUrl instead for deduplication with webhook discoveries
+                "online_meeting_id": join_url or None,  # joinUrl for matching with webhooks
                 "calendar_event_id": event["id"],  # AAMk... format
                 "call_record_id": None,  # No call record available
-                # Legacy meeting_id for backwards compat (prefer online_meeting_id)
-                "meeting_id": online_meeting.get("id") or event["id"],
+                # Legacy meeting_id for backwards compat (use joinUrl for dedup, fallback to event ID)
+                "meeting_id": join_url or event["id"],
                 "event_id": event["id"],
                 "subject": event.get("subject", "No Subject"),
                 "organizer_email": organizer_email,

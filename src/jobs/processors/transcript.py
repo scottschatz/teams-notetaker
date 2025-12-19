@@ -339,14 +339,27 @@ class TranscriptProcessor(BaseProcessor):
                     if recording_sharepoint_url:
                         meeting_in_session.recording_sharepoint_url = recording_sharepoint_url
 
-                # Create next job in chain: generate_summary
-                next_job = JobQueue(
+                # Create next jobs in chain: generate_summary -> distribute
+                summary_job = JobQueue(
                     job_type="generate_summary",
                     meeting_id=meeting_id,
                     input_data={"meeting_id": meeting_id},
-                    priority=5
+                    priority=5,
+                    max_retries=3
                 )
-                session.add(next_job)
+                session.add(summary_job)
+                session.flush()  # Get summary_job.id
+
+                # Distribution job depends on summary completion
+                distribute_job = JobQueue(
+                    job_type="distribute",
+                    meeting_id=meeting_id,
+                    input_data={"meeting_id": meeting_id},
+                    priority=5,
+                    depends_on_job_id=summary_job.id,
+                    max_retries=5
+                )
+                session.add(distribute_job)
 
                 session.commit()
 

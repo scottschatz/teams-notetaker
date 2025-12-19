@@ -123,8 +123,9 @@ class Meeting(Base):
     distribution_disabled_by = Column(String(255))  # Email of person who disabled distribution
     distribution_disabled_at = Column(DateTime)  # When distribution was disabled
 
-    # Discovery metadata
-    discovered_at = Column(DateTime, default=func.now(), index=True)
+    # Discovery metadata (stored in UTC)
+    discovered_at = Column(DateTime, default=datetime.utcnow, index=True)
+    discovery_source = Column(String(50), default="calendar")  # 'webhook' or 'calendar'
     discovery_run_id = Column(Integer, ForeignKey("processing_runs.id"))
 
     # Processing status

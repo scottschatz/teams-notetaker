@@ -44,6 +44,9 @@ class MeetingResponse(BaseModel):
     has_distribution: bool = False
     word_count: Optional[int] = None
     speaker_count: Optional[int] = None
+    # Discovery fields
+    discovery_source: Optional[str] = None
+    discovered_at: Optional[datetime] = None
     # Summary/AI fields
     model: Optional[str] = None
     prompt_tokens: Optional[int] = None
@@ -65,7 +68,7 @@ class MeetingDetailResponse(MeetingResponse):
 @router.get("/", response_model=List[MeetingResponse])
 async def list_meetings(
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=1000),
     status: Optional[str] = None,
     participant: Optional[str] = None,
     db: DatabaseManager = Depends(get_db)
@@ -148,6 +151,9 @@ async def list_meetings(
                 "has_distribution": meeting.has_distribution,
                 "word_count": word_count,
                 "speaker_count": speaker_count,
+                # Discovery fields
+                "discovery_source": meeting.discovery_source,
+                "discovered_at": meeting.discovered_at,
                 # AI/Summary stats
                 "model": model,
                 "prompt_tokens": prompt_tokens,

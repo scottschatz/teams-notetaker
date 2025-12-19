@@ -217,7 +217,7 @@ class JobQueueManager:
                 RETURNING *
             """)
 
-            now = datetime.now()
+            now = datetime.utcnow()  # Must use UTC - next_retry_at is stored in UTC
             stale_threshold = now - timedelta(minutes=15)
 
             result = session.execute(

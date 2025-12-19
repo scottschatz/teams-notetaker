@@ -88,6 +88,7 @@ class DistributionProcessor(BaseProcessor):
         resend_target = job.input_data.get("resend_target")  # 'organizer', 'subscribers', 'both', or None
         send_to_email = job.input_data.get("send_to_email")  # Specific email to send to
         bypass_opt_in = job.input_data.get("bypass_opt_in", False)  # Skip preference check
+        include_transcript = job.input_data.get("include_transcript", False)  # Attach transcript to email
 
         log_msg = f"Distributing summary for meeting {meeting_id}"
         if send_to_email:
@@ -100,9 +101,11 @@ class DistributionProcessor(BaseProcessor):
         meeting = self._get_meeting(meeting_id)
 
         with self.db.get_session() as session:
-            # Get summary
+            # Get summary (may be None for transcript-only emails)
             summary = session.query(Summary).filter_by(meeting_id=meeting_id).first()
-            if not summary:
+
+            # For transcript-only emails (send_to_email + include_transcript), summary is optional
+            if not summary and not (send_to_email and include_transcript):
                 raise DistributionError(f"No summary found for meeting {meeting_id}")
 
             # Handle send_to_email first: bypasses participant lookup entirely
@@ -215,15 +218,25 @@ class DistributionProcessor(BaseProcessor):
             if transcript_obj and transcript_obj.transcript_sharepoint_url:
                 meeting_metadata["transcript_sharepoint_url"] = transcript_obj.transcript_sharepoint_url
 
-            # Prepare enhanced summary data
-            enhanced_summary_data = {
-                "action_items": summary.action_items_json or [],
-                "decisions": summary.decisions_json or [],
-                "topics": summary.topics_json or [],
-                "highlights": summary.highlights_json or [],
-                "mentions": summary.mentions_json or [],
-                "key_numbers": summary.key_numbers_json or []  # NEW: Financial/quantitative metrics
-            }
+            # Prepare enhanced summary data (empty if no summary)
+            if summary:
+                enhanced_summary_data = {
+                    "action_items": summary.action_items_json or [],
+                    "decisions": summary.decisions_json or [],
+                    "topics": summary.topics_json or [],
+                    "highlights": summary.highlights_json or [],
+                    "mentions": summary.mentions_json or [],
+                    "key_numbers": summary.key_numbers_json or []  # NEW: Financial/quantitative metrics
+                }
+            else:
+                enhanced_summary_data = {
+                    "action_items": [],
+                    "decisions": [],
+                    "topics": [],
+                    "highlights": [],
+                    "mentions": [],
+                    "key_numbers": []
+                }
 
             # Build transcript stats (v2.1: includes speaker breakdown)
             transcript_stats = {
@@ -430,6 +443,24 @@ class DistributionProcessor(BaseProcessor):
                         else:
                             time_str = "Unknown Time"
 
+                        # Get transcript content if requested
+                        transcript_for_email = None
+                        if include_transcript and transcript_obj and transcript_obj.vtt_content:
+                            transcript_for_email = transcript_obj.vtt_content
+                            self._log_progress(job, "Including transcript attachment in email")
+
+                        # Handle transcript-only emails (no summary available)
+                        summary_text = summary.summary_text if summary else None
+                        if not summary_text and transcript_for_email:
+                            summary_text = "No summary generated yet. See attached transcript."
+                            self._log_progress(job, "Sending transcript-only email (no summary)")
+
+                        # Determine email subject
+                        if summary:
+                            email_subject = f"Meeting Summary: {meeting.subject} ({time_str})"
+                        else:
+                            email_subject = f"Meeting Transcript: {meeting.subject} ({time_str})"
+
                         # Run in executor to avoid blocking event loop
                         loop = asyncio.get_event_loop()
                         email_message_id = await loop.run_in_executor(
@@ -437,11 +468,11 @@ class DistributionProcessor(BaseProcessor):
                             lambda: self.email_sender.send_meeting_summary(
                                 from_email=email_from,
                                 to_emails=participant_emails,
-                                subject=f"Meeting Summary: {meeting.subject} ({time_str})",
-                                summary_markdown=summary.summary_text,
+                                subject=email_subject,
+                                summary_markdown=summary_text,
                                 meeting_metadata=meeting_metadata,
                                 enhanced_summary_data=enhanced_summary_data,
-                                transcript_content=None,  # Using SharePoint links instead
+                                transcript_content=transcript_for_email,  # Attach transcript if requested
                                 participants=participants_dict,
                                 transcript_stats=transcript_stats,
                                 invitees=invitees_list,  # NEW: Invitees who may not have attended

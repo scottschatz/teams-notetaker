@@ -8,7 +8,7 @@ First processor in the job chain (fetch_transcript → generate_summary → dist
 import logging
 import asyncio
 from typing import Dict, Any
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 from ..processors.base import BaseProcessor, register_processor
 from ...graph.client import GraphAPIClient
@@ -402,17 +402,143 @@ class TranscriptProcessor(BaseProcessor):
         except TranscriptNotFoundError as e:
             self._log_progress(job, f"Transcript not available: {e}", "warning")
 
-            # Exponential backoff retry: 15min, 30min, 60min max
-            # Transcripts rarely appear after 1 hour, so no point retrying longer
-            max_retries = 3  # 15min + 30min + 60min = max 1hr 45min total
+            # Check if transcription was enabled for this meeting
+            # If explicitly disabled (False), don't waste time retrying
+            allow_transcription = meeting.allow_transcription
+
+            # Track chat event signals for retry scheduling
+            transcript_available = False  # Transcript event posted = transcript IS READY
+            recording_started = False     # Recording event = transcription was enabled
+
+            # FAST PATH: Check chat events if we have chat_id
+            # Always check on every retry - transcript_available may change from False to True
+            # as the meeting ends and Microsoft processes the transcript
+            chat_id = meeting.chat_id
+            if chat_id:
+                retry_count = job.retry_count if job.retry_count is not None else 0
+                self._log_progress(
+                    job,
+                    f"Checking chat events for transcript/recording status (retry {retry_count})..."
+                )
+                try:
+                    loop = asyncio.get_event_loop()
+                    chat_check = await loop.run_in_executor(
+                        None,
+                        lambda: self.transcript_fetcher.check_transcript_readiness_from_chat(chat_id)
+                    )
+
+                    if not chat_check.get("error"):
+                        transcript_available = chat_check.get("transcript_available", False)
+                        recording_started = chat_check.get("recording_started", False)
+
+                        self._log_progress(
+                            job,
+                            f"Chat events: transcript_available={transcript_available}, "
+                            f"recording_started={recording_started}"
+                        )
+
+                        # If transcript event was posted, transcript IS READY NOW
+                        if transcript_available:
+                            if allow_transcription is None:
+                                allow_transcription = True
+                            self._log_progress(
+                                job,
+                                "callTranscriptEventMessageDetail found - transcript IS AVAILABLE, Graph API may just be slow"
+                            )
+                        # If recording started but no transcript event yet
+                        elif recording_started:
+                            if allow_transcription is None:
+                                allow_transcription = True
+                            self._log_progress(
+                                job,
+                                "Recording started - transcription enabled, transcript not yet ready"
+                            )
+                        # No events = transcription was never enabled
+                        elif allow_transcription is None:
+                            allow_transcription = False
+                            self._log_progress(
+                                job,
+                                "No recording/transcript events found - transcription was NOT enabled",
+                                "warning"
+                            )
+
+                        # Store the result if we just determined it
+                        if allow_transcription is not None:
+                            with self.db.get_session() as session:
+                                db_meeting = session.query(Meeting).filter_by(id=meeting_id).first()
+                                if db_meeting and db_meeting.allow_transcription is None:
+                                    db_meeting.allow_transcription = allow_transcription
+                                    session.commit()
+                    else:
+                        self._log_progress(
+                            job,
+                            f"Chat events check returned error: {chat_check.get('error')}",
+                            "warning"
+                        )
+                except Exception as chat_err:
+                    self._log_progress(job, f"Could not check chat events: {chat_err}", "warning")
+            else:
+                self._log_progress(job, "No chat_id available - cannot check chat events", "info")
+
+            # If we still don't know, try to check via Graph API (onlineMeeting)
+            if allow_transcription is None:
+                self._log_progress(job, "Checking if transcription was enabled for this meeting...")
+                try:
+                    allow_transcription = self._check_transcription_enabled(meeting)
+                    # Store the result on the meeting record for future reference
+                    with self.db.get_session() as session:
+                        db_meeting = session.query(Meeting).filter_by(id=meeting_id).first()
+                        if db_meeting:
+                            db_meeting.allow_transcription = allow_transcription
+                            session.commit()
+                            self._log_progress(job, f"Updated meeting.allow_transcription = {allow_transcription}")
+                except Exception as check_err:
+                    self._log_progress(job, f"Could not check transcription status: {check_err}", "warning")
+
+            # If transcription is explicitly disabled, mark meeting and stop immediately
+            if allow_transcription is False:
+                self._log_progress(
+                    job,
+                    "Transcription was NOT enabled for this meeting - no transcript will be available",
+                    "warning"
+                )
+                self._update_meeting_status(
+                    meeting_id,
+                    "transcription_disabled",
+                    error_message="Recording/transcription was not enabled for this meeting"
+                )
+                return self._create_output_data(
+                    success=False,
+                    message="Transcription was not enabled for this meeting",
+                    transcription_disabled=True,
+                    skipped=True
+                )
+
+            # Choose retry schedule based on chat event signals
+            if transcript_available:
+                # Transcript event posted = it's READY, Graph API just needs to catch up
+                # Use very aggressive retries - should succeed within seconds to minutes
+                retry_delays = [0.5, 1, 1, 2, 3]  # 30s, 1m, 1m, 2m, 3m
+                self._log_progress(job, "Using VERY aggressive retry schedule (transcript event seen)")
+            elif recording_started:
+                # Recording started but no transcript event yet
+                # Transcript will be ready soon, use moderate schedule
+                retry_delays = [2, 5, 10, 15, 30]  # Minutes for each retry
+                self._log_progress(job, "Using moderate retry schedule (recording started)")
+            else:
+                # No chat events found (or couldn't check) - use conservative schedule
+                retry_delays = [5, 10, 15, 30]  # Minutes for each retry
+
+            max_retries = len(retry_delays)
 
             # Handle None retry_count (treat as 0)
             retry_count = job.retry_count if job.retry_count is not None else 0
 
             if retry_count < max_retries:
-                # Calculate next retry time: 15min, 30min, 60min
-                delay_minutes = 15 * (2 ** retry_count)
-                next_retry = datetime.now(timezone.utc) + timedelta(minutes=delay_minutes)
+                # Get delay for this retry attempt
+                delay_minutes = retry_delays[retry_count]
+                # Use UTC-naive datetime for consistency with database storage
+                next_retry = datetime.utcnow() + timedelta(minutes=delay_minutes)
 
                 self._log_progress(
                     job,
@@ -441,20 +567,20 @@ class TranscriptProcessor(BaseProcessor):
                 )
             else:
                 # Max retries reached - give up
-                total_minutes = sum(15 * (2 ** i) for i in range(max_retries))
-                hours = total_minutes / 60
+                # Total wait = 15 min (initial delay) + sum of retry delays
+                total_minutes = 15 + sum(retry_delays)
 
                 self._log_progress(
                     job,
-                    f"Max retries ({max_retries}) reached. Transcript still not available after {hours:.1f} hours.",
-                    "error"
+                    f"Max retries ({max_retries}) reached. Transcript still not available after {total_minutes} minutes.",
+                    "warning"
                 )
 
-                # Update meeting status to failed
+                # Update meeting status to no_transcript (not failed - recording wasn't enabled)
                 self._update_meeting_status(
                     meeting_id,
-                    "failed",
-                    error_message=f"Transcript not available after {max_retries} retries ({hours:.1f} hours)"
+                    "no_transcript",
+                    error_message="Recording/transcription was not enabled for this meeting"
                 )
 
                 return self._create_output_data(
@@ -467,4 +593,78 @@ class TranscriptProcessor(BaseProcessor):
         except Exception as e:
             self._log_progress(job, f"Failed to fetch transcript: {e}", "error")
             raise
+
+    def _check_transcription_enabled(self, meeting: Meeting) -> bool | None:
+        """
+        Check if transcription was enabled for a meeting via Graph API.
+
+        Uses the onlineMeeting properties to determine if recording/transcription
+        was allowed for this meeting.
+
+        Args:
+            meeting: Meeting object with organizer_user_id and online_meeting_id
+
+        Returns:
+            True if transcription enabled, False if disabled, None if unknown
+        """
+        if not meeting.organizer_user_id:
+            logger.warning(f"Cannot check transcription status - no organizer_user_id for meeting {meeting.id}")
+            return None
+
+        # Try to get online meeting ID
+        online_meeting_id = meeting.online_meeting_id or meeting.meeting_id
+        if not online_meeting_id:
+            logger.warning(f"Cannot check transcription status - no online_meeting_id for meeting {meeting.id}")
+            return None
+
+        try:
+            # If we have a join_url, use filter query
+            if meeting.join_url:
+                meetings_response = self.graph_client.get(
+                    f"/users/{meeting.organizer_user_id}/onlineMeetings",
+                    params={"$filter": f"joinWebUrl eq '{meeting.join_url}'"}
+                )
+                meetings = meetings_response.get("value", [])
+                if meetings:
+                    meeting_data = meetings[0]
+                    allow_transcription = meeting_data.get("allowTranscription")
+                    allow_recording = meeting_data.get("allowRecording")
+                    logger.info(
+                        f"Meeting {meeting.id}: allowTranscription={allow_transcription}, "
+                        f"allowRecording={allow_recording}"
+                    )
+                    # Update allow_recording as well if we got it
+                    if allow_recording is not None:
+                        with self.db.get_session() as session:
+                            db_meeting = session.query(Meeting).filter_by(id=meeting.id).first()
+                            if db_meeting:
+                                db_meeting.allow_recording = allow_recording
+                                session.commit()
+                    return allow_transcription
+                else:
+                    logger.warning(f"No online meeting found for join_url: {meeting.join_url}")
+                    return None
+            else:
+                # Try direct query with online_meeting_id
+                meeting_data = self.graph_client.get(
+                    f"/users/{meeting.organizer_user_id}/onlineMeetings/{online_meeting_id}"
+                )
+                allow_transcription = meeting_data.get("allowTranscription")
+                allow_recording = meeting_data.get("allowRecording")
+                logger.info(
+                    f"Meeting {meeting.id}: allowTranscription={allow_transcription}, "
+                    f"allowRecording={allow_recording}"
+                )
+                # Update allow_recording as well if we got it
+                if allow_recording is not None:
+                    with self.db.get_session() as session:
+                        db_meeting = session.query(Meeting).filter_by(id=meeting.id).first()
+                        if db_meeting:
+                            db_meeting.allow_recording = allow_recording
+                            session.commit()
+                return allow_transcription
+
+        except Exception as e:
+            logger.warning(f"Failed to check transcription status for meeting {meeting.id}: {e}")
+            return None
 

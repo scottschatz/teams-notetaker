@@ -25,12 +25,90 @@
                     <option value="720">30 days</option>
                 </select>
                 <button @click="forceLookback()"
-                        class="px-4 py-1 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-sm font-medium">
-                    Run Lookback
+                        :disabled="lookbackRunning"
+                        class="px-4 py-1 bg-orange-600 text-white rounded-lg hover:bg-orange-700 text-sm font-medium disabled:opacity-50">
+                    <span x-show="!lookbackRunning">Run Lookback</span>
+                    <span x-show="lookbackRunning">Running...</span>
                 </button>
             </div>
         </div>
     </div>
+
+    <!-- Lookback Results -->
+    <template x-if="lookbackResult">
+        <div class="mb-6 p-4 rounded-lg" :class="{
+            'bg-blue-50 border border-blue-200': lookbackResult.running,
+            'bg-green-50 border border-green-200': lookbackResult.success && !lookbackResult.running,
+            'bg-red-50 border border-red-200': !lookbackResult.success && !lookbackResult.running
+        }">
+            <div class="flex justify-between items-start">
+                <h3 class="font-semibold" :class="{
+                    'text-blue-800': lookbackResult.running,
+                    'text-green-800': lookbackResult.success && !lookbackResult.running,
+                    'text-red-800': !lookbackResult.success && !lookbackResult.running
+                }">
+                    <span x-show="lookbackResult.running" class="flex items-center">
+                        <svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        </svg>
+                        Lookback Running...
+                    </span>
+                    <span x-show="lookbackResult.success && !lookbackResult.running">Lookback Complete</span>
+                    <span x-show="!lookbackResult.success && !lookbackResult.running">Lookback Failed</span>
+                </h3>
+                <button x-show="!lookbackResult.running" @click="lookbackResult = null" class="text-gray-400 hover:text-gray-600">&times;</button>
+            </div>
+            <!-- Running state -->
+            <template x-if="lookbackResult.running">
+                <div class="mt-2 text-sm text-blue-700">
+                    <span x-text="lookbackResult.message || 'Processing...'"></span>
+                    <span class="ml-2 text-blue-500" x-text="'(' + lookbackResult.hours + ' hour lookback)'"></span>
+                </div>
+            </template>
+            <!-- Completed state -->
+            <template x-if="lookbackResult.success && !lookbackResult.running">
+                <div class="mt-2 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                        <span class="text-gray-600">Period:</span>
+                        <span class="font-medium" x-text="lookbackResult.hours + ' hours'"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">Call Records Found:</span>
+                        <span class="font-medium" x-text="lookbackResult.stats.call_records_found || 0"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">Meetings Created:</span>
+                        <span class="font-medium text-green-700" x-text="lookbackResult.stats.meetings_created || 0"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">Jobs Created:</span>
+                        <span class="font-medium text-blue-700" x-text="lookbackResult.stats.jobs_created || 0"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">Skipped (No Opt-in):</span>
+                        <span class="font-medium text-gray-500" x-text="lookbackResult.stats.skipped_no_optin || 0"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">Transcripts Found:</span>
+                        <span class="font-medium" x-text="lookbackResult.stats.transcripts_found || 0"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">Errors:</span>
+                        <span class="font-medium" :class="(lookbackResult.stats.errors || 0) > 0 ? 'text-red-700' : 'text-gray-500'" x-text="lookbackResult.stats.errors || 0"></span>
+                    </div>
+                    <div>
+                        <span class="text-gray-600">From:</span>
+                        <span class="font-medium text-xs" x-text="formatDateTime(lookbackResult.lookback_start)"></span>
+                    </div>
+                </div>
+            </template>
+            <!-- Failed state -->
+            <template x-if="!lookbackResult.success && !lookbackResult.running">
+                <p class="mt-2 text-red-700" x-text="lookbackResult.error"></p>
+            </template>
+        </div>
+    </template>
 
     <!-- Services Status -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -278,6 +356,8 @@ function diagnosticsData() {
         webhookLoading: false,
         lastUpdated: '',
         lookbackHours: 24,  // Default to 24 hours
+        lookbackRunning: false,
+        lookbackResult: null,  // Store last lookback result
         logService: 'poller',
         logEntries: [],
         autoRefreshLogs: true,
@@ -287,7 +367,14 @@ function diagnosticsData() {
             try {
                 const response = await fetch('/diagnostics/api/status');
                 this.status = await response.json();
-                this.lastUpdated = new Date().toLocaleTimeString();
+                this.lastUpdated = new Date().toLocaleString('en-US', {
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true,
+                    timeZone: 'America/New_York',
+                    timeZoneName: 'short'
+                });
             } catch (error) {
                 console.error('Failed to load diagnostics:', error);
             }
@@ -326,39 +413,146 @@ function diagnosticsData() {
             }
         },
 
+        lookbackTaskId: null,
+        lookbackPollInterval: null,
+
         async forceLookback() {
             if (!confirm(`Force lookback for the last ${this.lookbackHours} hours? This will search Graph API for all meetings with transcripts and create jobs for any that were missed.`)) {
                 return;
             }
+
+            this.lookbackRunning = true;
+            this.lookbackResult = null;
 
             try {
                 const response = await fetch(`/diagnostics/api/force-lookback?hours=${this.lookbackHours}`, {
                     method: 'POST'
                 });
 
-                if (response.ok) {
-                    const data = await response.json();
-                    alert(`Lookback complete!\n\nJobs created: ${data.jobs_created}\nLookback from: ${new Date(data.lookback_start).toLocaleString()}`);
-                    this.loadStatus();  // Refresh status
+                const data = await response.json();
+
+                if (response.ok && data.status === 'running') {
+                    // Lookback started in background - poll for results
+                    this.lookbackTaskId = data.task_id;
+                    this.lookbackResult = {
+                        success: true,
+                        running: true,
+                        hours: this.lookbackHours,
+                        message: 'Lookback running in background...',
+                        started_at: data.started_at
+                    };
+                    this.startLookbackPolling();
+                } else if (!data.success && data.task_id) {
+                    // Already running
+                    this.lookbackTaskId = data.task_id;
+                    this.lookbackResult = {
+                        success: true,
+                        running: true,
+                        hours: data.hours,
+                        message: 'Lookback already running...',
+                        started_at: data.started_at
+                    };
+                    this.startLookbackPolling();
                 } else {
-                    const error = await response.json();
-                    alert('Failed to run lookback: ' + error.detail);
+                    this.lookbackResult = {
+                        success: false,
+                        error: data.detail || data.message || 'Unknown error'
+                    };
+                    this.lookbackRunning = false;
                 }
             } catch (error) {
-                alert('Error: ' + error.message);
+                this.lookbackResult = {
+                    success: false,
+                    error: error.message
+                };
+                this.lookbackRunning = false;
+            }
+        },
+
+        startLookbackPolling() {
+            // Poll every 2 seconds for status
+            if (this.lookbackPollInterval) {
+                clearInterval(this.lookbackPollInterval);
+            }
+            this.lookbackPollInterval = setInterval(() => this.checkLookbackStatus(), 2000);
+        },
+
+        async checkLookbackStatus() {
+            if (!this.lookbackTaskId) {
+                if (this.lookbackPollInterval) {
+                    clearInterval(this.lookbackPollInterval);
+                    this.lookbackPollInterval = null;
+                }
+                return;
+            }
+
+            try {
+                const response = await fetch(`/diagnostics/api/lookback-status/${this.lookbackTaskId}`);
+                const data = await response.json();
+
+                if (data.status === 'completed') {
+                    // Done!
+                    this.lookbackResult = {
+                        success: data.success,
+                        hours: data.hours,
+                        lookback_start: data.lookback_start,
+                        stats: data.statistics || {},
+                        running: false
+                    };
+                    this.lookbackRunning = false;
+                    this.lookbackTaskId = null;
+                    if (this.lookbackPollInterval) {
+                        clearInterval(this.lookbackPollInterval);
+                        this.lookbackPollInterval = null;
+                    }
+                    this.loadStatus();  // Refresh status
+                } else if (data.status === 'failed') {
+                    this.lookbackResult = {
+                        success: false,
+                        error: data.error || 'Lookback failed',
+                        running: false
+                    };
+                    this.lookbackRunning = false;
+                    this.lookbackTaskId = null;
+                    if (this.lookbackPollInterval) {
+                        clearInterval(this.lookbackPollInterval);
+                        this.lookbackPollInterval = null;
+                    }
+                }
+                // Otherwise still running, keep polling
+            } catch (error) {
+                console.error('Failed to check lookback status:', error);
             }
         },
 
         formatDateTime(dateString) {
             if (!dateString) return '-';
             const date = new Date(dateString);
-            return date.toLocaleString();
+            // Format with Eastern timezone
+            return date.toLocaleString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+                timeZone: 'America/New_York',
+                timeZoneName: 'short'
+            });
         },
 
         formatTime(dateString) {
             if (!dateString) return '-';
             const date = new Date(dateString);
-            return date.toLocaleTimeString();
+            // Format with Eastern timezone
+            return date.toLocaleString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit',
+                hour12: true,
+                timeZone: 'America/New_York',
+                timeZoneName: 'short'
+            });
         },
 
         async loadLogs() {

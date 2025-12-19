@@ -204,11 +204,13 @@ class CallRecordsWebhookHandler:
                         except Exception as e:
                             logger.warning(f"Could not fetch organizer details: {e}")
 
-                    # Fetch meeting details (subject, times) from onlineMeetings API
+                    # Fetch meeting details (subject, times, transcription settings) from onlineMeetings API
                     meeting_subject = "Teams Meeting"
                     # Default to current UTC time (naive) if not available
                     meeting_start_time = datetime.now(timezone.utc).replace(tzinfo=None)
                     meeting_end_time = datetime.now(timezone.utc).replace(tzinfo=None)
+                    allow_transcription = None
+                    allow_recording = None
                     if organizer_user_id and meeting_id:
                         try:
                             meeting_details = self.graph_client.get(
@@ -227,7 +229,10 @@ class CallRecordsWebhookHandler:
                                     meeting_details["endDateTime"].replace("Z", "+00:00")
                                 )
                                 meeting_end_time = dt.replace(tzinfo=None)
-                            logger.info(f"Fetched meeting details: {meeting_subject}")
+                            # Extract transcription/recording settings
+                            allow_transcription = meeting_details.get("allowTranscription")
+                            allow_recording = meeting_details.get("allowRecording")
+                            logger.info(f"Fetched meeting details: {meeting_subject} (allowTranscription={allow_transcription})")
                         except Exception as e:
                             logger.warning(f"Could not fetch meeting details: {e}")
 
@@ -238,7 +243,7 @@ class CallRecordsWebhookHandler:
                         online_meeting_id=meeting_id,  # MSp... format from transcript notification
                         calendar_event_id=None,  # Not available from transcript notification
                         call_record_id=None,  # Not available from transcript notification
-                        discovery_source="webhook",  # Discovered via webhook notification
+                        discovery_source=source,  # 'webhook' or 'backfill'
                         subject=meeting_subject,
                         organizer_email=organizer_email,
                         organizer_name=organizer_name,
@@ -247,7 +252,9 @@ class CallRecordsWebhookHandler:
                         end_time=meeting_end_time,
                         status="queued",
                         participant_count=1,  # At least the organizer
-                        graph_transcript_id=transcript_id  # Store for backfill reliability
+                        graph_transcript_id=transcript_id,  # Store for backfill reliability
+                        allow_transcription=allow_transcription,  # Transcription enabled setting
+                        allow_recording=allow_recording  # Recording enabled setting
                     )
                     session.add(meeting)
                     session.flush()
@@ -274,7 +281,8 @@ class CallRecordsWebhookHandler:
                         "meeting_id": db_meeting_id,
                         "transcript_id": transcript_id  # Pass transcript ID directly!
                     },
-                    priority=10  # Higher priority - transcript is ready now!
+                    priority=10,  # Higher priority - transcript is ready now!
+                    max_retries=4  # Matches transcript processor retry_delays [5, 10, 15, 30]
                 )
                 session.add(job)
                 session.commit()
@@ -333,6 +341,9 @@ class CallRecordsWebhookHandler:
                     logger.warning(f"No joinWebUrl in callRecord {call_record_id}")
                     return {"status": "skipped", "reason": "No joinWebUrl"}
 
+                # Extract call type from callRecord (groupCall, peerToPeer, unknown)
+                call_type = call_record.get("type", "unknown")
+
                 # Get participants first (more efficient to check this before API calls)
                 participants = self._extract_participants(call_record)
 
@@ -389,8 +400,10 @@ class CallRecordsWebhookHandler:
                     except Exception as e:
                         logger.warning(f"Could not look up organizer email for {organizer_user_id}: {e}")
 
-                # Look up meeting subject from online meeting details
+                # Look up meeting subject and transcription settings from online meeting details
                 meeting_subject = "Unknown Meeting"
+                allow_transcription = None
+                allow_recording = None
                 if organizer_user_id and online_meeting_id:
                     try:
                         # online_meeting_id is the joinWebUrl
@@ -402,25 +415,50 @@ class CallRecordsWebhookHandler:
                         )
                         meetings = meetings_response.get("value", [])
                         if meetings:
-                            meeting_subject = meetings[0].get("subject") or "Teams Meeting"
-                            logger.info(f"Found meeting subject: {meeting_subject}")
+                            meeting_data = meetings[0]
+                            meeting_subject = meeting_data.get("subject") or "Teams Meeting"
+                            allow_transcription = meeting_data.get("allowTranscription")
+                            allow_recording = meeting_data.get("allowRecording")
+                            logger.info(f"Found meeting: {meeting_subject} (allowTranscription={allow_transcription})")
                     except Exception as e:
                         # Many callRecords are ad-hoc calls without scheduled meetings
                         logger.debug(f"Could not look up meeting subject for {organizer_user_id}: {e}")
 
                 # Check if meeting already exists in database
                 # Check multiple fields for deduplication (webhook vs calendar discovery)
-                from sqlalchemy import or_
-                existing_meeting = session.query(Meeting).filter(
-                    or_(
-                        Meeting.meeting_id == online_meeting_id,
-                        Meeting.online_meeting_id == online_meeting_id,
-                        Meeting.join_url == online_meeting_id
-                    )
-                ).first()
+                # IMPORTANT: Also check date for recurring meetings (they share the same online_meeting_id)
+                # Both callRecord.startDateTime and Meeting.start_time are UTC-naive (stored as UTC)
+                from sqlalchemy import or_, func
+
+                # Parse the call's start time - this is UTC-naive (value is UTC)
+                call_start_time = self._parse_datetime(call_record.get("startDateTime"))
+
+                # For recurring meetings: same online_meeting_id but different UTC dates = different meetings
+                if call_start_time:
+                    call_start_date = call_start_time.date()  # UTC date
+                    existing_meeting = session.query(Meeting).filter(
+                        or_(
+                            Meeting.meeting_id == online_meeting_id,
+                            Meeting.online_meeting_id == online_meeting_id,
+                            Meeting.join_url == online_meeting_id
+                        ),
+                        # Compare UTC dates (both are UTC-naive in database)
+                        func.date(Meeting.start_time) == call_start_date
+                    ).first()
+                else:
+                    # Fallback if no start time (shouldn't happen, but be safe)
+                    logger.warning(f"No startDateTime in callRecord {call_record_id}, using ID-only dedup")
+                    call_start_date = None
+                    existing_meeting = session.query(Meeting).filter(
+                        or_(
+                            Meeting.meeting_id == online_meeting_id,
+                            Meeting.online_meeting_id == online_meeting_id,
+                            Meeting.join_url == online_meeting_id
+                        )
+                    ).first()
 
                 if existing_meeting:
-                    logger.info(f"Meeting {existing_meeting.id} already exists")
+                    logger.info(f"Meeting {existing_meeting.id} already exists for date {call_start_date}")
                     meeting_id = existing_meeting.id
 
                     # Update organizer_user_id if we have it and existing doesn't
@@ -428,13 +466,44 @@ class CallRecordsWebhookHandler:
                         existing_meeting.organizer_user_id = organizer_user_id
                         logger.info(f"Updated organizer_user_id for meeting {meeting_id}")
                 else:
+                    # Check if transcription was disabled - skip if so
+                    if allow_transcription is False:
+                        logger.info(f"Transcription disabled for meeting, marking as transcription_disabled")
+                        meeting = Meeting(
+                            meeting_id=online_meeting_id,
+                            online_meeting_id=online_meeting_id,
+                            call_record_id=call_record_id,
+                            discovery_source=source,
+                            subject=meeting_subject,
+                            organizer_email=organizer_email,
+                            organizer_name=organizer_name,
+                            organizer_user_id=organizer_user_id,
+                            start_time=self._parse_datetime(call_record.get("startDateTime")),
+                            end_time=self._parse_datetime(call_record.get("endDateTime")),
+                            participant_count=len(participants),
+                            join_url=online_meeting_id,
+                            chat_id=call_record.get("chatId"),
+                            status="transcription_disabled",
+                            allow_transcription=False,
+                            allow_recording=allow_recording,
+                            call_type=call_type
+                        )
+                        session.add(meeting)
+                        session.add(ProcessedCallRecord(call_record_id=call_record_id, source=source))
+                        session.commit()
+                        return {
+                            "status": "skipped",
+                            "reason": "transcription_disabled",
+                            "meeting_id": meeting.id
+                        }
+
                     # Create meeting record from callRecord notification
                     meeting = Meeting(
                         meeting_id=online_meeting_id,
                         online_meeting_id=online_meeting_id,  # MSp... format from callRecord
                         calendar_event_id=None,  # Not available from callRecord
                         call_record_id=call_record_id,  # The callRecord ID
-                        discovery_source="webhook",  # Discovered via webhook notification
+                        discovery_source=source,  # 'webhook' or 'backfill'
                         subject=meeting_subject,
                         organizer_email=organizer_email,
                         organizer_name=organizer_name,
@@ -444,7 +513,10 @@ class CallRecordsWebhookHandler:
                         participant_count=len(participants),
                         join_url=online_meeting_id,
                         chat_id=call_record.get("chatId"),
-                        status="discovered"
+                        status="discovered",
+                        allow_transcription=allow_transcription,
+                        allow_recording=allow_recording,
+                        call_type=call_type  # groupCall, peerToPeer, unknown
                     )
                     session.add(meeting)
                     session.flush()
@@ -545,6 +617,7 @@ class CallRecordsWebhookHandler:
                 ))
 
                 # Enqueue fetch_transcript job with auto_process flag
+                # Try immediately - if transcript not ready, retry schedule handles it
                 job = JobQueue(
                     job_type="fetch_transcript",
                     meeting_id=meeting_id,
@@ -552,7 +625,9 @@ class CallRecordsWebhookHandler:
                         "meeting_id": meeting_id,
                         "auto_process": has_opted_in  # Controls downstream job creation
                     },
-                    priority=5
+                    priority=5,
+                    next_retry_at=None,  # Try immediately
+                    max_retries=4  # Retry schedule: 5, 10, 15, 30 min if not ready
                 )
                 session.add(job)
                 session.commit()

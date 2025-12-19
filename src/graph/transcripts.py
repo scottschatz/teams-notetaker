@@ -477,3 +477,92 @@ class TranscriptFetcher:
         except Exception as e:
             logger.error(f"Error getting recording SharePoint URL: {e}")
             return None
+
+    def check_transcript_readiness_from_chat(
+        self,
+        chat_id: str
+    ) -> Dict[str, Any]:
+        """
+        Check chat events to determine transcript readiness.
+
+        This method queries the meeting chat for system events:
+
+        1. callTranscriptEventMessageDetail - Posted when transcript IS AVAILABLE
+           (not when transcription starts, but when it's ready to download)
+
+        2. callRecordingEventMessageDetail (success) - Posted when recording STARTS
+           (indicates transcription was enabled, but transcript isn't ready yet)
+
+        This allows us to:
+        - Skip retries immediately if no recording event (transcription never enabled)
+        - Use VERY aggressive polling if transcript event seen (it's ready now!)
+        - Use moderate polling if only recording event seen (transcript coming soon)
+
+        Args:
+            chat_id: The meeting chat thread ID (e.g., "19:meeting_xxx@thread.v2")
+
+        Returns:
+            Dict with keys:
+                - transcript_available: bool - True if transcript IS READY (from transcript event)
+                - recording_started: bool - True if recording was started (transcription enabled)
+                - transcript_posted_time: str or None - When transcript became available
+                - error: str or None - Error message if query failed
+        """
+        result = {
+            "transcript_available": False,
+            "recording_started": False,
+            "transcript_posted_time": None,
+            "error": None
+        }
+
+        # Validate input
+        if not chat_id:
+            result["error"] = "No chat_id provided"
+            logger.warning("check_transcript_readiness_from_chat called with empty chat_id")
+            return result
+
+        try:
+            # Query recent chat messages
+            messages = self.client.get(
+                f"/chats/{chat_id}/messages",
+                params={
+                    "$top": 30,
+                    "$orderby": "createdDateTime desc"
+                }
+            )
+
+            # Handle case where API returns None or unexpected response
+            if not messages or not isinstance(messages, dict):
+                result["error"] = "No response from chat API"
+                return result
+
+            for msg in messages.get("value", []):
+                event = msg.get("eventDetail", {})
+                event_type = event.get("@odata.type", "")
+
+                # callTranscriptEventMessageDetail = Transcript IS AVAILABLE NOW
+                # This is the key signal - posted when transcript is ready to download
+                if "callTranscriptEventMessageDetail" in event_type:
+                    result["transcript_available"] = True
+                    result["transcript_posted_time"] = msg.get("createdDateTime")
+                    logger.debug(f"Found transcript available event at {result['transcript_posted_time']}")
+
+                # callRecordingEventMessageDetail (success) = Recording STARTED
+                # This means transcription was enabled, but transcript isn't ready yet
+                if "callRecordingEventMessageDetail" in event_type:
+                    if event.get("callRecordingStatus") == "success":
+                        result["recording_started"] = True
+                        logger.debug("Found recording started event - transcription was enabled")
+
+            logger.info(
+                f"Chat events check for {chat_id}: "
+                f"transcript_available={result['transcript_available']}, "
+                f"recording_started={result['recording_started']}"
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error checking chat events for {chat_id}: {e}")
+            result["error"] = str(e)
+            return result

@@ -55,7 +55,7 @@ class ClaudeConfig:
     """Anthropic Claude API configuration."""
 
     api_key: str
-    model: str = "claude-haiku-4-5-latest"
+    model: str = "claude-haiku-4-5"
     max_tokens: int = 2000
     temperature: float = 0.7
 
@@ -238,7 +238,7 @@ class ConfigManager:
         # Claude API configuration
         self.claude = ClaudeConfig(
             api_key=os.getenv("CLAUDE_API_KEY", ""),
-            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-latest"),
+            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5"),
             max_tokens=int(os.getenv("CLAUDE_MAX_TOKENS", "2000")),
             temperature=float(os.getenv("CLAUDE_TEMPERATURE", "0.7")),
         )

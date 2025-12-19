@@ -2,6 +2,8 @@
 
 {% block title %}Meetings - Teams Meeting Summarizer{% endblock %}
 
+{% block main_class %}w-full px-4{% endblock %}
+
 {% block content %}
 <div x-data="meetingsData()" x-init="loadMeetings()">
     <div class="flex justify-between items-center mb-6">
@@ -18,6 +20,8 @@
                 <option value="processing">Processing</option>
                 <option value="transcript_only">Transcript Only</option>
                 <option value="discovered">Discovered</option>
+                <option value="no_transcript">No Transcript</option>
+                <option value="transcription_disabled">No Recording</option>
                 <option value="failed">Failed</option>
                 <option value="skipped">Skipped</option>
             </select>
@@ -43,6 +47,9 @@
                         <th @click="sortBy('subject')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Subject <span x-show="sortColumn === 'subject'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
                         </th>
+                        <th @click="sortBy('call_type')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" title="Call Type">
+                            Type <span x-show="sortColumn === 'call_type'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
                         <th @click="sortBy('organizer_name')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Organizer <span x-show="sortColumn === 'organizer_name'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
                         </th>
@@ -63,8 +70,14 @@
                         <th @click="sortBy('discovery_source')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Source <span x-show="sortColumn === 'discovery_source'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
                         </th>
-                        <th @click="sortBy('discovered_at')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
-                            Discovered <span x-show="sortColumn === 'discovered_at'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        <th @click="sortBy('end_time')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
+                            Ended <span x-show="sortColumn === 'end_time'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th @click="sortBy('discovered_at')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100" title="When webhook notification was received">
+                            Detected <span x-show="sortColumn === 'discovered_at'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase" title="Time from meeting end to webhook notification">
+                            Delay
                         </th>
                         <th @click="sortBy('status')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Status <span x-show="sortColumn === 'status'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
@@ -89,6 +102,17 @@
                             </td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.id"></td>
                             <td class="px-2 py-2 font-medium text-gray-900 text-xs max-w-[250px] truncate" x-text="meeting.subject" :title="meeting.subject"></td>
+                            <td class="px-2 py-2 whitespace-nowrap">
+                                <span class="px-1 inline-flex text-xs leading-5 font-semibold rounded-full"
+                                      :class="{
+                                          'bg-blue-100 text-blue-800': meeting.call_type === 'groupCall',
+                                          'bg-cyan-100 text-cyan-800': meeting.call_type === 'peerToPeer',
+                                          'bg-gray-100 text-gray-600': !meeting.call_type || meeting.call_type === 'unknown'
+                                      }"
+                                      x-text="formatCallType(meeting.call_type)"
+                                      :title="getCallTypeTooltip(meeting.call_type)">
+                                </span>
+                            </td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-900 text-xs" x-text="meeting.organizer_name" :title="meeting.organizer_email"></td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatDateTime(meeting.start_time)"></td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.duration_minutes ? meeting.duration_minutes + 'm' : '-'"></td>
@@ -108,7 +132,9 @@
                                       x-text="meeting.discovery_source || '-'">
                                 </span>
                             </td>
-                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatDateTimeShort(meeting.discovered_at)"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatTime(meeting.end_time)" :title="formatDateTime(meeting.end_time)"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatTime(meeting.discovered_at)" :title="formatDateTime(meeting.discovered_at)"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-xs" :class="getDelayClass(meeting)" x-text="formatDelay(meeting)" :title="getDelayTooltip(meeting)"></td>
                             <td class="px-2 py-2 whitespace-nowrap">
                                 <span class="px-1 inline-flex text-xs leading-5 font-semibold rounded-full cursor-help"
                                       :class="{
@@ -118,14 +144,42 @@
                                           'bg-gray-100 text-gray-800': meeting.status === 'discovered',
                                           'bg-gray-100 text-gray-600': meeting.status === 'skipped',
                                           'bg-orange-100 text-orange-800': meeting.status === 'transcript_only',
+                                          'bg-purple-100 text-purple-800': meeting.status === 'no_transcript',
+                                          'bg-pink-100 text-pink-800': meeting.status === 'transcription_disabled',
                                           'bg-red-100 text-red-800': meeting.status === 'failed'
                                       }"
-                                      :title="meeting.status === 'skipped' && !meeting.has_transcript ? 'Skipped: No transcript available' : (meeting.status === 'transcript_only' ? 'Transcript captured, no opted-in participants' : '')"
-                                      x-text="meeting.status === 'transcript_only' ? 'transcript' : meeting.status">
+                                      :title="getStatusTooltip(meeting)"
+                                      x-text="getStatusDisplay(meeting)">
                                 </span>
                             </td>
                             <td class="px-2 py-2 whitespace-nowrap text-right text-sm font-medium">
                                 <div class="flex justify-end space-x-1">
+                                    <!-- View Transcript button -->
+                                    <a
+                                        x-show="meeting.has_transcript"
+                                        :href="'/dashboard/meetings/' + meeting.id + '/transcript'"
+                                        target="_blank"
+                                        class="text-purple-600 hover:text-purple-900"
+                                        title="View Transcript"
+                                    >
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                                        </svg>
+                                    </a>
+
+                                    <!-- View Summary button -->
+                                    <a
+                                        x-show="meeting.has_summary"
+                                        :href="'/dashboard/meetings/' + meeting.id + '/summary'"
+                                        target="_blank"
+                                        class="text-teal-600 hover:text-teal-900"
+                                        title="View Summary"
+                                    >
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>
+                                        </svg>
+                                    </a>
+
                                     <!-- Process button (for transcript-only meetings) -->
                                     <button
                                         x-show="meeting.status === 'transcript_only'"
@@ -179,7 +233,7 @@
 
                         <!-- Expanded distribution details row -->
                         <tr x-show="expandedMeeting === meeting.id" x-cloak class="bg-blue-50">
-                            <td colspan="16" class="px-6 py-4">
+                            <td colspan="19" class="px-6 py-4">
                                 <div class="pl-8">
                                     <h4 class="text-sm font-semibold text-gray-700 mb-3">Distribution Details</h4>
                                     <template x-if="distributionDetails[meeting.id] && distributionDetails[meeting.id].length > 0">
@@ -409,6 +463,117 @@ function meetingsData() {
             let date = hasTimezone ? new Date(dateString) : new Date(dateString + 'Z');
             return date.toLocaleDateString('en-US', {timeZone: 'America/New_York', month: 'short', day: 'numeric'}) + ' ' +
                    date.toLocaleTimeString('en-US', {timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit'});
+        },
+
+        formatTime(dateString) {
+            if (!dateString) return '-';
+            const hasTimezone = /[Z]$|[+-]\d{2}:\d{2}$/.test(dateString);
+            let date = hasTimezone ? new Date(dateString) : new Date(dateString + 'Z');
+            return date.toLocaleTimeString('en-US', {timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit'});
+        },
+
+        formatDelay(meeting) {
+            if (!meeting.end_time || !meeting.discovered_at) return '-';
+            const hasTimezone1 = /[Z]$|[+-]\d{2}:\d{2}$/.test(meeting.end_time);
+            const hasTimezone2 = /[Z]$|[+-]\d{2}:\d{2}$/.test(meeting.discovered_at);
+            const endTime = hasTimezone1 ? new Date(meeting.end_time) : new Date(meeting.end_time + 'Z');
+            const discoveredAt = hasTimezone2 ? new Date(meeting.discovered_at) : new Date(meeting.discovered_at + 'Z');
+            const delayMs = discoveredAt - endTime;
+            if (delayMs < 0) return '-';
+            const delayMins = Math.round(delayMs / 60000);
+            if (delayMins < 60) return `${delayMins}m`;
+            const hours = Math.floor(delayMins / 60);
+            const mins = delayMins % 60;
+            return `${hours}h ${mins}m`;
+        },
+
+        getDelayClass(meeting) {
+            if (!meeting.end_time || !meeting.discovered_at) return 'text-gray-400';
+            const hasTimezone1 = /[Z]$|[+-]\d{2}:\d{2}$/.test(meeting.end_time);
+            const hasTimezone2 = /[Z]$|[+-]\d{2}:\d{2}$/.test(meeting.discovered_at);
+            const endTime = hasTimezone1 ? new Date(meeting.end_time) : new Date(meeting.end_time + 'Z');
+            const discoveredAt = hasTimezone2 ? new Date(meeting.discovered_at) : new Date(meeting.discovered_at + 'Z');
+            const delayMins = Math.round((discoveredAt - endTime) / 60000);
+            if (delayMins < 20) return 'text-green-600';  // Quick (< 20 min)
+            if (delayMins < 40) return 'text-yellow-600'; // Normal (20-40 min)
+            if (delayMins < 60) return 'text-orange-600'; // Slow (40-60 min)
+            return 'text-red-600';  // Very slow (> 1 hour)
+        },
+
+        getDelayTooltip(meeting) {
+            if (!meeting.end_time || !meeting.discovered_at) return 'No end time data';
+            const hasTimezone1 = /[Z]$|[+-]\d{2}:\d{2}$/.test(meeting.end_time);
+            const hasTimezone2 = /[Z]$|[+-]\d{2}:\d{2}$/.test(meeting.discovered_at);
+            const endTime = hasTimezone1 ? new Date(meeting.end_time) : new Date(meeting.end_time + 'Z');
+            const discoveredAt = hasTimezone2 ? new Date(meeting.discovered_at) : new Date(meeting.discovered_at + 'Z');
+            return `Meeting ended: ${this.formatDateTime(meeting.end_time)}\nWebhook received: ${this.formatDateTime(meeting.discovered_at)}`;
+        },
+
+        formatCallType(callType) {
+            if (!callType || callType === 'unknown') return '-';
+            if (callType === 'groupCall') return 'group';
+            if (callType === 'peerToPeer') return '1:1';
+            return callType;
+        },
+
+        getCallTypeTooltip(callType) {
+            const tooltips = {
+                'groupCall': 'Group call with 3+ participants',
+                'peerToPeer': '1-on-1 call between two people',
+                'unknown': 'Call type not determined'
+            };
+            return tooltips[callType] || 'Unknown call type';
+        },
+
+        getStatusDisplay(meeting) {
+            if (meeting.status === 'transcript_only') {
+                return 'transcript';
+            }
+            if (meeting.status === 'no_transcript') {
+                return 'no transcript';
+            }
+            if (meeting.status === 'transcription_disabled') {
+                return 'no recording';
+            }
+            if ((meeting.status === 'discovered' || meeting.status === 'retrying') && meeting.retry_count !== null && meeting.retry_count !== undefined) {
+                // Show retry progress: "fetching (2/4)"
+                const maxRetries = meeting.max_retries || 4;  // Default to 4 if not set
+                if (meeting.retry_count > maxRetries) {
+                    return 'max retries';  // Exceeded max - should be processed soon
+                }
+                return `fetching (${meeting.retry_count}/${maxRetries})`;
+            }
+            return meeting.status;
+        },
+
+        getStatusTooltip(meeting) {
+            // For discovered meetings with retry info, show next retry time
+            if (meeting.status === 'discovered' && meeting.retry_count !== null && meeting.retry_count !== undefined) {
+                const maxRetries = meeting.max_retries || 4;
+                let tooltip = `Waiting for transcript - attempt ${meeting.retry_count}/${maxRetries}`;
+                if (meeting.next_retry_at) {
+                    const nextRetry = new Date(meeting.next_retry_at + 'Z');
+                    const now = new Date();
+                    const diffMs = nextRetry - now;
+                    if (diffMs > 0) {
+                        const mins = Math.round(diffMs / 60000);
+                        tooltip += ` (next attempt in ${mins} min)`;
+                    }
+                }
+                return tooltip;
+            }
+            const tooltips = {
+                'completed': 'Summary generated and distributed',
+                'processing': 'Currently generating summary',
+                'queued': 'Waiting to be processed',
+                'discovered': 'Meeting found, waiting for transcript',
+                'skipped': meeting.has_transcript ? 'Skipped by filter rules' : 'No transcript available',
+                'transcript_only': 'Transcript captured, no opted-in participants. Click to generate summary.',
+                'no_transcript': 'No transcript found after retries',
+                'transcription_disabled': 'Recording/transcription was not enabled for this meeting',
+                'failed': 'Processing failed - check logs'
+            };
+            return tooltips[meeting.status] || meeting.status;
         },
 
         formatModel(model) {

@@ -53,6 +53,15 @@ class MeetingResponse(BaseModel):
     completion_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
     generation_time_ms: Optional[int] = None
+    # Job retry info (for transcript fetching progress)
+    retry_count: Optional[int] = None
+    max_retries: Optional[int] = None
+    next_retry_at: Optional[datetime] = None
+    # Meeting settings (transcription/recording enabled)
+    allow_transcription: Optional[bool] = None
+    allow_recording: Optional[bool] = None
+    # Call type (groupCall, peerToPeer, unknown)
+    call_type: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -93,6 +102,18 @@ async def list_meetings(
             func.max(Summary.version).label('max_version')
         ).group_by(Summary.meeting_id).subquery()
 
+        # Subquery to get the latest fetch_transcript job for each meeting
+        # (for showing retry progress)
+        latest_transcript_job = session.query(
+            JobQueue.meeting_id,
+            func.max(JobQueue.id).label('max_job_id')
+        ).filter(
+            JobQueue.job_type == "fetch_transcript"
+        ).group_by(JobQueue.meeting_id).subquery()
+
+        # Alias for JobQueue to join with the subquery
+        TranscriptJob = JobQueue
+
         # Join with transcript and LATEST summary to get word_count, speaker_count, and AI stats
         query = session.query(
             Meeting,
@@ -102,7 +123,10 @@ async def list_meetings(
             Summary.prompt_tokens,
             Summary.completion_tokens,
             Summary.total_tokens,
-            Summary.generation_time_ms
+            Summary.generation_time_ms,
+            TranscriptJob.retry_count,
+            TranscriptJob.max_retries,
+            TranscriptJob.next_retry_at
         ).outerjoin(
             Transcript, Meeting.id == Transcript.meeting_id
         ).outerjoin(
@@ -112,6 +136,12 @@ async def list_meetings(
             Summary,
             (Meeting.id == Summary.meeting_id) &
             (Summary.version == latest_summary_version.c.max_version)
+        ).outerjoin(
+            latest_transcript_job,
+            Meeting.id == latest_transcript_job.c.meeting_id
+        ).outerjoin(
+            TranscriptJob,
+            (TranscriptJob.id == latest_transcript_job.c.max_job_id)
         )
 
         if status:
@@ -128,7 +158,7 @@ async def list_meetings(
 
         # Build response with transcript and summary data
         meetings = []
-        for meeting, word_count, speaker_count, model, prompt_tokens, completion_tokens, total_tokens, generation_time_ms in results:
+        for meeting, word_count, speaker_count, model, prompt_tokens, completion_tokens, total_tokens, generation_time_ms, retry_count, max_retries, next_retry_at in results:
             # Calculate actual duration if we have start and end times
             actual_duration = None
             if meeting.start_time and meeting.end_time:
@@ -159,7 +189,15 @@ async def list_meetings(
                 "prompt_tokens": prompt_tokens,
                 "completion_tokens": completion_tokens,
                 "total_tokens": total_tokens,
-                "generation_time_ms": generation_time_ms
+                "generation_time_ms": generation_time_ms,
+                # Job retry info
+                "retry_count": retry_count,
+                "max_retries": max_retries,
+                "next_retry_at": next_retry_at,
+                # Meeting settings
+                "allow_transcription": meeting.allow_transcription,
+                "allow_recording": meeting.allow_recording,
+                "call_type": meeting.call_type
             }
             meetings.append(MeetingResponse(**meeting_dict))
 
@@ -524,6 +562,7 @@ async def bulk_process_transcript_only(
 class SendToEmailRequest(BaseModel):
     """Request body for send-to endpoint."""
     email: str
+    include_transcript: bool = False
 
 
 @router.post("/{meeting_id}/send-to")
@@ -540,7 +579,7 @@ async def send_summary_to_email(
 
     Args:
         meeting_id: Meeting ID
-        request: Request body with email address
+        request: Request body with email address and options
 
     Returns:
         Success message with job ID
@@ -558,8 +597,17 @@ async def send_summary_to_email(
 
         # Check if summary exists
         summary = session.query(Summary).filter_by(meeting_id=meeting_id).first()
-        if not summary:
-            raise HTTPException(status_code=404, detail="No summary found for this meeting. Generate summary first.")
+
+        # Check if transcript exists
+        transcript = session.query(Transcript).filter_by(meeting_id=meeting_id).first()
+
+        # Must have at least one of summary or transcript
+        if not summary and not transcript:
+            raise HTTPException(status_code=404, detail="No summary or transcript found for this meeting.")
+
+        # If no summary but transcript exists, force include_transcript
+        if not summary and transcript:
+            request.include_transcript = True
 
         # Create distribution job targeting specific email
         job = JobQueue(
@@ -568,7 +616,8 @@ async def send_summary_to_email(
             input_data={
                 "meeting_id": meeting_id,
                 "send_to_email": email,  # Special flag for single recipient
-                "bypass_opt_in": True  # Skip preference check
+                "bypass_opt_in": True,  # Skip preference check
+                "include_transcript": request.include_transcript  # Attach transcript to email
             },
             priority=10,
             status="pending",
@@ -578,10 +627,11 @@ async def send_summary_to_email(
         session.commit()
         job_id = job.id
 
-        logger.info(f"Sending summary for meeting {meeting_id} to {email} (job: {job_id})")
+        content_type = "summary and transcript" if request.include_transcript else "summary"
+        logger.info(f"Sending {content_type} for meeting {meeting_id} to {email} (job: {job_id})")
 
         return {
             "success": True,
-            "message": f"Summary queued to send to {email}",
+            "message": f"Meeting {content_type} queued to send to {email}",
             "job_id": job_id
         }

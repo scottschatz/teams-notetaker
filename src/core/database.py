@@ -155,6 +155,14 @@ class Meeting(Base):
     is_pilot_eligible = Column(Boolean)
     skip_reason = Column(String(255))
 
+    # Meeting settings (from Graph API onlineMeeting properties)
+    allow_transcription = Column(Boolean)  # None=unknown, True=enabled, False=disabled
+    allow_recording = Column(Boolean)  # None=unknown, True=enabled, False=disabled
+
+    # Call type (from callRecords API)
+    # Values: 'groupCall', 'peerToPeer', 'scheduled', 'adHoc', 'unknown'
+    call_type = Column(String(50))
+
     # Relationships
     participants = relationship("MeetingParticipant", back_populates="meeting", cascade="all, delete-orphan")
     transcript = relationship("Transcript", back_populates="meeting", uselist=False, cascade="all, delete-orphan")
@@ -164,7 +172,7 @@ class Meeting(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('discovered', 'queued', 'processing', 'completed', 'failed', 'skipped', 'transcript_only')",
+            "status IN ('discovered', 'queued', 'processing', 'completed', 'failed', 'skipped', 'transcript_only', 'no_transcript', 'transcription_disabled')",
             name="valid_meeting_status",
         ),
     )

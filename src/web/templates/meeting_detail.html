@@ -68,6 +68,70 @@
                 </svg>
                 Regenerate Summary
             </button>
+
+            <!-- Download and Email buttons -->
+            <div class="flex flex-wrap gap-2" x-data="{ showSendForm: false, includeTranscript: true }">
+                <a x-show="meeting.has_transcript"
+                   :href="`/dashboard/meetings/${meeting.id}/transcript/download`"
+                   class="px-3 py-2 bg-purple-600 text-white text-sm rounded-lg hover:bg-purple-700 flex items-center">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
+                    Transcript
+                </a>
+                <a x-show="meeting.has_summary"
+                   :href="`/dashboard/meetings/${meeting.id}/summary/download`"
+                   class="px-3 py-2 bg-teal-600 text-white text-sm rounded-lg hover:bg-teal-700 flex items-center">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
+                    Summary
+                </a>
+                <!-- Email button -->
+                <div x-show="meeting.has_transcript || meeting.has_summary" class="relative">
+                    <button @click="showSendForm = !showSendForm"
+                            class="px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 flex items-center">
+                        <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                        </svg>
+                        Email
+                    </button>
+                    <!-- Send email form dropdown -->
+                    <div x-show="showSendForm" @click.away="showSendForm = false"
+                         class="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg z-10 p-4 border">
+                        <h4 class="text-sm font-semibold mb-2">Send Meeting Content via Email</h4>
+                        <p class="text-xs text-gray-500 mb-3">Send to any email address (bypasses opt-in)</p>
+                        <form @submit.prevent="sendToEmail($refs.emailInput.value, includeTranscript); showSendForm = false">
+                            <input type="email" x-ref="emailInput" placeholder="email@example.com"
+                                   class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-3 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                   required>
+                            <div class="space-y-2 mb-3">
+                                <label x-show="meeting.has_summary" class="flex items-center text-sm text-gray-700 cursor-pointer">
+                                    <input type="checkbox" checked disabled class="mr-2 rounded border-gray-300 text-blue-600">
+                                    Summary (included)
+                                </label>
+                                <label x-show="meeting.has_transcript" class="flex items-center text-sm text-gray-700 cursor-pointer">
+                                    <input type="checkbox" x-model="includeTranscript" class="mr-2 rounded border-gray-300 text-blue-600 focus:ring-blue-500">
+                                    Include transcript attachment
+                                </label>
+                                <p x-show="!meeting.has_summary && meeting.has_transcript" class="text-xs text-amber-600">
+                                    Note: No summary available yet. Only transcript will be sent.
+                                </p>
+                            </div>
+                            <div class="flex justify-end space-x-2">
+                                <button type="button" @click="showSendForm = false"
+                                        class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800">
+                                    Cancel
+                                </button>
+                                <button type="submit"
+                                        class="px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
+                                    Send
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -96,40 +160,7 @@
 
     <!-- Summary section -->
     <div class="bg-white shadow rounded-lg p-6 mb-6">
-        <div class="flex justify-between items-center mb-4">
-            <h2 class="text-xl font-semibold">Meeting Summary</h2>
-            <!-- Send to Email button -->
-            <div x-show="meeting.has_summary" x-data="{ showSendForm: false }" class="relative">
-                <button @click="showSendForm = !showSendForm"
-                        class="px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 flex items-center">
-                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
-                    </svg>
-                    Send to Email
-                </button>
-                <!-- Send email form dropdown -->
-                <div x-show="showSendForm" @click.away="showSendForm = false"
-                     class="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg z-10 p-4 border">
-                    <h4 class="text-sm font-semibold mb-2">Send Summary to Email</h4>
-                    <p class="text-xs text-gray-500 mb-3">Send this summary to any email address (bypasses opt-in)</p>
-                    <form @submit.prevent="sendToEmail($refs.emailInput.value); showSendForm = false">
-                        <input type="email" x-ref="emailInput" placeholder="email@example.com"
-                               class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                               required>
-                        <div class="flex justify-end space-x-2">
-                            <button type="button" @click="showSendForm = false"
-                                    class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800">
-                                Cancel
-                            </button>
-                            <button type="submit"
-                                    class="px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
-                                Send
-                            </button>
-                        </div>
-                    </form>
-                </div>
-            </div>
-        </div>
+        <h2 class="text-xl font-semibold mb-4">Meeting Summary</h2>
         <div x-show="meeting.summary_text" class="prose max-w-none" x-html="renderMarkdown(meeting.summary_text)"></div>
         <div x-show="!meeting.summary_text && meeting.status !== 'transcript_only'" class="text-gray-500">Summary not available</div>
         <div x-show="!meeting.summary_text && meeting.status === 'transcript_only'" class="text-gray-500">
@@ -248,7 +279,7 @@ function meetingDetailData(meetingId) {
             this.processing = false;
         },
 
-        async sendToEmail(email) {
+        async sendToEmail(email, includeTranscript = false) {
             if (!email || !email.includes('@')) {
                 this.showStatus('Please enter a valid email address', 'error');
                 return;
@@ -257,11 +288,12 @@ function meetingDetailData(meetingId) {
                 const response = await fetch(`/api/meetings/${meetingId}/send-to`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({email: email})
+                    body: JSON.stringify({email: email, include_transcript: includeTranscript})
                 });
                 const data = await response.json();
                 if (response.ok) {
-                    this.showStatus(`Summary queued to send to ${email}`, 'success');
+                    const content = includeTranscript ? 'Summary and transcript' : 'Summary';
+                    this.showStatus(`${content} queued to send to ${email}`, 'success');
                 } else {
                     this.showStatus(data.detail || 'Failed to send', 'error');
                 }

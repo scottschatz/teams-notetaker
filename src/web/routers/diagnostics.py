@@ -4,11 +4,14 @@ Diagnostics Router
 System diagnostics and monitoring endpoints.
 """
 
+import asyncio
 import logging
 import subprocess
+import uuid
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, Depends, Query, HTTPException
 from fastapi.responses import HTMLResponse
+from typing import Dict, Any, Optional
 
 from ...core.database import DatabaseManager, JobQueue, Meeting
 from ...core.config import get_config
@@ -18,6 +21,9 @@ from sqlalchemy import func, desc
 
 
 logger = logging.getLogger(__name__)
+
+# In-memory storage for background lookback tasks
+_lookback_tasks: Dict[str, Dict[str, Any]] = {}
 
 router = APIRouter(prefix="/diagnostics", tags=["diagnostics"])
 
@@ -139,8 +145,9 @@ async def get_system_status(db: DatabaseManager = Depends(get_db)):
                 'type': job.job_type,
                 'status': job.status,
                 'meeting_id': meeting_id,
-                'created_at': job.created_at.isoformat() if job.created_at else None,
-                'completed_at': job.completed_at.isoformat() if job.completed_at else None
+                # Add 'Z' suffix to indicate UTC (database stores UTC-naive)
+                'created_at': job.created_at.isoformat() + 'Z' if job.created_at else None,
+                'completed_at': job.completed_at.isoformat() + 'Z' if job.completed_at else None
             })
 
     return {
@@ -159,6 +166,43 @@ async def get_system_status(db: DatabaseManager = Depends(get_db)):
     }
 
 
+async def _run_lookback_task(task_id: str, hours: int, db: DatabaseManager):
+    """Background task to run lookback without blocking the web server."""
+    try:
+        from ...webhooks.call_records_handler import CallRecordsWebhookHandler
+
+        config = get_config()
+        graph_client = GraphAPIClient(config.graph_api, use_beta=True)
+        handler = CallRecordsWebhookHandler(db, graph_client)
+
+        lookback_start = datetime.utcnow() - timedelta(hours=hours)
+
+        logger.info(f"Background lookback {task_id} started for last {hours} hours")
+
+        # Run the backfill
+        stats = await handler.backfill_recent_meetings(lookback_hours=hours)
+
+        # Update task with results
+        _lookback_tasks[task_id].update({
+            "status": "completed",
+            "completed_at": datetime.utcnow().isoformat() + 'Z',
+            "success": True,
+            "lookback_start": lookback_start.isoformat() + 'Z',
+            "statistics": stats
+        })
+
+        logger.info(f"Background lookback {task_id} completed: {stats}")
+
+    except Exception as e:
+        logger.error(f"Background lookback {task_id} failed: {e}", exc_info=True)
+        _lookback_tasks[task_id].update({
+            "status": "failed",
+            "completed_at": datetime.utcnow().isoformat() + 'Z',
+            "success": False,
+            "error": str(e)
+        })
+
+
 @router.post("/api/force-lookback")
 @limiter.limit("5/minute")  # Rate limit: max 5 backfills per minute
 async def force_lookback(
@@ -169,42 +213,81 @@ async def force_lookback(
     """
     Force a lookback/backfill for the specified number of hours.
 
+    Runs in background to avoid blocking the web server.
+    Returns immediately with a task_id to poll for results.
+
     Rate limited to 5 requests per minute to prevent API abuse.
-
-    Args:
-        request: FastAPI request object (for rate limiting)
-        hours: Number of hours to look back
-
-    Returns:
-        Success message with job count
     """
-    try:
-        from ...webhooks.call_records_handler import CallRecordsWebhookHandler
-        from ...graph.client import GraphAPIClient
-        from datetime import datetime, timedelta
+    # Check if there's already a running lookback
+    for task_id, task in _lookback_tasks.items():
+        if task.get("status") == "running":
+            return {
+                "success": False,
+                "message": "A lookback is already running",
+                "task_id": task_id,
+                "hours": task.get("hours"),
+                "started_at": task.get("started_at")
+            }
 
-        config = get_config()
-        graph_client = GraphAPIClient(config.graph_api, use_beta=True)
-        handler = CallRecordsWebhookHandler(db, graph_client)
+    # Create a new task
+    task_id = str(uuid.uuid4())[:8]
+    _lookback_tasks[task_id] = {
+        "status": "running",
+        "hours": hours,
+        "started_at": datetime.utcnow().isoformat() + 'Z'
+    }
 
-        # Calculate lookback time
-        lookback_start = datetime.now() - timedelta(hours=hours)
+    logger.info(f"Force lookback triggered for last {hours} hours (task_id={task_id})")
 
-        logger.info(f"Force lookback triggered for last {hours} hours (from {lookback_start})")
+    # Start background task
+    asyncio.create_task(_run_lookback_task(task_id, hours, db))
 
-        # Trigger backfill (FIXED: correct method name + await)
-        stats = await handler.backfill_recent_meetings(lookback_hours=hours)
+    return {
+        "success": True,
+        "message": f"Lookback started for last {hours} hours",
+        "task_id": task_id,
+        "status": "running"
+    }
 
+
+@router.get("/api/lookback-status/{task_id}")
+async def get_lookback_status(task_id: str):
+    """
+    Get the status of a background lookback task.
+    """
+    task = _lookback_tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return {
+        "task_id": task_id,
+        **task
+    }
+
+
+@router.get("/api/lookback-status")
+async def get_current_lookback_status():
+    """
+    Get the status of any currently running lookback, or the most recent completed one.
+    """
+    # Find running task first
+    for task_id, task in _lookback_tasks.items():
+        if task.get("status") == "running":
+            return {
+                "task_id": task_id,
+                **task
+            }
+
+    # Return most recent completed task
+    if _lookback_tasks:
+        # Get most recent by started_at
+        recent = max(_lookback_tasks.items(), key=lambda x: x[1].get("started_at", ""))
         return {
-            "success": True,
-            "message": f"Lookback complete for last {hours} hours",
-            "lookback_start": lookback_start.isoformat(),
-            "statistics": stats
+            "task_id": recent[0],
+            **recent[1]
         }
 
-    except Exception as e:
-        logger.error(f"Force lookback failed: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+    return {"status": "none", "message": "No lookback tasks found"}
 
 
 @router.get("/api/logs")
@@ -379,7 +462,7 @@ async def get_webhook_status():
             "active_count": active_count,
             "total_count": len(subscriptions),
             "subscriptions": subscriptions,
-            "checked_at": now.isoformat()
+            "checked_at": now.isoformat() + 'Z'  # UTC timestamp
         }
 
     except Exception as e:

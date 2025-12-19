@@ -60,6 +60,9 @@ class MeetingResponse(BaseModel):
     # Meeting settings (transcription/recording enabled)
     allow_transcription: Optional[bool] = None
     allow_recording: Optional[bool] = None
+    # Chat event signals (from meeting chat messages)
+    recording_started: Optional[bool] = None  # Recording event seen in chat
+    transcript_available: Optional[bool] = None  # Transcript event seen in chat
     # Call type (groupCall, peerToPeer, unknown)
     call_type: Optional[str] = None
 
@@ -197,6 +200,9 @@ async def list_meetings(
                 # Meeting settings
                 "allow_transcription": meeting.allow_transcription,
                 "allow_recording": meeting.allow_recording,
+                # Chat event signals
+                "recording_started": meeting.recording_started,
+                "transcript_available": meeting.transcript_available,
                 "call_type": meeting.call_type
             }
             meetings.append(MeetingResponse(**meeting_dict))

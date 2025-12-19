@@ -82,6 +82,9 @@
                         <th @click="sortBy('status')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Status <span x-show="sortColumn === 'status'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
                         </th>
+                        <th class="px-2 py-2 text-center text-xs font-medium text-gray-500 uppercase" title="Chat Event Signals: Recording Started / Transcript Available">
+                            Rec/Tsc
+                        </th>
                         <th class="px-2 py-2 text-right text-xs font-medium text-gray-500 uppercase w-16"></th>
                     </tr>
                 </thead>
@@ -150,6 +153,24 @@
                                       }"
                                       :title="getStatusTooltip(meeting)"
                                       x-text="getStatusDisplay(meeting)">
+                                </span>
+                            </td>
+                            <!-- Chat Event Signals: Recording Started / Transcript Available -->
+                            <td class="px-2 py-2 whitespace-nowrap text-center text-xs">
+                                <span class="inline-flex items-center space-x-1" :title="getChatEventsTooltip(meeting)">
+                                    <!-- Recording Started -->
+                                    <span :class="{
+                                        'text-green-600': meeting.recording_started === true,
+                                        'text-red-400': meeting.recording_started === false,
+                                        'text-gray-300': meeting.recording_started === null || meeting.recording_started === undefined
+                                    }" x-text="meeting.recording_started === true ? '✓' : (meeting.recording_started === false ? '✗' : '–')"></span>
+                                    <span class="text-gray-300">/</span>
+                                    <!-- Transcript Available -->
+                                    <span :class="{
+                                        'text-green-600': meeting.transcript_available === true,
+                                        'text-red-400': meeting.transcript_available === false,
+                                        'text-gray-300': meeting.transcript_available === null || meeting.transcript_available === undefined
+                                    }" x-text="meeting.transcript_available === true ? '✓' : (meeting.transcript_available === false ? '✗' : '–')"></span>
                                 </span>
                             </td>
                             <td class="px-2 py-2 whitespace-nowrap text-right text-sm font-medium">
@@ -574,6 +595,30 @@ function meetingsData() {
                 'failed': 'Processing failed - check logs'
             };
             return tooltips[meeting.status] || meeting.status;
+        },
+
+        getChatEventsTooltip(meeting) {
+            const rec = meeting.recording_started;
+            const tsc = meeting.transcript_available;
+
+            if (rec === null && tsc === null) {
+                return 'Chat events not yet checked';
+            }
+
+            let parts = [];
+            if (rec === true) {
+                parts.push('Recording was started (transcription enabled)');
+            } else if (rec === false) {
+                parts.push('No recording event found');
+            }
+
+            if (tsc === true) {
+                parts.push('Transcript IS AVAILABLE');
+            } else if (tsc === false) {
+                parts.push('Transcript not yet available');
+            }
+
+            return parts.join(' | ') || 'Unknown';
         },
 
         formatModel(model) {

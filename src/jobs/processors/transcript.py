@@ -462,13 +462,17 @@ class TranscriptProcessor(BaseProcessor):
                                 "warning"
                             )
 
-                        # Store the result if we just determined it
-                        if allow_transcription is not None:
-                            with self.db.get_session() as session:
-                                db_meeting = session.query(Meeting).filter_by(id=meeting_id).first()
-                                if db_meeting and db_meeting.allow_transcription is None:
+                        # Store chat event signals on the meeting record
+                        with self.db.get_session() as session:
+                            db_meeting = session.query(Meeting).filter_by(id=meeting_id).first()
+                            if db_meeting:
+                                # Always update these - they may change between retries
+                                db_meeting.recording_started = recording_started
+                                db_meeting.transcript_available = transcript_available
+                                # Only set allow_transcription if not already known
+                                if db_meeting.allow_transcription is None and allow_transcription is not None:
                                     db_meeting.allow_transcription = allow_transcription
-                                    session.commit()
+                                session.commit()
                     else:
                         self._log_progress(
                             job,

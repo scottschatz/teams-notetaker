@@ -159,6 +159,11 @@ class Meeting(Base):
     allow_transcription = Column(Boolean)  # None=unknown, True=enabled, False=disabled
     allow_recording = Column(Boolean)  # None=unknown, True=enabled, False=disabled
 
+    # Chat event signals (from meeting chat messages)
+    # These indicate transcript readiness based on system messages in the chat
+    recording_started = Column(Boolean)  # callRecordingEventMessageDetail seen = recording was started
+    transcript_available = Column(Boolean)  # callTranscriptEventMessageDetail seen = transcript IS READY
+
     # Call type (from callRecords API)
     # Values: 'groupCall', 'peerToPeer', 'scheduled', 'adHoc', 'unknown'
     call_type = Column(String(50))

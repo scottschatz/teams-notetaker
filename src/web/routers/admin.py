@@ -2,6 +2,7 @@
 Admin routes for user management and system configuration.
 """
 
+from datetime import datetime, timezone
 from fastapi import APIRouter, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -9,6 +10,8 @@ from sqlalchemy import desc
 
 from ...core.database import DatabaseManager, UserPreference, EmailAlias
 from ...core.config import get_config
+from ...graph.client import GraphAPIClient
+from ...core.exceptions import GraphAPIError
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory="src/web/templates")
@@ -167,6 +170,130 @@ async def unsubscribe_all():
             "updated": count,
             "message": f"Disabled email delivery for {count} users"
         }
+
+
+@router.post("/users/{email}/refresh")
+async def refresh_user_info(email: str):
+    """Refresh user info from Azure AD (GUID, primary email, job title, etc.)."""
+    try:
+        graph_client = GraphAPIClient(config.graph_api)
+
+        # Look up user in Azure AD
+        user_info = graph_client.get(
+            f"/users/{email}",
+            params={"$select": "id,mail,userPrincipalName,displayName,jobTitle"}
+        )
+
+        user_id = user_info.get("id")
+        primary_email = user_info.get("mail") or user_info.get("userPrincipalName", "")
+        primary_email = primary_email.lower().strip() if primary_email else email.lower()
+        display_name = user_info.get("displayName") or ""
+        job_title = user_info.get("jobTitle") or ""
+
+        # Update or create EmailAlias record
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
+        with db.get_session() as session:
+            alias_record = EmailAlias(
+                alias_email=email.lower(),
+                primary_email=primary_email,
+                user_id=user_id,
+                display_name=display_name,
+                job_title=job_title,
+                resolved_at=now,
+                last_used_at=now
+            )
+            session.merge(alias_record)
+
+            # If primary email is different, also store that mapping
+            if primary_email and primary_email != email.lower():
+                primary_record = EmailAlias(
+                    alias_email=primary_email,
+                    primary_email=primary_email,
+                    user_id=user_id,
+                    display_name=display_name,
+                    job_title=job_title,
+                    resolved_at=now,
+                    last_used_at=now
+                )
+                session.merge(primary_record)
+
+            session.commit()
+
+        return {
+            "success": True,
+            "user_id": user_id,
+            "primary_email": primary_email,
+            "display_name": display_name,
+            "job_title": job_title,
+            "message": f"Refreshed info for {email}"
+        }
+
+    except GraphAPIError as e:
+        raise HTTPException(status_code=404, detail=f"User not found in Azure AD: {e}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to refresh user info: {e}")
+
+
+@router.post("/users/refresh-all")
+async def refresh_all_users():
+    """Refresh Azure AD info for all users."""
+    graph_client = GraphAPIClient(config.graph_api)
+
+    with db.get_session() as session:
+        users = session.query(UserPreference).all()
+        updated = 0
+        errors = []
+
+        for user in users:
+            try:
+                user_info = graph_client.get(
+                    f"/users/{user.user_email}",
+                    params={"$select": "id,mail,userPrincipalName,displayName,jobTitle"}
+                )
+
+                user_id = user_info.get("id")
+                primary_email = user_info.get("mail") or user_info.get("userPrincipalName", "")
+                primary_email = primary_email.lower().strip() if primary_email else user.user_email.lower()
+                display_name = user_info.get("displayName") or ""
+                job_title = user_info.get("jobTitle") or ""
+
+                now = datetime.now(timezone.utc).replace(tzinfo=None)
+                alias_record = EmailAlias(
+                    alias_email=user.user_email.lower(),
+                    primary_email=primary_email,
+                    user_id=user_id,
+                    display_name=display_name,
+                    job_title=job_title,
+                    resolved_at=now,
+                    last_used_at=now
+                )
+                session.merge(alias_record)
+
+                # If primary email is different, also store that mapping
+                if primary_email and primary_email != user.user_email.lower():
+                    primary_record = EmailAlias(
+                        alias_email=primary_email,
+                        primary_email=primary_email,
+                        user_id=user_id,
+                        display_name=display_name,
+                        job_title=job_title,
+                        resolved_at=now,
+                        last_used_at=now
+                    )
+                    session.merge(primary_record)
+
+                updated += 1
+            except Exception as e:
+                errors.append(f"{user.user_email}: {e}")
+
+        session.commit()
+
+    return {
+        "success": True,
+        "updated": updated,
+        "errors": errors,
+        "message": f"Refreshed {updated} users" + (f", {len(errors)} errors" if errors else "")
+    }
 
 
 @router.get("/email-aliases", response_class=HTMLResponse)

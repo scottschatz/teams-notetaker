@@ -7,6 +7,7 @@ Periodically checks inbox for commands and processes them:
 - Auto-replies are ignored
 """
 
+import html
 import logging
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta, timezone
@@ -112,8 +113,8 @@ class InboxMonitor:
             # Get primary email (prefer 'mail' field, fall back to UPN)
             primary_email = user_info.get("mail") or user_info.get("userPrincipalName", "")
             primary_email = primary_email.lower().strip()
-            display_name = user_info.get("displayName", sender_name)
-            job_title = user_info.get("jobTitle", "")
+            display_name = user_info.get("displayName") or sender_name
+            job_title = user_info.get("jobTitle") or ""  # Use 'or' to handle None values
 
             # Cache the result in database (set resolved_at for cache expiration tracking)
             now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -421,11 +422,12 @@ class InboxMonitor:
 
     def _send_subscribe_confirmation(self, email: str, name: str):
         """Send subscription confirmation email."""
+        safe_name = html.escape(name) if name else 'there'
         body = f"""
         <html>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             <h2>Subscription Confirmed</h2>
-            <p>Hi {name or 'there'},</p>
+            <p>Hi {safe_name},</p>
             <p>You've been successfully subscribed to meeting summary emails.</p>
             <p>You'll receive summaries for any Teams meetings you attend that have transcription enabled.</p>
             <p>If you ever want to unsubscribe, click the button below or reply to any summary email with "unsubscribe" in the subject line.</p>
@@ -450,11 +452,12 @@ class InboxMonitor:
 
     def _send_unsubscribe_confirmation(self, email: str, name: str):
         """Send unsubscription confirmation email."""
+        safe_name = html.escape(name) if name else 'there'
         body = f"""
         <html>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             <h2>Unsubscription Confirmed</h2>
-            <p>Hi {name or 'there'},</p>
+            <p>Hi {safe_name},</p>
             <p>You've been successfully unsubscribed from meeting summary emails.</p>
             <p>You will no longer receive automated meeting summaries.</p>
             <p>If you change your mind, you can subscribe again by clicking the button below or sending an email with "subscribe" in the subject line.</p>
@@ -479,11 +482,12 @@ class InboxMonitor:
 
     def _send_feedback_acknowledgment(self, email: str, name: str):
         """Send feedback acknowledgment email."""
+        safe_name = html.escape(name) if name else 'there'
         body = f"""
         <html>
         <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
             <h2>Thank You for Your Feedback</h2>
-            <p>Hi {name or 'there'},</p>
+            <p>Hi {safe_name},</p>
             <p>Thank you for taking the time to share your feedback about the meeting summary service.</p>
             <p>Your input helps us improve the service for everyone.</p>
             <p>Best regards,<br/>Meeting Notes Bot</p>

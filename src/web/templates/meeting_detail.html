@@ -8,17 +8,165 @@
         <a href="/dashboard/meetings" class="text-blue-600 hover:underline">&larr; Back to Meetings</a>
     </div>
 
-    <h1 class="text-3xl font-bold text-gray-900 mb-6" x-text="meeting.subject || 'Loading...'"></h1>
+    <div class="flex justify-between items-start mb-6">
+        <div>
+            <h1 class="text-3xl font-bold text-gray-900" x-text="meeting.subject || 'Loading...'"></h1>
+            <div class="mt-2 flex items-center space-x-3">
+                <!-- Status badge -->
+                <span class="px-2 py-1 inline-flex text-xs leading-5 font-semibold rounded-full"
+                      :class="{
+                          'bg-green-100 text-green-800': meeting.status === 'completed',
+                          'bg-blue-100 text-blue-800': meeting.status === 'processing',
+                          'bg-yellow-100 text-yellow-800': meeting.status === 'queued',
+                          'bg-gray-100 text-gray-800': meeting.status === 'discovered',
+                          'bg-orange-100 text-orange-800': meeting.status === 'transcript_only',
+                          'bg-red-100 text-red-800': meeting.status === 'failed'
+                      }"
+                      x-text="meeting.status === 'transcript_only' ? 'Transcript Only' : meeting.status">
+                </span>
+                <!-- Has transcript indicator -->
+                <span x-show="meeting.has_transcript" class="text-green-600 text-sm">
+                    <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    Transcript
+                </span>
+                <!-- Has summary indicator -->
+                <span x-show="meeting.has_summary" class="text-blue-600 text-sm">
+                    <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+                    </svg>
+                    Summary
+                </span>
+            </div>
+        </div>
 
-    <div class="bg-white shadow rounded-lg p-6 mb-6">
-        <h2 class="text-xl font-semibold mb-4">Meeting Summary</h2>
-        <div x-show="meeting.summary_text" class="prose max-w-none" x-html="renderMarkdown(meeting.summary_text)"></div>
-        <div x-show="!meeting.summary_text" class="text-gray-500">Summary not available</div>
+        <!-- Action buttons -->
+        <div class="flex flex-col space-y-2">
+            <!-- Generate Summary button (for transcript-only meetings) -->
+            <button x-show="meeting.status === 'transcript_only' || (meeting.has_transcript && !meeting.has_summary)"
+                    @click="generateSummary()"
+                    :disabled="processing"
+                    class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center">
+                <svg x-show="!processing" class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                </svg>
+                <svg x-show="processing" class="animate-spin w-4 h-4 mr-2" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <span x-text="processing ? 'Processing...' : 'Generate Summary'"></span>
+            </button>
+
+            <!-- Reprocess button (for completed meetings) -->
+            <button x-show="meeting.status === 'completed'"
+                    @click="reprocessMeeting()"
+                    :disabled="processing"
+                    class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 disabled:opacity-50 flex items-center">
+                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                Regenerate Summary
+            </button>
+        </div>
     </div>
 
+    <!-- Meeting metadata -->
+    <div class="bg-white shadow rounded-lg p-6 mb-6">
+        <h2 class="text-lg font-semibold mb-4">Meeting Details</h2>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+            <div>
+                <span class="text-gray-500">Organizer:</span>
+                <p class="font-medium" x-text="meeting.organizer_name || '-'"></p>
+            </div>
+            <div>
+                <span class="text-gray-500">Start Time:</span>
+                <p class="font-medium" x-text="formatDateTime(meeting.start_time)"></p>
+            </div>
+            <div>
+                <span class="text-gray-500">Duration:</span>
+                <p class="font-medium" x-text="meeting.duration_minutes ? meeting.duration_minutes + ' minutes' : '-'"></p>
+            </div>
+            <div>
+                <span class="text-gray-500">Participants:</span>
+                <p class="font-medium" x-text="meeting.participant_count || '-'"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Summary section -->
+    <div class="bg-white shadow rounded-lg p-6 mb-6">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-semibold">Meeting Summary</h2>
+            <!-- Send to Email button -->
+            <div x-show="meeting.has_summary" x-data="{ showSendForm: false }" class="relative">
+                <button @click="showSendForm = !showSendForm"
+                        class="px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 flex items-center">
+                    <svg class="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+                    </svg>
+                    Send to Email
+                </button>
+                <!-- Send email form dropdown -->
+                <div x-show="showSendForm" @click.away="showSendForm = false"
+                     class="absolute right-0 mt-2 w-80 bg-white rounded-lg shadow-lg z-10 p-4 border">
+                    <h4 class="text-sm font-semibold mb-2">Send Summary to Email</h4>
+                    <p class="text-xs text-gray-500 mb-3">Send this summary to any email address (bypasses opt-in)</p>
+                    <form @submit.prevent="sendToEmail($refs.emailInput.value); showSendForm = false">
+                        <input type="email" x-ref="emailInput" placeholder="email@example.com"
+                               class="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                               required>
+                        <div class="flex justify-end space-x-2">
+                            <button type="button" @click="showSendForm = false"
+                                    class="px-3 py-1.5 text-sm text-gray-600 hover:text-gray-800">
+                                Cancel
+                            </button>
+                            <button type="submit"
+                                    class="px-3 py-1.5 bg-blue-600 text-white text-sm rounded hover:bg-blue-700">
+                                Send
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        <div x-show="meeting.summary_text" class="prose max-w-none" x-html="renderMarkdown(meeting.summary_text)"></div>
+        <div x-show="!meeting.summary_text && meeting.status !== 'transcript_only'" class="text-gray-500">Summary not available</div>
+        <div x-show="!meeting.summary_text && meeting.status === 'transcript_only'" class="text-gray-500">
+            <p>No summary generated yet. This meeting's transcript was captured but not auto-processed.</p>
+            <p class="text-sm mt-2">Click "Generate Summary" above to process this transcript.</p>
+        </div>
+    </div>
+
+    <!-- Participants section -->
+    <div x-show="meeting.participants && meeting.participants.length > 0" class="bg-white shadow rounded-lg p-6 mb-6">
+        <h2 class="text-xl font-semibold mb-4">Participants</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            <template x-for="p in meeting.participants" :key="p.email">
+                <div class="flex items-center p-2 bg-gray-50 rounded">
+                    <div class="flex-1">
+                        <p class="font-medium text-sm" x-text="p.display_name || p.email"></p>
+                        <p class="text-xs text-gray-500" x-text="p.email"></p>
+                    </div>
+                    <span x-show="p.is_pilot_user" class="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded-full">Opted In</span>
+                    <span x-show="p.role === 'organizer'" class="px-2 py-0.5 bg-purple-100 text-purple-800 text-xs rounded-full ml-1">Organizer</span>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Transcript section -->
     <div class="bg-white shadow rounded-lg p-6">
         <h2 class="text-xl font-semibold mb-4">Transcript Preview</h2>
-        <pre x-text="meeting.transcript_preview || 'Transcript not available'" class="text-sm text-gray-700 whitespace-pre-wrap"></pre>
+        <pre x-show="meeting.transcript_preview" x-text="meeting.transcript_preview" class="text-sm text-gray-700 whitespace-pre-wrap bg-gray-50 p-4 rounded"></pre>
+        <div x-show="!meeting.transcript_preview" class="text-gray-500">Transcript not available</div>
+    </div>
+
+    <!-- Status message -->
+    <div x-show="statusMessage" x-transition
+         class="fixed bottom-4 right-4 px-4 py-2 rounded-lg shadow-lg"
+         :class="statusType === 'success' ? 'bg-green-500 text-white' : 'bg-red-500 text-white'"
+         x-text="statusMessage">
     </div>
 </div>
 
@@ -27,6 +175,10 @@
 function meetingDetailData(meetingId) {
     return {
         meeting: {},
+        processing: false,
+        statusMessage: '',
+        statusType: 'success',
+
         async loadMeeting() {
             try {
                 const response = await fetch(`/api/meetings/${meetingId}`);
@@ -35,9 +187,87 @@ function meetingDetailData(meetingId) {
                 console.error('Failed to load meeting:', error);
             }
         },
+
         renderMarkdown(text) {
             if (!text) return '';
             return marked.parse(text);
+        },
+
+        formatDateTime(dateString) {
+            if (!dateString) return '-';
+            const hasTimezone = /[Z]$|[+-]\d{2}:\d{2}$/.test(dateString);
+            let date = hasTimezone ? new Date(dateString) : new Date(dateString + 'Z');
+            return date.toLocaleDateString('en-US', {timeZone: 'America/New_York'}) + ' ' +
+                   date.toLocaleTimeString('en-US', {timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit'});
+        },
+
+        showStatus(message, type = 'success') {
+            this.statusMessage = message;
+            this.statusType = type;
+            setTimeout(() => { this.statusMessage = ''; }, 4000);
+        },
+
+        async generateSummary() {
+            this.processing = true;
+            try {
+                const response = await fetch(`/api/meetings/${meetingId}/process`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    this.showStatus('Summary generation started! Refresh in a few moments.', 'success');
+                    // Update status locally
+                    this.meeting.status = 'processing';
+                } else {
+                    this.showStatus(data.detail || 'Failed to start processing', 'error');
+                }
+            } catch (error) {
+                this.showStatus('Error: ' + error.message, 'error');
+            }
+            this.processing = false;
+        },
+
+        async reprocessMeeting() {
+            if (!confirm('Regenerate summary? This will create a new version using the latest AI model.')) {
+                return;
+            }
+            this.processing = true;
+            try {
+                const response = await fetch(`/api/meetings/${meetingId}/reprocess`, {
+                    method: 'POST'
+                });
+                if (response.ok) {
+                    this.showStatus('Reprocessing started! Refresh in a few moments.', 'success');
+                    this.meeting.status = 'processing';
+                } else {
+                    this.showStatus('Failed to start reprocessing', 'error');
+                }
+            } catch (error) {
+                this.showStatus('Error: ' + error.message, 'error');
+            }
+            this.processing = false;
+        },
+
+        async sendToEmail(email) {
+            if (!email || !email.includes('@')) {
+                this.showStatus('Please enter a valid email address', 'error');
+                return;
+            }
+            try {
+                const response = await fetch(`/api/meetings/${meetingId}/send-to`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({email: email})
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    this.showStatus(`Summary queued to send to ${email}`, 'success');
+                } else {
+                    this.showStatus(data.detail || 'Failed to send', 'error');
+                }
+            } catch (error) {
+                this.showStatus('Error: ' + error.message, 'error');
+            }
         }
     }
 }

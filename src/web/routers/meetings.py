@@ -347,3 +347,241 @@ async def get_stats(
     """
     stats = db.get_dashboard_stats()
     return stats
+
+
+@router.post("/{meeting_id}/process")
+async def process_transcript_only_meeting(
+    meeting_id: int,
+    db: DatabaseManager = Depends(get_db)
+):
+    """
+    Manually trigger summary generation for a transcript-only meeting.
+
+    This is used for meetings that were captured but not auto-processed
+    (no opted-in participants at the time).
+
+    Args:
+        meeting_id: Meeting ID
+
+    Returns:
+        Success message with job IDs
+    """
+    with db.get_session() as session:
+        meeting = session.query(Meeting).filter_by(id=meeting_id).first()
+
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        # Check if transcript exists
+        transcript = session.query(Transcript).filter_by(meeting_id=meeting_id).first()
+
+        if transcript:
+            # Transcript exists - create summary job directly
+            summary_job = JobQueue(
+                job_type="generate_summary",
+                meeting_id=meeting_id,
+                input_data={"meeting_id": meeting_id},
+                priority=10,  # High priority for manual requests
+                max_retries=3
+            )
+            session.add(summary_job)
+            session.flush()
+
+            # Distribution job depends on summary
+            distribute_job = JobQueue(
+                job_type="distribute",
+                meeting_id=meeting_id,
+                input_data={"meeting_id": meeting_id},
+                priority=10,
+                depends_on_job_id=summary_job.id,
+                max_retries=5
+            )
+            session.add(distribute_job)
+
+            # Update meeting status
+            meeting.status = "processing"
+            session.commit()
+
+            logger.info(f"Manual processing triggered for meeting {meeting_id} (has transcript)")
+
+            return {
+                "success": True,
+                "message": "Summary generation started",
+                "job_ids": [summary_job.id, distribute_job.id]
+            }
+        else:
+            # No transcript - create fetch_transcript job with auto_process=True
+            fetch_job = JobQueue(
+                job_type="fetch_transcript",
+                meeting_id=meeting_id,
+                input_data={
+                    "meeting_id": meeting_id,
+                    "auto_process": True  # Force auto-processing
+                },
+                priority=10,
+                max_retries=3
+            )
+            session.add(fetch_job)
+
+            # Update meeting status
+            meeting.status = "queued"
+            session.commit()
+
+            logger.info(f"Manual processing triggered for meeting {meeting_id} (fetching transcript)")
+
+            return {
+                "success": True,
+                "message": "Transcript fetch and processing started",
+                "job_ids": [fetch_job.id]
+            }
+
+
+@router.post("/bulk-process")
+async def bulk_process_transcript_only(
+    db: DatabaseManager = Depends(get_db)
+):
+    """
+    Bulk process all transcript-only meetings.
+
+    Finds all meetings with status='transcript_only' and triggers processing for each.
+
+    Returns:
+        Count of meetings queued for processing
+    """
+    with db.get_session() as session:
+        # Find all transcript-only meetings
+        transcript_only_meetings = session.query(Meeting).filter(
+            Meeting.status == "transcript_only",
+            Meeting.has_transcript == True
+        ).all()
+
+        if not transcript_only_meetings:
+            return {
+                "success": True,
+                "message": "No transcript-only meetings found",
+                "processed_count": 0
+            }
+
+        job_ids = []
+        skipped_count = 0
+        for meeting in transcript_only_meetings:
+            # Check for existing pending/running jobs to avoid duplicates
+            existing_job = session.query(JobQueue).filter(
+                JobQueue.meeting_id == meeting.id,
+                JobQueue.job_type == "generate_summary",
+                JobQueue.status.in_(["pending", "running", "retrying"])
+            ).first()
+
+            if existing_job:
+                logger.info(f"Skipping meeting {meeting.id} - already has pending job {existing_job.id}")
+                skipped_count += 1
+                continue
+
+            # Create summary job
+            summary_job = JobQueue(
+                job_type="generate_summary",
+                meeting_id=meeting.id,
+                input_data={"meeting_id": meeting.id},
+                priority=5,  # Normal priority for bulk
+                max_retries=3
+            )
+            session.add(summary_job)
+            session.flush()
+
+            # Distribution job depends on summary
+            distribute_job = JobQueue(
+                job_type="distribute",
+                meeting_id=meeting.id,
+                input_data={"meeting_id": meeting.id},
+                priority=5,
+                depends_on_job_id=summary_job.id,
+                max_retries=5
+            )
+            session.add(distribute_job)
+
+            # Update meeting status
+            meeting.status = "processing"
+            job_ids.append(summary_job.id)
+
+        session.commit()
+
+        processed_count = len(job_ids)
+        logger.info(f"Bulk processing triggered for {processed_count} transcript-only meetings (skipped {skipped_count} with existing jobs)")
+
+        message = f"Processing started for {processed_count} meetings"
+        if skipped_count > 0:
+            message += f" ({skipped_count} skipped - already have pending jobs)"
+
+        return {
+            "success": True,
+            "message": message,
+            "processed_count": processed_count,
+            "skipped_count": skipped_count,
+            "job_ids": job_ids
+        }
+
+
+class SendToEmailRequest(BaseModel):
+    """Request body for send-to endpoint."""
+    email: str
+
+
+@router.post("/{meeting_id}/send-to")
+async def send_summary_to_email(
+    meeting_id: int,
+    request: SendToEmailRequest,
+    db: DatabaseManager = Depends(get_db)
+):
+    """
+    Send meeting summary to an arbitrary email address.
+
+    This bypasses the opt-in check and sends directly to the specified email.
+    Useful for sharing summaries with people who weren't in the meeting.
+
+    Args:
+        meeting_id: Meeting ID
+        request: Request body with email address
+
+    Returns:
+        Success message with job ID
+    """
+    email = request.email.strip().lower()
+
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+
+    with db.get_session() as session:
+        meeting = session.query(Meeting).filter_by(id=meeting_id).first()
+
+        if not meeting:
+            raise HTTPException(status_code=404, detail="Meeting not found")
+
+        # Check if summary exists
+        summary = session.query(Summary).filter_by(meeting_id=meeting_id).first()
+        if not summary:
+            raise HTTPException(status_code=404, detail="No summary found for this meeting. Generate summary first.")
+
+        # Create distribution job targeting specific email
+        job = JobQueue(
+            job_type="distribute",
+            meeting_id=meeting_id,
+            input_data={
+                "meeting_id": meeting_id,
+                "send_to_email": email,  # Special flag for single recipient
+                "bypass_opt_in": True  # Skip preference check
+            },
+            priority=10,
+            status="pending",
+            max_retries=3
+        )
+        session.add(job)
+        session.commit()
+        job_id = job.id
+
+        logger.info(f"Sending summary for meeting {meeting_id} to {email} (job: {job_id})")
+
+        return {
+            "success": True,
+            "message": f"Summary queued to send to {email}",
+            "job_id": job_id
+        }

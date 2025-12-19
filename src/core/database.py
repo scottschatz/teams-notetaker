@@ -133,7 +133,7 @@ class Meeting(Base):
         String(50),
         default="discovered",
         index=True,
-    )  # 'discovered', 'queued', 'processing', 'completed', 'failed', 'skipped'
+    )  # 'discovered', 'queued', 'processing', 'completed', 'failed', 'skipped', 'transcript_only'
 
     # Processing timestamps
     queued_at = Column(DateTime)
@@ -163,7 +163,7 @@ class Meeting(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "status IN ('discovered', 'queued', 'processing', 'completed', 'failed', 'skipped')",
+            "status IN ('discovered', 'queued', 'processing', 'completed', 'failed', 'skipped', 'transcript_only')",
             name="valid_meeting_status",
         ),
     )

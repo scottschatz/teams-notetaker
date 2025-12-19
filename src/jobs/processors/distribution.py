@@ -86,9 +86,15 @@ class DistributionProcessor(BaseProcessor):
 
         meeting_id = job.input_data["meeting_id"]
         resend_target = job.input_data.get("resend_target")  # 'organizer', 'subscribers', 'both', or None
+        send_to_email = job.input_data.get("send_to_email")  # Specific email to send to
+        bypass_opt_in = job.input_data.get("bypass_opt_in", False)  # Skip preference check
 
-        self._log_progress(job, f"Distributing summary for meeting {meeting_id}" +
-                          (f" (resend to: {resend_target})" if resend_target else ""))
+        log_msg = f"Distributing summary for meeting {meeting_id}"
+        if send_to_email:
+            log_msg += f" (send to: {send_to_email})"
+        elif resend_target:
+            log_msg += f" (resend to: {resend_target})"
+        self._log_progress(job, log_msg)
 
         # Get meeting, summary, and participants from database
         meeting = self._get_meeting(meeting_id)
@@ -121,8 +127,12 @@ class DistributionProcessor(BaseProcessor):
                 f"Found {len(participant_emails)} participant email(s)"
             )
 
+            # Handle send_to_email: send to specific email only (bypasses all other logic)
+            if send_to_email:
+                participant_emails = [send_to_email]
+                self._log_progress(job, f"Sending to specific email: {send_to_email}")
             # Filter by resend_target if specified
-            if resend_target:
+            elif resend_target:
                 if resend_target == 'organizer':
                     # Only send to organizer
                     participant_emails = [meeting.organizer_email] if meeting.organizer_email else []
@@ -134,17 +144,21 @@ class DistributionProcessor(BaseProcessor):
                 # 'both' or any other value: send to all (no filtering)
 
             # Filter by preferences using priority logic (opt-in/opt-out system)
-            filtered_emails = []
-            for email in participant_emails:
-                # For resend_target='organizer', skip preference check (always send to organizer)
-                if resend_target == 'organizer':
-                    filtered_emails.append(email)
-                elif self.pref_manager.should_send_email(email, meeting_id):
-                    filtered_emails.append(email)
-                else:
-                    logger.debug(f"Skipping {email} based on preferences")
+            # Skip filtering if bypass_opt_in is set or send_to_email is specified
+            if not bypass_opt_in and not send_to_email:
+                filtered_emails = []
+                for email in participant_emails:
+                    # For resend_target='organizer', skip preference check (always send to organizer)
+                    if resend_target == 'organizer':
+                        filtered_emails.append(email)
+                    elif self.pref_manager.should_send_email(email, meeting_id):
+                        filtered_emails.append(email)
+                    else:
+                        logger.debug(f"Skipping {email} based on preferences")
 
-            participant_emails = filtered_emails
+                participant_emails = filtered_emails
+            else:
+                self._log_progress(job, "Bypassing opt-in check for this distribution")
 
             self._log_progress(
                 job,

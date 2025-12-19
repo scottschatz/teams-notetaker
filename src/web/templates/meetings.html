@@ -16,6 +16,7 @@
                 <option value="">All Statuses</option>
                 <option value="completed">Completed</option>
                 <option value="processing">Processing</option>
+                <option value="transcript_only">Transcript Only</option>
                 <option value="discovered">Discovered</option>
                 <option value="failed">Failed</option>
                 <option value="skipped">Skipped</option>
@@ -116,14 +117,27 @@
                                           'bg-yellow-100 text-yellow-800': meeting.status === 'queued',
                                           'bg-gray-100 text-gray-800': meeting.status === 'discovered',
                                           'bg-gray-100 text-gray-600': meeting.status === 'skipped',
+                                          'bg-orange-100 text-orange-800': meeting.status === 'transcript_only',
                                           'bg-red-100 text-red-800': meeting.status === 'failed'
                                       }"
-                                      :title="meeting.status === 'skipped' && !meeting.has_transcript ? 'Skipped: No transcript available' : ''"
-                                      x-text="meeting.status">
+                                      :title="meeting.status === 'skipped' && !meeting.has_transcript ? 'Skipped: No transcript available' : (meeting.status === 'transcript_only' ? 'Transcript captured, no opted-in participants' : '')"
+                                      x-text="meeting.status === 'transcript_only' ? 'transcript' : meeting.status">
                                 </span>
                             </td>
                             <td class="px-2 py-2 whitespace-nowrap text-right text-sm font-medium">
                                 <div class="flex justify-end space-x-1">
+                                    <!-- Process button (for transcript-only meetings) -->
+                                    <button
+                                        x-show="meeting.status === 'transcript_only'"
+                                        @click="processMeeting(meeting.id)"
+                                        class="text-orange-600 hover:text-orange-900"
+                                        title="Generate Summary"
+                                    >
+                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                                        </svg>
+                                    </button>
+
                                     <!-- Reprocess button -->
                                     <button
                                         @click="reprocessMeeting(meeting.id)"
@@ -449,6 +463,28 @@ function meetingsData() {
                     this.loadMeetings();
                 } else {
                     alert('Failed to reprocess meeting');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        },
+
+        async processMeeting(meetingId) {
+            if (!confirm('Generate summary for this transcript-only meeting?')) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/meetings/${meetingId}/process`, {
+                    method: 'POST'
+                });
+
+                if (response.ok) {
+                    alert('Summary generation started');
+                    this.loadMeetings();
+                } else {
+                    const data = await response.json();
+                    alert(data.detail || 'Failed to start processing');
                 }
             } catch (error) {
                 alert('Error: ' + error.message);

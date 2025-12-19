@@ -330,22 +330,28 @@ class CallRecordsWebhookHandler:
                 # Get participants first (more efficient to check this before API calls)
                 participants = self._extract_participants(call_record)
 
-                # Check if any participants have opted-in
-                opted_in_participants = [
-                    p for p in participants
-                    if self.pref_manager.get_user_preference(p["email"])
-                ]
-
-                if not opted_in_participants:
-                    logger.info(f"No opted-in participants for meeting {online_meeting_id}")
+                # Skip 1-on-1 calls (less than 3 participants) - only capture group meetings
+                if len(participants) < 3:
+                    logger.info(f"Skipping 1-on-1 call with {len(participants)} participants")
                     session.add(ProcessedCallRecord(
                         call_record_id=call_record_id,
                         source=source
                     ))
                     session.commit()
-                    return {"status": "skipped", "reason": "No opted-in participants"}
+                    return {"status": "skipped", "reason": "1-on-1 call (< 3 participants)"}
 
-                logger.info(f"Meeting has {len(opted_in_participants)} opted-in participants")
+                # Check if any participants have opted-in (for auto-processing decision)
+                opted_in_participants = [
+                    p for p in participants
+                    if p.get("email") and self.pref_manager.get_user_preference(p["email"])
+                ]
+                has_opted_in = len(opted_in_participants) > 0
+
+                # Always capture transcript, but only auto-process if opted-in participants exist
+                if has_opted_in:
+                    logger.info(f"Meeting has {len(opted_in_participants)} opted-in participants, will auto-process")
+                else:
+                    logger.info(f"No opted-in participants for {online_meeting_id}, capturing transcript only")
 
                 # Extract organizer info from call record or first participant
                 # callRecords don't have a simple "organizer" field - use organizer from call record
@@ -530,23 +536,28 @@ class CallRecordsWebhookHandler:
                     source=source
                 ))
 
-                # Enqueue fetch_transcript job
+                # Enqueue fetch_transcript job with auto_process flag
                 job = JobQueue(
                     job_type="fetch_transcript",
                     meeting_id=meeting_id,
-                    input_data={"meeting_id": meeting_id},
+                    input_data={
+                        "meeting_id": meeting_id,
+                        "auto_process": has_opted_in  # Controls downstream job creation
+                    },
                     priority=5
                 )
                 session.add(job)
                 session.commit()
 
-                logger.info(f"✅ Enqueued fetch_transcript job for meeting {meeting_id}")
+                status_msg = "will auto-process" if has_opted_in else "transcript only"
+                logger.info(f"✅ Enqueued fetch_transcript job for meeting {meeting_id} ({status_msg})")
 
                 return {
                     "status": "processed",
                     "call_record_id": call_record_id,
                     "meeting_id": meeting_id,
                     "opted_in_count": len(opted_in_participants),
+                    "auto_process": has_opted_in,
                     "job_created": True
                 }
 
@@ -874,20 +885,12 @@ class CallRecordsWebhookHandler:
                     participants = self._extract_participants(record)
                     logger.debug(f"CallRecord {call_record_id[:16]}... has {len(participants)} participants: {[p.get('email') for p in participants]}")
 
-                    # Check for opted-in participants
-                    opted_in_participants = [
-                        p for p in participants
-                        if self.pref_manager.get_user_preference(p["email"])
-                    ]
-
-                    if not opted_in_participants:
-                        logger.info(f"No opted-in participants for callRecord {call_record_id}")
-                        stats["skipped_no_optin"] += 1
-
-                        # Still mark as processed to avoid re-checking
+                    # Skip 1-on-1 calls (less than 3 participants) - only capture group meetings
+                    if len(participants) < 3:
+                        logger.debug(f"Skipping 1-on-1 call {call_record_id} with {len(participants)} participants")
+                        stats["skipped_no_optin"] += 1  # Reuse this counter for skipped calls
                         try:
                             with self.db.get_session() as session:
-                                # Check if already exists first
                                 existing = session.query(ProcessedCallRecord).filter_by(
                                     call_record_id=call_record_id
                                 ).first()
@@ -898,11 +901,20 @@ class CallRecordsWebhookHandler:
                                     ))
                                     session.commit()
                         except Exception as e:
-                            # Duplicate key or other error - just skip
                             logger.debug(f"Could not mark {call_record_id} as processed: {e}")
                         continue
 
-                    # Process the callRecord (creates meeting and tries to fetch transcript)
+                    # Check for opted-in participants (for logging, but process all meetings now)
+                    opted_in_participants = [
+                        p for p in participants
+                        if p.get("email") and self.pref_manager.get_user_preference(p["email"])
+                    ]
+                    has_opted_in = len(opted_in_participants) > 0
+
+                    if not has_opted_in:
+                        logger.info(f"No opted-in participants for callRecord {call_record_id}, will capture transcript only")
+
+                    # Process the callRecord (creates meeting and fetches transcript for ALL meetings)
                     result = await self._process_call_record(call_record_id, source="backfill")
 
                     if result["status"] == "processed":

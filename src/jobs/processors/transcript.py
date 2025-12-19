@@ -335,35 +335,48 @@ class TranscriptProcessor(BaseProcessor):
                 meeting_in_session = session.query(Meeting).filter_by(id=meeting_id).first()
                 if meeting_in_session:
                     meeting_in_session.has_transcript = True
-                    meeting_in_session.status = "processing"
                     if recording_sharepoint_url:
                         meeting_in_session.recording_sharepoint_url = recording_sharepoint_url
 
-                # Create next jobs in chain: generate_summary -> distribute
-                summary_job = JobQueue(
-                    job_type="generate_summary",
-                    meeting_id=meeting_id,
-                    input_data={"meeting_id": meeting_id},
-                    priority=5,
-                    max_retries=3
-                )
-                session.add(summary_job)
-                session.flush()  # Get summary_job.id
+                # Check auto_process flag from job input_data (default True for backwards compat)
+                auto_process = job.input_data.get("auto_process", True) if job.input_data else True
 
-                # Distribution job depends on summary completion
-                distribute_job = JobQueue(
-                    job_type="distribute",
-                    meeting_id=meeting_id,
-                    input_data={"meeting_id": meeting_id},
-                    priority=5,
-                    depends_on_job_id=summary_job.id,
-                    max_retries=5
-                )
-                session.add(distribute_job)
+                if auto_process:
+                    # Full processing: create summary and distribution jobs
+                    if meeting_in_session:
+                        meeting_in_session.status = "processing"
 
-                session.commit()
+                    # Create next jobs in chain: generate_summary -> distribute
+                    summary_job = JobQueue(
+                        job_type="generate_summary",
+                        meeting_id=meeting_id,
+                        input_data={"meeting_id": meeting_id},
+                        priority=5,
+                        max_retries=3
+                    )
+                    session.add(summary_job)
+                    session.flush()  # Get summary_job.id
 
-            self._log_progress(job, f"✓ Transcript saved, summary job enqueued (id: {transcript_id})")
+                    # Distribution job depends on summary completion
+                    distribute_job = JobQueue(
+                        job_type="distribute",
+                        meeting_id=meeting_id,
+                        input_data={"meeting_id": meeting_id},
+                        priority=5,
+                        depends_on_job_id=summary_job.id,
+                        max_retries=5
+                    )
+                    session.add(distribute_job)
+                    session.commit()
+
+                    self._log_progress(job, f"✓ Transcript saved, summary job enqueued (id: {transcript_id})")
+                else:
+                    # Transcript only: no downstream jobs, just capture for RAG
+                    if meeting_in_session:
+                        meeting_in_session.status = "transcript_only"
+                    session.commit()
+
+                    self._log_progress(job, f"✓ Transcript captured (transcript only mode, no auto-processing)")
 
             return self._create_output_data(
                 success=True,

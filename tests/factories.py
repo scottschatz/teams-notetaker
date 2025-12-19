@@ -180,17 +180,23 @@ class DatabaseTestFactory:
     @staticmethod
     def create_user_preference(
         email: str = "user@example.com",
+        user_id: Optional[str] = None,
         receive_emails: bool = True,
         email_preference: str = 'all'
     ):
         """Create a UserPreference model instance for testing."""
         from src.core.database import UserPreference
 
+        # Generate test GUID if not provided
+        if user_id is None:
+            user_id = str(uuid.uuid4())
+
         return UserPreference(
+            user_id=user_id,
             user_email=email,
             receive_emails=receive_emails,
             email_preference=email_preference,
-            updated_at=datetime.now(timezone.utc)
+            updated_at=datetime.now(timezone.utc).replace(tzinfo=None)
         )
 
     @staticmethod

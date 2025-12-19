@@ -3,13 +3,19 @@ User Preference Management
 
 Manages user preferences for meeting summary distribution.
 Supports opt-in/opt-out for email summaries via database storage.
+
+Uses Azure AD user_id (GUID) as the primary identity key for stable matching
+across email aliases and address changes.
 """
 
 import logging
-from typing import Optional, List
-from datetime import datetime
+from typing import Optional, List, Tuple
+from datetime import datetime, timezone
 
 from ..core.database import DatabaseManager, UserPreference, MeetingPreference, Meeting, EmailAlias
+from ..core.config import get_config
+from ..graph.client import GraphAPIClient
+from ..core.exceptions import GraphAPIError
 
 
 logger = logging.getLogger(__name__)
@@ -158,6 +164,102 @@ class PreferenceManager:
 
         return [email]
 
+    def _resolve_user_id_from_graph(self, email: str) -> Tuple[Optional[str], str, str]:
+        """
+        Resolve email to user_id (GUID) via Graph API.
+
+        Fetches user info from Azure AD and caches the alias mapping.
+
+        Args:
+            email: Email address to resolve
+
+        Returns:
+            Tuple of (user_id, primary_email, display_name)
+            user_id may be None if Graph API lookup fails
+
+        Side Effects:
+            Creates/updates EmailAlias record with resolved info
+        """
+        email = email.lower().strip()
+
+        try:
+            config = get_config()
+            graph_client = GraphAPIClient(config.graph_api)
+
+            user_info = graph_client.get(
+                f"/users/{email}",
+                params={"$select": "id,mail,userPrincipalName,displayName,jobTitle"}
+            )
+
+            user_id = user_info.get("id")
+            primary_email = user_info.get("mail") or user_info.get("userPrincipalName", "")
+            primary_email = primary_email.lower().strip() if primary_email else email
+            display_name = user_info.get("displayName") or ""
+            job_title = user_info.get("jobTitle") or ""
+
+            # Cache the result in EmailAlias
+            now = datetime.now(timezone.utc).replace(tzinfo=None)
+            with self.db.get_session() as session:
+                alias_record = EmailAlias(
+                    alias_email=email,
+                    primary_email=primary_email,
+                    user_id=user_id,
+                    display_name=display_name,
+                    job_title=job_title,
+                    resolved_at=now,
+                    last_used_at=now
+                )
+                session.merge(alias_record)
+
+                # Also cache primary email if different
+                if primary_email and primary_email != email:
+                    primary_record = EmailAlias(
+                        alias_email=primary_email,
+                        primary_email=primary_email,
+                        user_id=user_id,
+                        display_name=display_name,
+                        job_title=job_title,
+                        resolved_at=now,
+                        last_used_at=now
+                    )
+                    session.merge(primary_record)
+
+                session.commit()
+
+            logger.info(f"Resolved {email} -> user_id: {user_id}, primary: {primary_email}")
+            return user_id, primary_email, display_name
+
+        except GraphAPIError as e:
+            logger.warning(f"Graph API lookup failed for {email}: {e}")
+            return None, email, ""
+        except Exception as e:
+            logger.error(f"Unexpected error resolving user_id for {email}: {e}")
+            return None, email, ""
+
+    def _get_or_resolve_user_id(self, email: str) -> Tuple[Optional[str], str, str]:
+        """
+        Get user_id from cache (EmailAlias) or resolve via Graph API.
+
+        Args:
+            email: Email address
+
+        Returns:
+            Tuple of (user_id, primary_email, display_name)
+        """
+        email = email.lower().strip()
+
+        # Try cache first
+        user_id = self._get_user_id(email)
+        if user_id:
+            # Get additional info from cache
+            with self.db.get_session() as session:
+                alias_record = session.query(EmailAlias).filter_by(alias_email=email).first()
+                if alias_record:
+                    return user_id, alias_record.primary_email or email, alias_record.display_name or ""
+
+        # Not in cache, resolve via Graph API
+        return self._resolve_user_id_from_graph(email)
+
     def get_user_preference(self, email: str) -> bool:
         """
         Get user's email preference.
@@ -274,37 +376,52 @@ class PreferenceManager:
         """
         Set user's email preference.
 
+        Resolves email to user_id (GUID) and stores preference by GUID.
+        This ensures stable identity matching across email aliases.
+
         Args:
             email: User email address
             receive_emails: True to receive emails, False to opt out
             updated_by: Who updated the preference ('user', 'organizer', 'admin')
 
         Returns:
-            True if successfully saved
+            True if successfully saved, False if GUID resolution failed
 
         Creates new preference record if one doesn't exist.
         """
         try:
             email = email.lower().strip()
 
+            # Resolve email to user_id (GUID)
+            user_id, primary_email, display_name = self._get_or_resolve_user_id(email)
+
+            if not user_id:
+                logger.error(f"Cannot set preference for {email}: failed to resolve user_id")
+                return False
+
             with self.db.get_session() as session:
-                pref = session.query(UserPreference).filter_by(user_email=email).first()
+                # Look up by user_id (GUID) - the primary key
+                pref = session.query(UserPreference).filter_by(user_id=user_id).first()
 
                 if pref:
                     # Update existing preference
+                    pref.user_email = primary_email  # Update to current primary email
+                    pref.display_name = display_name or pref.display_name
                     pref.receive_emails = receive_emails
                     pref.email_preference = 'all' if receive_emails else 'disabled'
-                    pref.updated_at = datetime.now()
+                    pref.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
                     pref.updated_by = updated_by
 
                     logger.info(
-                        f"Updated preference for {email}: receive_emails={receive_emails} "
-                        f"(by {updated_by})"
+                        f"Updated preference for {email} (user_id: {user_id}): "
+                        f"receive_emails={receive_emails} (by {updated_by})"
                     )
                 else:
                     # Create new preference
                     pref = UserPreference(
-                        user_email=email,
+                        user_id=user_id,
+                        user_email=primary_email,
+                        display_name=display_name,
                         receive_emails=receive_emails,
                         email_preference='all' if receive_emails else 'disabled',
                         updated_by=updated_by
@@ -312,8 +429,8 @@ class PreferenceManager:
                     session.add(pref)
 
                     logger.info(
-                        f"Created preference for {email}: receive_emails={receive_emails} "
-                        f"(by {updated_by})"
+                        f"Created preference for {email} (user_id: {user_id}): "
+                        f"receive_emails={receive_emails} (by {updated_by})"
                     )
 
                 session.commit()
@@ -458,24 +575,40 @@ class PreferenceManager:
         """
         Delete user preference (resets to default).
 
+        Resolves email to user_id and deletes by GUID.
+
         Args:
             email: User email address
 
         Returns:
             True if deleted successfully
 
-        After deletion, user will receive default behavior (opt-in).
+        After deletion, user will receive default behavior (not subscribed).
         """
         try:
             email = email.lower().strip()
 
+            # Try to find user_id from cache
+            user_id = self._get_user_id(email)
+
             with self.db.get_session() as session:
-                pref = session.query(UserPreference).filter_by(user_email=email).first()
+                pref = None
+
+                # First try to find by user_id (preferred)
+                if user_id:
+                    pref = session.query(UserPreference).filter_by(user_id=user_id).first()
+
+                # Fallback: try by email (for legacy records)
+                if not pref:
+                    from sqlalchemy import func
+                    pref = session.query(UserPreference).filter(
+                        func.lower(UserPreference.user_email) == email
+                    ).first()
 
                 if pref:
                     session.delete(pref)
                     session.commit()
-                    logger.info(f"Deleted preference for {email}")
+                    logger.info(f"Deleted preference for {email} (user_id: {user_id or 'N/A'})")
                     return True
                 else:
                     logger.debug(f"No preference found for {email} to delete")
@@ -493,6 +626,8 @@ class PreferenceManager:
         """
         Get user's preference for a specific meeting.
 
+        Looks up by user_id (GUID) for stable matching.
+
         Args:
             email: User email address
             meeting_id: Meeting database ID
@@ -507,11 +642,26 @@ class PreferenceManager:
         try:
             email = email.lower().strip()
 
+            # Get user_id from cache
+            user_id = self._get_user_id(email)
+
             with self.db.get_session() as session:
-                pref = session.query(MeetingPreference).filter_by(
-                    user_email=email,
-                    meeting_id=meeting_id
-                ).first()
+                pref = None
+
+                # First try by user_id (preferred)
+                if user_id:
+                    pref = session.query(MeetingPreference).filter_by(
+                        user_id=user_id,
+                        meeting_id=meeting_id
+                    ).first()
+
+                # Fallback: try by email (for legacy records)
+                if not pref:
+                    from sqlalchemy import func
+                    pref = session.query(MeetingPreference).filter(
+                        func.lower(MeetingPreference.user_email) == email,
+                        MeetingPreference.meeting_id == meeting_id
+                    ).first()
 
                 if pref:
                     logger.debug(
@@ -537,6 +687,8 @@ class PreferenceManager:
         """
         Set user's preference for a specific meeting.
 
+        Resolves email to user_id (GUID) for stable identity matching.
+
         Args:
             email: User email address
             meeting_id: Meeting database ID
@@ -544,7 +696,7 @@ class PreferenceManager:
             updated_by: Who updated the preference ('user', 'organizer', 'system')
 
         Returns:
-            True if successfully saved
+            True if successfully saved, False if GUID resolution failed
 
         Creates new preference record if one doesn't exist, updates if it does.
         Per-meeting preferences override global preferences.
@@ -552,27 +704,37 @@ class PreferenceManager:
         try:
             email = email.lower().strip()
 
+            # Resolve email to user_id (GUID)
+            user_id, primary_email, _ = self._get_or_resolve_user_id(email)
+
+            if not user_id:
+                logger.error(f"Cannot set meeting preference for {email}: failed to resolve user_id")
+                return False
+
             with self.db.get_session() as session:
+                # Look up by user_id and meeting_id
                 pref = session.query(MeetingPreference).filter_by(
-                    user_email=email,
+                    user_id=user_id,
                     meeting_id=meeting_id
                 ).first()
 
                 if pref:
                     # Update existing preference
+                    pref.user_email = primary_email  # Update to current email
                     pref.receive_emails = receive_emails
                     pref.updated_by = updated_by
-                    pref.updated_at = datetime.now()
+                    pref.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
                     logger.info(
-                        f"Updated per-meeting preference for {email} in meeting {meeting_id}: "
-                        f"receive_emails={receive_emails} (by {updated_by})"
+                        f"Updated per-meeting preference for {email} (user_id: {user_id}) "
+                        f"in meeting {meeting_id}: receive_emails={receive_emails} (by {updated_by})"
                     )
                 else:
                     # Create new preference
                     pref = MeetingPreference(
                         meeting_id=meeting_id,
-                        user_email=email,
+                        user_id=user_id,
+                        user_email=primary_email,
                         receive_emails=receive_emails,
                         updated_by=updated_by
                     )

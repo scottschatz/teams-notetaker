@@ -83,6 +83,7 @@ class JobWorker:
 
         # Initialize inbox monitor (for email-based preferences)
         self.inbox_monitor = None
+        self.inbox_check_interval = getattr(config.app, 'inbox_check_interval_seconds', 60)
         inbox_email = getattr(config.app, 'email_from', None)
         if inbox_email:
             try:
@@ -91,9 +92,11 @@ class JobWorker:
                     db=self.db,
                     graph_client=graph_client,
                     mailbox_email=inbox_email,
-                    lookback_minutes=60
+                    lookback_minutes=getattr(config.app, 'inbox_lookback_minutes', 60),
+                    delete_processed_commands=getattr(config.app, 'inbox_delete_processed_commands', True),
+                    keep_feedback=getattr(config.app, 'inbox_keep_feedback', True)
                 )
-                logger.info(f"Inbox monitor initialized for {inbox_email}")
+                logger.info(f"Inbox monitor initialized for {inbox_email} (check every {self.inbox_check_interval}s)")
             except Exception as e:
                 logger.warning(f"Could not initialize inbox monitor: {e}")
 
@@ -136,9 +139,9 @@ class JobWorker:
                         logger.error(f"Orphaned job cleanup failed: {e}")
                     cleanup_counter = 0
 
-                # Periodic inbox check for email commands (every 5 minutes = 300 seconds)
+                # Periodic inbox check for email commands (configurable interval)
                 inbox_counter += 1
-                if inbox_counter >= 300 and self.inbox_monitor:
+                if inbox_counter >= self.inbox_check_interval and self.inbox_monitor:
                     try:
                         stats = await self.inbox_monitor.check_inbox()
                         if stats.get("processed", 0) > 0:

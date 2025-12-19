@@ -503,17 +503,22 @@ class UserPreference(Base):
 
     Allows users to manage whether they receive meeting summary emails,
     and tracks preference changes via chat commands or organizer settings.
+
+    Uses user_id (Azure AD GUID) as primary key for stable identity matching.
+    The GUID never changes even if user's email changes.
     """
     __tablename__ = "user_preferences"
 
-    user_email = Column(String(255), primary_key=True)
+    user_id = Column(String(50), primary_key=True)  # Azure AD GUID (stable identity)
+    user_email = Column(String(255), nullable=False, index=True)  # Display/reference email
+    display_name = Column(String(500))  # Cached display name
     receive_emails = Column(Boolean, default=True, nullable=False)
     email_preference = Column(String(20), default='all')  # 'all', 'opt_in', 'disabled'
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     updated_by = Column(String(50))  # 'user' or 'organizer'
 
     def __repr__(self):
-        return f"<UserPreference(email='{self.user_email}', receive={self.receive_emails})>"
+        return f"<UserPreference(user_id='{self.user_id}', email='{self.user_email}', receive={self.receive_emails})>"
 
 
 class MeetingPreference(Base):
@@ -522,26 +527,30 @@ class MeetingPreference(Base):
 
     Allows users to opt in/out of specific meetings while maintaining their
     global preference. Per-meeting preferences override global preferences.
+
+    Uses user_id (Azure AD GUID) for stable identity matching.
     """
     __tablename__ = "meeting_preferences"
 
     id = Column(Integer, primary_key=True)
     meeting_id = Column(Integer, ForeignKey("meetings.id", ondelete="CASCADE"), nullable=False, index=True)
-    user_email = Column(String(255), nullable=False, index=True)
+    user_id = Column(String(50), nullable=False, index=True)  # Azure AD GUID
+    user_email = Column(String(255), nullable=False, index=True)  # Display/reference email
     receive_emails = Column(Boolean, nullable=False)
     updated_by = Column(String(50), default="user")  # 'user', 'organizer', or 'system'
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     __table_args__ = (
-        UniqueConstraint('meeting_id', 'user_email', name='uq_meeting_user_pref'),
+        UniqueConstraint('meeting_id', 'user_id', name='uq_meeting_user_pref'),
         Index('idx_meeting_prefs_meeting', 'meeting_id'),
+        Index('idx_meeting_prefs_user_id', 'user_id'),
         Index('idx_meeting_prefs_email', 'user_email'),
-        Index('idx_meeting_prefs_lookup', 'meeting_id', 'user_email'),
+        Index('idx_meeting_prefs_lookup', 'meeting_id', 'user_id'),
     )
 
     def __repr__(self):
-        return f"<MeetingPreference(meeting_id={self.meeting_id}, email='{self.user_email}', receive={self.receive_emails})>"
+        return f"<MeetingPreference(meeting_id={self.meeting_id}, user_id='{self.user_id}', receive={self.receive_emails})>"
 
 
 class ProcessedChatMessage(Base):

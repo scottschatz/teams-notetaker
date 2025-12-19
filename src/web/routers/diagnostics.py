@@ -12,6 +12,7 @@ from fastapi.responses import HTMLResponse
 
 from ...core.database import DatabaseManager, JobQueue, Meeting
 from ...core.config import get_config
+from ...graph.client import GraphAPIClient
 from ..app import limiter
 from sqlalchemy import func, desc
 
@@ -36,11 +37,10 @@ async def get_system_status(db: DatabaseManager = Depends(get_db)):
         System diagnostics including services, queue, and activity
     """
     # Check systemd services
+    # Note: webhook and worker were consolidated into poller service
     services = {}
     service_names = [
         'teams-notetaker-web',
-        'teams-notetaker-webhook',
-        'teams-notetaker-worker',
         'teams-notetaker-poller'
     ]
 
@@ -303,6 +303,144 @@ async def backfill_history_page(
                 "user": {"email": "local", "role": "admin"}
             }
         )
+
+
+@router.get("/api/webhook-status")
+async def get_webhook_status():
+    """
+    Get current webhook subscription status.
+
+    Returns:
+        Subscription info including active status, expiration, and health
+    """
+    try:
+        config = get_config()
+
+        # Check if Azure Relay is configured
+        if not config.azure_relay.is_configured():
+            return {
+                "configured": False,
+                "message": "Azure Relay not configured",
+                "subscriptions": []
+            }
+
+        graph_client = GraphAPIClient(config.graph_api)
+        webhook_url = config.azure_relay.webhook_url
+
+        # Get all subscriptions
+        response = graph_client.get("/subscriptions")
+        all_subs = response.get("value", [])
+
+        # Filter to callRecords subscriptions for our webhook
+        callrecords_subs = [
+            sub for sub in all_subs
+            if sub.get("resource") == "/communications/callRecords"
+            and sub.get("notificationUrl") == webhook_url
+        ]
+
+        # Parse and enrich subscription data
+        now = datetime.utcnow()
+        subscriptions = []
+        active_count = 0
+
+        for sub in callrecords_subs:
+            expiry_str = sub.get("expirationDateTime", "")
+            try:
+                expiry = datetime.fromisoformat(expiry_str.replace("Z", ""))
+                hours_remaining = (expiry - now).total_seconds() / 3600
+                is_active = hours_remaining > 0
+                is_expiring_soon = 0 < hours_remaining < 12
+
+                if is_active:
+                    active_count += 1
+
+                subscriptions.append({
+                    "id": sub.get("id"),
+                    "resource": sub.get("resource"),
+                    "expiration": expiry_str,
+                    "hours_remaining": round(hours_remaining, 1),
+                    "is_active": is_active,
+                    "is_expiring_soon": is_expiring_soon,
+                    "created": sub.get("createdDateTime")
+                })
+            except Exception as e:
+                logger.warning(f"Error parsing subscription expiry: {e}")
+                subscriptions.append({
+                    "id": sub.get("id"),
+                    "resource": sub.get("resource"),
+                    "expiration": expiry_str,
+                    "error": str(e)
+                })
+
+        return {
+            "configured": True,
+            "webhook_url": webhook_url,
+            "active": active_count > 0,
+            "active_count": active_count,
+            "total_count": len(subscriptions),
+            "subscriptions": subscriptions,
+            "checked_at": now.isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"Error getting webhook status: {e}")
+        return {
+            "configured": True,
+            "active": False,
+            "error": str(e),
+            "subscriptions": []
+        }
+
+
+@router.post("/api/webhook-resubscribe")
+@limiter.limit("3/minute")  # Rate limit: max 3 attempts per minute
+async def force_webhook_resubscribe(request: Request):
+    """
+    Force recreate webhook subscription.
+
+    Deletes existing subscriptions and creates a fresh one.
+    Rate limited to 3 requests per minute.
+    """
+    try:
+        from ...webhooks.subscription_manager import SubscriptionManager
+
+        config = get_config()
+
+        if not config.azure_relay.is_configured():
+            raise HTTPException(status_code=400, detail="Azure Relay not configured")
+
+        graph_client = GraphAPIClient(config.graph_api)
+        manager = SubscriptionManager(config, graph_client)
+
+        logger.info("Force resubscribe triggered from diagnostics page")
+
+        # Delete all existing and create fresh
+        success = manager.recreate_subscription()
+
+        if success:
+            # Get the new subscription info
+            subscriptions = manager.get_callrecords_subscriptions()
+            sub_info = subscriptions[0] if subscriptions else None
+
+            return {
+                "success": True,
+                "message": "Webhook subscription recreated successfully",
+                "subscription": {
+                    "id": sub_info.get("id") if sub_info else None,
+                    "expiration": sub_info.get("expirationDateTime") if sub_info else None
+                }
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to create webhook subscription. Check Azure Relay connection."
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Force resubscribe failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/api/backfill-history")

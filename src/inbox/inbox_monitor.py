@@ -36,7 +36,9 @@ class InboxMonitor:
         db: DatabaseManager,
         graph_client: GraphAPIClient,
         mailbox_email: str,
-        lookback_minutes: int = 60
+        lookback_minutes: int = 60,
+        delete_processed_commands: bool = True,
+        keep_feedback: bool = True
     ):
         """
         Initialize inbox monitor.
@@ -46,11 +48,15 @@ class InboxMonitor:
             graph_client: Authenticated Graph API client
             mailbox_email: Email address of the shared mailbox to monitor
             lookback_minutes: How far back to look for messages (default: 60 min)
+            delete_processed_commands: Permanently delete subscribe/unsubscribe emails after processing
+            keep_feedback: Keep feedback emails in inbox (don't delete)
         """
         self.db = db
         self.graph_client = graph_client
         self.mailbox_email = mailbox_email
         self.lookback_minutes = lookback_minutes
+        self.delete_processed_commands = delete_processed_commands
+        self.keep_feedback = keep_feedback
 
         self.inbox_reader = InboxReader(graph_client, mailbox_email)
         self.parser = EmailCommandParser()
@@ -311,11 +317,15 @@ class InboxMonitor:
             # Send confirmation to original sender address
             self._send_subscribe_confirmation(parsed.sender_email, parsed.sender_name)
 
-            # Mark as read
-            self.inbox_reader.mark_as_read(msg.get("id"))
-
             # Record processing with primary email
             self._mark_processed(message_id, "subscribe", primary_email, f"Successfully subscribed (from: {parsed.sender_email})")
+
+            # Delete the processed command email (or just mark as read)
+            if self.delete_processed_commands:
+                self.inbox_reader.permanent_delete(msg.get("id"))
+                logger.debug(f"Deleted processed subscribe email from {parsed.sender_email}")
+            else:
+                self.inbox_reader.mark_as_read(msg.get("id"))
 
             return "subscribed"
 
@@ -347,11 +357,15 @@ class InboxMonitor:
             # Send confirmation to original sender address
             self._send_unsubscribe_confirmation(parsed.sender_email, parsed.sender_name)
 
-            # Mark as read
-            self.inbox_reader.mark_as_read(msg.get("id"))
-
             # Record processing with primary email
             self._mark_processed(message_id, "unsubscribe", primary_email, f"Successfully unsubscribed (from: {parsed.sender_email})")
+
+            # Delete the processed command email (or just mark as read)
+            if self.delete_processed_commands:
+                self.inbox_reader.permanent_delete(msg.get("id"))
+                logger.debug(f"Deleted processed unsubscribe email from {parsed.sender_email}")
+            else:
+                self.inbox_reader.mark_as_read(msg.get("id"))
 
             return "unsubscribed"
 
@@ -384,11 +398,17 @@ class InboxMonitor:
             # Send acknowledgment to original sender address
             self._send_feedback_acknowledgment(parsed.sender_email, parsed.sender_name)
 
-            # Mark as read
-            self.inbox_reader.mark_as_read(msg.get("id"))
-
             # Record processing with primary email
             self._mark_processed(message_id, "feedback", primary_email, "Feedback stored")
+
+            # Keep feedback in inbox for admin review, or delete if configured
+            if self.keep_feedback:
+                self.inbox_reader.mark_as_read(msg.get("id"))
+            elif self.delete_processed_commands:
+                self.inbox_reader.permanent_delete(msg.get("id"))
+                logger.debug(f"Deleted processed feedback email from {parsed.sender_email}")
+            else:
+                self.inbox_reader.mark_as_read(msg.get("id"))
 
             return "feedback"
 

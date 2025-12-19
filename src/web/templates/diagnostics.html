@@ -3,7 +3,7 @@
 {% block title %}System Diagnostics - Teams Notetaker{% endblock %}
 
 {% block content %}
-<div x-data="diagnosticsData()" x-init="loadStatus(); setInterval(loadStatus, 5000); init()">
+<div x-data="diagnosticsData()" x-init="loadStatus(); loadWebhookStatus(); setInterval(loadStatus, 5000); setInterval(loadWebhookStatus, 30000); init()">
     <div class="flex justify-between items-center mb-6">
         <h1 class="text-3xl font-bold text-gray-900">System Diagnostics</h1>
         <div class="flex items-center space-x-4">
@@ -46,6 +46,60 @@
                 <p class="mt-2 text-xs text-gray-500" x-show="service.started_at" x-text="'Started: ' + formatTime(service.started_at)"></p>
             </div>
         </template>
+    </div>
+
+    <!-- Webhook Subscription Status -->
+    <div class="bg-white rounded-lg shadow p-6 mb-8">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-gray-900">Webhook Subscription</h2>
+            <div class="flex items-center space-x-2">
+                <button @click="forceResubscribe()"
+                        :disabled="webhookLoading"
+                        class="px-4 py-1 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium disabled:opacity-50">
+                    <span x-show="!webhookLoading">Force Resubscribe</span>
+                    <span x-show="webhookLoading">Resubscribing...</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Status indicator -->
+        <div class="flex items-center space-x-4 mb-4">
+            <div class="flex items-center">
+                <span class="inline-flex items-center px-3 py-1 rounded-full text-sm font-medium"
+                      :class="webhookStatus.active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'">
+                    <span class="mr-2" x-text="webhookStatus.active ? '✓' : '✗'"></span>
+                    <span x-text="webhookStatus.active ? 'Active' : 'Inactive'"></span>
+                </span>
+            </div>
+            <template x-if="webhookStatus.active && webhookStatus.subscriptions?.[0]">
+                <div class="text-sm text-gray-600">
+                    <span x-text="'Expires in ' + webhookStatus.subscriptions[0].hours_remaining + ' hours'"></span>
+                    <span x-show="webhookStatus.subscriptions[0].is_expiring_soon" class="text-orange-600 ml-2">(expiring soon!)</span>
+                </div>
+            </template>
+            <template x-if="webhookStatus.error">
+                <div class="text-sm text-red-600" x-text="'Error: ' + webhookStatus.error"></div>
+            </template>
+        </div>
+
+        <!-- Subscription details -->
+        <template x-if="webhookStatus.subscriptions?.length > 0">
+            <div class="text-xs text-gray-500 space-y-1">
+                <template x-for="sub in webhookStatus.subscriptions" :key="sub.id">
+                    <div class="flex items-center space-x-2">
+                        <span class="font-mono" x-text="sub.id?.substring(0, 20) + '...'"></span>
+                        <span x-text="'→ ' + sub.expiration"></span>
+                    </div>
+                </template>
+            </div>
+        </template>
+        <template x-if="webhookStatus.subscriptions?.length === 0 && !webhookStatus.error">
+            <div class="text-sm text-gray-500">No active subscriptions. Click "Force Resubscribe" to create one.</div>
+        </template>
+
+        <div class="mt-2 text-xs text-gray-400" x-show="webhookStatus.checked_at">
+            <span x-text="'Last checked: ' + formatDateTime(webhookStatus.checked_at)"></span>
+        </div>
     </div>
 
     <!-- Queue Statistics -->
@@ -216,6 +270,12 @@ function diagnosticsData() {
             meetings: {},
             recent_jobs: []
         },
+        webhookStatus: {
+            active: false,
+            subscriptions: [],
+            error: null
+        },
+        webhookLoading: false,
         lastUpdated: '',
         lookbackHours: 24,  // Default to 24 hours
         logService: 'poller',
@@ -230,6 +290,39 @@ function diagnosticsData() {
                 this.lastUpdated = new Date().toLocaleTimeString();
             } catch (error) {
                 console.error('Failed to load diagnostics:', error);
+            }
+        },
+
+        async loadWebhookStatus() {
+            try {
+                const response = await fetch('/diagnostics/api/webhook-status');
+                this.webhookStatus = await response.json();
+            } catch (error) {
+                console.error('Failed to load webhook status:', error);
+                this.webhookStatus = { active: false, error: error.message, subscriptions: [] };
+            }
+        },
+
+        async forceResubscribe() {
+            if (!confirm('Force recreate webhook subscription? This will delete any existing subscriptions and create a new one.')) {
+                return;
+            }
+
+            this.webhookLoading = true;
+            try {
+                const response = await fetch('/diagnostics/api/webhook-resubscribe', { method: 'POST' });
+                const data = await response.json();
+
+                if (response.ok) {
+                    alert('Webhook subscription recreated successfully!');
+                    await this.loadWebhookStatus();
+                } else {
+                    alert('Failed to resubscribe: ' + (data.detail || data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                this.webhookLoading = false;
             }
         },
 

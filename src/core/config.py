@@ -55,7 +55,7 @@ class ClaudeConfig:
     """Anthropic Claude API configuration."""
 
     api_key: str
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-haiku-4-5-latest"
     max_tokens: int = 2000
     temperature: float = 0.7
 
@@ -142,7 +142,17 @@ class AppConfig:
     # Worker configuration
     worker_heartbeat_interval_seconds: int = 30
 
-    # Chat Command Settings (v2.0)
+    # Inbox Monitoring Settings (v3.1)
+    inbox_check_interval_seconds: int = 60  # How often to check for commands
+    inbox_lookback_minutes: int = 60  # How far back to look for messages
+    inbox_delete_processed_commands: bool = True  # Delete subscribe/unsubscribe after processing
+    inbox_keep_feedback: bool = True  # Keep feedback emails in inbox
+
+    # Alerting Settings (v3.1)
+    alert_email_enabled: bool = True  # Send email alerts for critical issues
+    alert_email_recipients: list = None  # Admin email(s) for alerts
+
+    # Chat Command Settings (v2.0) - DEPRECATED, use inbox monitoring
     chat_monitoring_enabled: bool = True
     chat_check_interval_minutes: int = 2
     chat_lookback_days: int = 7
@@ -228,7 +238,7 @@ class ConfigManager:
         # Claude API configuration
         self.claude = ClaudeConfig(
             api_key=os.getenv("CLAUDE_API_KEY", ""),
-            model=os.getenv("CLAUDE_MODEL", "claude-sonnet-4-20250514"),
+            model=os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-latest"),
             max_tokens=int(os.getenv("CLAUDE_MAX_TOKENS", "2000")),
             temperature=float(os.getenv("CLAUDE_TEMPERATURE", "0.7")),
         )

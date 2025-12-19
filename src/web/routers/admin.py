@@ -12,6 +12,7 @@ from ...core.database import DatabaseManager, UserPreference, EmailAlias
 from ...core.config import get_config
 from ...graph.client import GraphAPIClient
 from ...core.exceptions import GraphAPIError
+from ...preferences.user_preferences import PreferenceManager
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory="src/web/templates")
@@ -72,30 +73,28 @@ async def admin_users_page(request: Request):
 
 @router.post("/users/add")
 async def add_user(email: str = Form(...)):
-    """Add a new user to the subscription list."""
+    """Add a new user to the subscription list.
+
+    Uses PreferenceManager to resolve email to GUID and create preference.
+    """
     email = email.strip().lower()
 
     if not email or '@' not in email:
         raise HTTPException(status_code=400, detail="Invalid email address")
 
-    with db.get_session() as session:
-        # Check if user already exists
-        existing = session.query(UserPreference).filter_by(user_email=email).first()
+    # Use PreferenceManager to handle GUID resolution
+    pref_manager = PreferenceManager(db)
+    success = pref_manager.set_user_preference(
+        email=email,
+        receive_emails=True,
+        updated_by="admin"
+    )
 
-        if existing:
-            # Update to receive emails
-            existing.receive_emails = True
-            existing.email_preference = 'all'
-            session.commit()
-        else:
-            # Create new user
-            new_user = UserPreference(
-                user_email=email,
-                receive_emails=True,
-                email_preference='all'
-            )
-            session.add(new_user)
-            session.commit()
+    if not success:
+        raise HTTPException(
+            status_code=400,
+            detail="Failed to add user. Could not resolve Azure AD identity."
+        )
 
     return RedirectResponse(url="/admin/users", status_code=303)
 
@@ -103,8 +102,22 @@ async def add_user(email: str = Form(...)):
 @router.post("/users/{email}/toggle")
 async def toggle_user(email: str):
     """Toggle user's receive_emails status."""
+    email = email.lower().strip()
+
     with db.get_session() as session:
-        user = session.query(UserPreference).filter_by(user_email=email).first()
+        # Try to find by user_id first (via EmailAlias lookup)
+        alias = session.query(EmailAlias).filter_by(alias_email=email).first()
+        user = None
+
+        if alias and alias.user_id:
+            user = session.query(UserPreference).filter_by(user_id=alias.user_id).first()
+
+        # Fallback: try by email directly
+        if not user:
+            from sqlalchemy import func
+            user = session.query(UserPreference).filter(
+                func.lower(UserPreference.user_email) == email
+            ).first()
 
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
@@ -118,16 +131,16 @@ async def toggle_user(email: str):
 @router.delete("/users/{email}")
 async def delete_user(email: str):
     """Delete a user from the subscription list."""
-    with db.get_session() as session:
-        user = session.query(UserPreference).filter_by(user_email=email).first()
+    email = email.lower().strip()
 
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+    # Use PreferenceManager for consistent GUID-based deletion
+    pref_manager = PreferenceManager(db)
+    success = pref_manager.delete_user_preference(email)
 
-        session.delete(user)
-        session.commit()
+    if not success:
+        raise HTTPException(status_code=404, detail="User not found")
 
-        return {"success": True}
+    return {"success": True}
 
 
 @router.post("/users/subscribe-all")

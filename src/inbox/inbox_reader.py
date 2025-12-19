@@ -152,6 +152,28 @@ class InboxReader:
             logger.warning(f"Failed to mark message as read: {e}")
             return False
 
+    def permanent_delete(self, message_id: str) -> bool:
+        """
+        Permanently delete a message (bypasses Deleted Items folder).
+
+        Uses the Graph API permanentDelete action to hard delete the message
+        without moving it to trash first.
+
+        Args:
+            message_id: Graph API message ID
+
+        Returns:
+            True if successful
+        """
+        try:
+            endpoint = f"/users/{self.mailbox_email}/messages/{message_id}/permanentDelete"
+            self.graph_client.post(endpoint)
+            logger.debug(f"Permanently deleted message {message_id[:20]}...")
+            return True
+        except Exception as e:
+            logger.warning(f"Failed to permanently delete message: {e}")
+            return False
+
     def send_reply(
         self,
         message_id: str,

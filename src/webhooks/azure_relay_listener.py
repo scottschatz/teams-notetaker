@@ -59,6 +59,7 @@ class AzureRelayWebhookListener:
 
         self.callback: Optional[Callable] = None
         self.running = False
+        self._session: Optional[aiohttp.ClientSession] = None  # Reusable session for rendezvous
 
     def _generate_sas_token(self, uri: str, expiry_seconds: int = 3600) -> str:
         """
@@ -120,10 +121,18 @@ class AzureRelayWebhookListener:
 
         logger.info(f"Starting Azure Relay listener on wss://{self.relay_namespace}/$hc/{self.hybrid_connection_name}")
 
-        while self.running:
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.ws_connect(ws_url) as ws:
+        # Create reusable session for fast rendezvous connections
+        connector = aiohttp.TCPConnector(
+            limit=10,  # Connection pool size
+            ttl_dns_cache=300,  # Cache DNS for 5 minutes
+            keepalive_timeout=30  # Keep connections warm
+        )
+        self._session = aiohttp.ClientSession(connector=connector)
+
+        try:
+            while self.running:
+                try:
+                    async with self._session.ws_connect(ws_url) as ws:
                         logger.info("✅ Connected to Azure Relay")
 
                         # Accept incoming HTTP requests over WebSocket
@@ -134,11 +143,14 @@ class AzureRelayWebhookListener:
                                 logger.error(f"WebSocket error: {ws.exception()}")
                                 break
 
-            except Exception as e:
-                logger.error(f"Azure Relay connection error: {e}")
-                if self.running:
-                    logger.info("Reconnecting in 5 seconds...")
-                    await asyncio.sleep(5)
+                except Exception as e:
+                    logger.error(f"Azure Relay connection error: {e}")
+                    if self.running:
+                        logger.info("Reconnecting in 5 seconds...")
+                        await asyncio.sleep(5)
+        finally:
+            if self._session:
+                await self._session.close()
 
     async def _handle_message(self, data: str, ws):
         """
@@ -149,8 +161,8 @@ class AzureRelayWebhookListener:
         try:
             request = json.loads(data)
 
-            # Log the full request structure for debugging
-            logger.info(f"Full request structure: {json.dumps(request, indent=2)}")
+            # Only log full structure at debug level to reduce overhead
+            logger.debug(f"Full request structure: {json.dumps(request, indent=2)}")
 
             # Extract HTTP request details from correct structure
             req_details = request.get("request", {})
@@ -167,35 +179,35 @@ class AzureRelayWebhookListener:
                 path = request_target
                 query_string = ""
 
-            logger.info(f"Received {method} {path} (requestId: {request_id})")
-            logger.info(f"Query string: {query_string}")
+            logger.debug(f"Received {method} {path} (requestId: {request_id})")
+            logger.debug(f"Query string: {query_string}")
 
-            # Log body safely (body can be str, bool, or None)
+            # Log body safely at debug level (body can be str, bool, or None)
             if isinstance(body, str):
-                logger.info(f"Body type: str, Body content: {body[:200]}")
+                logger.debug(f"Body type: str, Body content: {body[:200]}")
             elif isinstance(body, bool):
-                logger.info(f"Body type: bool, Body value: {body} (body will be in next frame if True)")
+                logger.debug(f"Body type: bool, Body value: {body}")
             else:
-                logger.info(f"Body type: {type(body)}, Body content: None/Empty")
+                logger.debug(f"Body type: {type(body)}, Body content: None/Empty")
 
             # Check for validation token in query parameters (Microsoft Graph sends it there)
+            # FAST PATH: Prioritize validation handling for speed
             import urllib.parse
             if "validationToken=" in query_string:
                 query_params = urllib.parse.parse_qs(query_string)
                 validation_token = query_params.get("validationToken", [None])[0]
                 if validation_token:
-                    logger.info(f"Found validation token in query string: {validation_token[:50]}...")
+                    import time
+                    start_time = time.time()
+                    logger.info(f"⚡ Validation request received (requestId: {request_id[:20]}...)")
 
                     # Check if this is a rendezvous request (sb-hc-action=request in address)
                     address = req_details.get("address", "")
                     if "sb-hc-action=request" in address:
-                        import time
-                        start_time = time.time()
-                        logger.info(f"Rendezvous request detected at {start_time}, establishing separate WebSocket to: {address[:100]}...")
                         # Must connect to the rendezvous address and send response there
                         await self._send_rendezvous_response(address, request_id, validation_token)
                         elapsed = time.time() - start_time
-                        logger.info(f"Rendezvous response completed in {elapsed:.3f}s")
+                        logger.info(f"✅ Validation complete in {elapsed:.3f}s")
                     else:
                         # Small request, send response on control channel
                         logger.info(f"Sending validation response on control channel (requestId={request_id})")
@@ -283,39 +295,41 @@ class AzureRelayWebhookListener:
 
         When sb-hc-action=request is in the address, Azure Relay requires
         responses to be sent over a separate WebSocket connection to that address.
+
+        OPTIMIZED: Uses shared session for faster connection, no artificial delays.
         """
+        import time
+        start = time.time()
+
         try:
-            logger.info(f"Connecting to rendezvous WebSocket: {rendezvous_address[:100]}...")
+            logger.debug(f"Connecting to rendezvous WebSocket: {rendezvous_address[:80]}...")
 
-            async with aiohttp.ClientSession() as session:
-                async with session.ws_connect(rendezvous_address) as rendezvous_ws:
-                    logger.info("Rendezvous WebSocket connected")
+            # Use shared session for faster connection (reuses connection pool)
+            async with self._session.ws_connect(rendezvous_address) as rendezvous_ws:
+                connect_time = time.time() - start
+                logger.info(f"Rendezvous WebSocket connected in {connect_time:.3f}s")
 
-                    # Send response - Microsoft Graph expects status 200 and plain text body
-                    response = {
-                        "response": {
-                            "requestId": request_id,
-                            "statusCode": "200",
-                            "statusDescription": "OK",
-                            "responseHeaders": {
-                                "Content-Type": "text/plain"
-                            },
-                            "body": True  # CRITICAL: Tells Azure Relay to expect binary body frames
-                        }
+                # Send response - Microsoft Graph expects status 200 and plain text body
+                response = {
+                    "response": {
+                        "requestId": request_id,
+                        "statusCode": "200",
+                        "statusDescription": "OK",
+                        "responseHeaders": {
+                            "Content-Type": "text/plain"
+                        },
+                        "body": True  # CRITICAL: Tells Azure Relay to expect binary body frames
                     }
-                    await rendezvous_ws.send_str(json.dumps(response))
-                    logger.info(f"Sent response JSON: {json.dumps(response)}")
+                }
+                await rendezvous_ws.send_str(json.dumps(response))
 
-                    # Send validation token as binary body frame with FIN flag
-                    # Azure Relay converts this to HTTP response body
-                    body_data = validation_token.encode('utf-8')
-                    await rendezvous_ws.send_bytes(body_data)
-                    logger.info(f"Sent validation token as binary frame: {validation_token[:50]}... ({len(body_data)} bytes)")
+                # Send validation token as binary body frame immediately
+                body_data = validation_token.encode('utf-8')
+                await rendezvous_ws.send_bytes(body_data)
 
-                    # Brief pause to ensure transmission completes
-                    await asyncio.sleep(0.1)
-                    logger.info("Rendezvous response sent, connection will auto-close")
-                    # Connection automatically closed by context manager
+                total_time = time.time() - start
+                logger.info(f"Validation response sent in {total_time:.3f}s (token: {len(body_data)} bytes)")
+                # Connection automatically closed by context manager - no sleep needed
 
         except Exception as e:
             logger.error(f"Error in rendezvous response: {e}", exc_info=True)

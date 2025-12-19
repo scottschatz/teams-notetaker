@@ -24,12 +24,43 @@ async def admin_users_page(request: Request):
             desc(UserPreference.updated_at)
         ).all()
 
+        # Get all email aliases for lookup
+        all_aliases = session.query(EmailAlias).all()
+
+        # Build lookup: email -> alias info (by user_id for grouping)
+        alias_by_email = {}
+        user_id_by_email = {}
+        for alias in all_aliases:
+            alias_by_email[alias.alias_email.lower()] = alias
+            if alias.user_id:
+                user_id_by_email[alias.alias_email.lower()] = alias.user_id
+                if alias.primary_email:
+                    user_id_by_email[alias.primary_email.lower()] = alias.user_id
+
+        # Enhance users with alias info
+        enhanced_users = []
+        for u in users:
+            email_lower = u.user_email.lower()
+            alias_info = alias_by_email.get(email_lower)
+            enhanced_users.append({
+                "user_email": u.user_email,
+                "receive_emails": u.receive_emails,
+                "email_preference": u.email_preference,
+                "updated_at": u.updated_at,
+                "updated_by": u.updated_by,
+                # Alias info
+                "primary_email": alias_info.primary_email if alias_info else None,
+                "user_id": alias_info.user_id if alias_info else user_id_by_email.get(email_lower),
+                "display_name": alias_info.display_name if alias_info else None,
+                "job_title": alias_info.job_title if alias_info else None,
+            })
+
         return templates.TemplateResponse(
             "admin_users.html",
             {
                 "request": request,
                 "user": {"email": "local", "role": "admin"},
-                "users": users,
+                "users": enhanced_users,
                 "total_users": len(users),
                 "active_users": len([u for u in users if u.receive_emails])
             }

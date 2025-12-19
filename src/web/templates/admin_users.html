@@ -65,6 +65,7 @@
                         <thead class="bg-gray-50">
                             <tr>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User ID (GUID)</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Preference</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Updated</th>
@@ -74,8 +75,23 @@
                         <tbody class="bg-white divide-y divide-gray-200">
                             {% for user in users %}
                             <tr id="user-{{ user.user_email }}" class="hover:bg-gray-50">
-                                <td class="px-6 py-4 whitespace-nowrap">
+                                <td class="px-6 py-4">
                                     <div class="text-sm font-medium text-gray-900">{{ user.user_email }}</div>
+                                    {% if user.primary_email and user.primary_email != user.user_email %}
+                                    <div class="text-xs text-blue-600">Primary: {{ user.primary_email }}</div>
+                                    {% endif %}
+                                    {% if user.display_name %}
+                                    <div class="text-xs text-gray-500">{{ user.display_name }}{% if user.job_title %} - {{ user.job_title }}{% endif %}</div>
+                                    {% elif user.job_title %}
+                                    <div class="text-xs text-gray-500">{{ user.job_title }}</div>
+                                    {% endif %}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap">
+                                    {% if user.user_id %}
+                                    <div class="text-xs font-mono text-gray-500" title="{{ user.user_id }}">{{ user.user_id[:8] }}...</div>
+                                    {% else %}
+                                    <span class="text-xs text-orange-500">Not linked</span>
+                                    {% endif %}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap">
                                     {% if user.receive_emails %}

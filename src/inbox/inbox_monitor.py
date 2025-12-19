@@ -103,7 +103,7 @@ class InboxMonitor:
         try:
             user_info = self.graph_client.get(
                 f"/users/{alias_lower}",
-                params={"$select": "id,mail,userPrincipalName,displayName"}
+                params={"$select": "id,mail,userPrincipalName,displayName,jobTitle"}
             )
 
             # Get user ID (stable GUID that never changes)
@@ -113,6 +113,7 @@ class InboxMonitor:
             primary_email = user_info.get("mail") or user_info.get("userPrincipalName", "")
             primary_email = primary_email.lower().strip()
             display_name = user_info.get("displayName", sender_name)
+            job_title = user_info.get("jobTitle", "")
 
             # Cache the result in database (set resolved_at for cache expiration tracking)
             now = datetime.now(timezone.utc).replace(tzinfo=None)
@@ -123,6 +124,7 @@ class InboxMonitor:
                     primary_email=primary_email or alias_lower,
                     user_id=user_id,
                     display_name=display_name,
+                    job_title=job_title,
                     resolved_at=now,
                     last_used_at=now
                 )
@@ -135,6 +137,7 @@ class InboxMonitor:
                         primary_email=primary_email,
                         user_id=user_id,
                         display_name=display_name,
+                        job_title=job_title,
                         resolved_at=now,
                         last_used_at=now
                     )
@@ -425,7 +428,14 @@ class InboxMonitor:
             <p>Hi {name or 'there'},</p>
             <p>You've been successfully subscribed to meeting summary emails.</p>
             <p>You'll receive summaries for any Teams meetings you attend that have transcription enabled.</p>
-            <p>If you ever want to unsubscribe, simply reply to any summary email with "unsubscribe" in the subject line.</p>
+            <p>If you ever want to unsubscribe, click the button below or reply to any summary email with "unsubscribe" in the subject line.</p>
+            <p style="margin: 20px 0;">
+                <a href="mailto:{self.mailbox_email}?subject=unsubscribe"
+                   style="display: inline-block; padding: 12px 24px; background-color: #6b7280; color: white;
+                          text-decoration: none; border-radius: 6px; font-weight: bold;">
+                    Unsubscribe
+                </a>
+            </p>
             <p>Best regards,<br/>Meeting Notes Bot</p>
         </body>
         </html>
@@ -447,7 +457,14 @@ class InboxMonitor:
             <p>Hi {name or 'there'},</p>
             <p>You've been successfully unsubscribed from meeting summary emails.</p>
             <p>You will no longer receive automated meeting summaries.</p>
-            <p>If you change your mind, you can subscribe again by sending an email with "subscribe" in the subject line.</p>
+            <p>If you change your mind, you can subscribe again by clicking the button below or sending an email with "subscribe" in the subject line.</p>
+            <p style="margin: 20px 0;">
+                <a href="mailto:{self.mailbox_email}?subject=subscribe"
+                   style="display: inline-block; padding: 12px 24px; background-color: #2563eb; color: white;
+                          text-decoration: none; border-radius: 6px; font-weight: bold;">
+                    Resubscribe
+                </a>
+            </p>
             <p>Best regards,<br/>Meeting Notes Bot</p>
         </body>
         </html>

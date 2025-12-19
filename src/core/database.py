@@ -710,6 +710,7 @@ class EmailAlias(Base):
     primary_email = Column(String(255), nullable=False, index=True)  # User's primary email
     user_id = Column(String(50), index=True)  # Azure AD object ID (stable GUID)
     display_name = Column(String(500))  # User's display name
+    job_title = Column(String(255))  # User's job title from Azure AD
     resolved_at = Column(DateTime, default=func.now())
     last_used_at = Column(DateTime, default=func.now(), onupdate=func.now())
 

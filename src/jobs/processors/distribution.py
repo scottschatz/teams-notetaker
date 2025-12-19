@@ -276,7 +276,7 @@ class DistributionProcessor(BaseProcessor):
                         recipient=f"chat:{meeting.chat_id}",
                         status="sent",
                         message_id=chat_message_id,
-                        sent_at=datetime.now()
+                        sent_at=datetime.utcnow()
                     )
                     session.add(dist)
                     distribution_results.append("teams_chat")
@@ -460,7 +460,7 @@ class DistributionProcessor(BaseProcessor):
                                 recipient=recipient_email,
                                 status="sent",
                                 message_id=email_message_id,
-                                sent_at=datetime.now()
+                                sent_at=datetime.utcnow()
                             )
                             session.add(dist)
                             distribution_results.append("email")

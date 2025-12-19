@@ -289,7 +289,7 @@ async def resend_summary(
             },
             priority=10,  # High priority
             status="pending",
-            created_at=datetime.now()
+            created_at=datetime.utcnow()
         )
         session.add(job)
         session.commit()

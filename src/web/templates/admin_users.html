@@ -64,16 +64,27 @@
 
             <!-- Users Table -->
             <div class="bg-white rounded-lg shadow overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-200">
+                <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
                     <h2 class="text-xl font-bold text-gray-900">Subscribers</h2>
+                    <div class="flex items-center space-x-2">
+                        <label class="text-sm text-gray-600">Time range:</label>
+                        <select onchange="window.location.href='/admin/users?days=' + this.value" class="px-3 py-1 border border-gray-300 rounded-lg text-sm">
+                            <option value="7" {% if days_filter == 7 %}selected{% endif %}>Last 7 days</option>
+                            <option value="30" {% if days_filter == 30 %}selected{% endif %}>Last 30 days</option>
+                            <option value="90" {% if days_filter == 90 %}selected{% endif %}>Last 90 days</option>
+                            <option value="365" {% if days_filter == 365 %}selected{% endif %}>Last year</option>
+                            <option value="0" {% if days_filter == 0 %}selected{% endif %}>All time</option>
+                        </select>
+                    </div>
                 </div>
                 <div class="overflow-x-auto">
                     <table class="min-w-full divide-y divide-gray-200">
                         <thead class="bg-gray-50">
                             <tr>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Email</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User ID (GUID)</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" title="Meetings attended in selected time range">Meetings</th>
+                                <th class="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider" title="Summaries received in selected time range">Summaries</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Preference</th>
                                 <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Updated</th>
                                 <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
@@ -94,13 +105,6 @@
                                     {% endif %}
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap">
-                                    {% if user.user_id %}
-                                    <div class="text-xs font-mono text-gray-500" title="{{ user.user_id }}">{{ user.user_id[:8] }}...</div>
-                                    {% else %}
-                                    <span class="text-xs text-orange-500">Not linked</span>
-                                    {% endif %}
-                                </td>
-                                <td class="px-6 py-4 whitespace-nowrap">
                                     {% if user.receive_emails %}
                                     <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800">
                                         Active
@@ -110,6 +114,16 @@
                                         Disabled
                                     </span>
                                     {% endif %}
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-center">
+                                    <span class="text-sm font-medium {% if user.meetings_attended > 0 %}text-blue-600{% else %}text-gray-400{% endif %}">
+                                        {{ user.meetings_attended }}
+                                    </span>
+                                </td>
+                                <td class="px-6 py-4 whitespace-nowrap text-center">
+                                    <span class="text-sm font-medium {% if user.summaries_received > 0 %}text-green-600{% else %}text-gray-400{% endif %}">
+                                        {{ user.summaries_received }}
+                                    </span>
                                 </td>
                                 <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                     {{ user.email_preference }}

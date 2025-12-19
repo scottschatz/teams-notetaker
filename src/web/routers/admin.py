@@ -2,13 +2,14 @@
 Admin routes for user management and system configuration.
 """
 
-from datetime import datetime, timezone
-from fastapi import APIRouter, Request, Form, HTTPException
+from datetime import datetime, timezone, timedelta
+from typing import Optional
+from fastapi import APIRouter, Request, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import desc
+from sqlalchemy import desc, func
 
-from ...core.database import DatabaseManager, UserPreference, EmailAlias
+from ...core.database import DatabaseManager, UserPreference, EmailAlias, MeetingParticipant, Distribution, Meeting
 from ...core.config import get_config
 from ...graph.client import GraphAPIClient
 from ...core.exceptions import GraphAPIError
@@ -21,8 +22,11 @@ db = DatabaseManager(config.database.connection_string)
 
 
 @router.get("/users", response_class=HTMLResponse)
-async def admin_users_page(request: Request):
-    """Display user management page."""
+async def admin_users_page(
+    request: Request,
+    days: Optional[int] = Query(default=30, description="Days to look back for counts")
+):
+    """Display user management page with meeting and summary counts."""
     with db.get_session() as session:
         users = session.query(UserPreference).order_by(
             desc(UserPreference.updated_at)
@@ -41,11 +45,53 @@ async def admin_users_page(request: Request):
                 if alias.primary_email:
                     user_id_by_email[alias.primary_email.lower()] = alias.user_id
 
-        # Enhance users with alias info
+        # Calculate date cutoff for time-filtered counts
+        cutoff_date = datetime.utcnow() - timedelta(days=days) if days else None
+
+        # Get meeting attendance counts per email
+        attendance_query = session.query(
+            func.lower(MeetingParticipant.email).label('email'),
+            func.count(MeetingParticipant.id).label('count')
+        ).join(Meeting, MeetingParticipant.meeting_id == Meeting.id)
+
+        if cutoff_date:
+            attendance_query = attendance_query.filter(Meeting.start_time >= cutoff_date)
+
+        attendance_counts = {
+            row.email: row.count
+            for row in attendance_query.group_by(func.lower(MeetingParticipant.email)).all()
+        }
+
+        # Get summary distribution counts per email (only sent)
+        distribution_query = session.query(
+            func.lower(Distribution.recipient).label('email'),
+            func.count(Distribution.id).label('count')
+        ).filter(Distribution.status == 'sent')
+
+        if cutoff_date:
+            distribution_query = distribution_query.filter(Distribution.sent_at >= cutoff_date)
+
+        distribution_counts = {
+            row.email: row.count
+            for row in distribution_query.group_by(func.lower(Distribution.recipient)).all()
+        }
+
+        # Enhance users with alias info and counts
         enhanced_users = []
         for u in users:
             email_lower = u.user_email.lower()
             alias_info = alias_by_email.get(email_lower)
+
+            # Get counts - check both user_email and primary_email
+            meetings_attended = attendance_counts.get(email_lower, 0)
+            summaries_received = distribution_counts.get(email_lower, 0)
+
+            # Also check primary email for counts
+            primary = alias_info.primary_email.lower() if alias_info and alias_info.primary_email else None
+            if primary and primary != email_lower:
+                meetings_attended += attendance_counts.get(primary, 0)
+                summaries_received += distribution_counts.get(primary, 0)
+
             enhanced_users.append({
                 "user_email": u.user_email,
                 "receive_emails": u.receive_emails,
@@ -54,9 +100,11 @@ async def admin_users_page(request: Request):
                 "updated_by": u.updated_by,
                 # Alias info
                 "primary_email": alias_info.primary_email if alias_info else None,
-                "user_id": alias_info.user_id if alias_info else user_id_by_email.get(email_lower),
                 "display_name": alias_info.display_name if alias_info else None,
                 "job_title": alias_info.job_title if alias_info else None,
+                # Counts
+                "meetings_attended": meetings_attended,
+                "summaries_received": summaries_received,
             })
 
         return templates.TemplateResponse(
@@ -66,7 +114,8 @@ async def admin_users_page(request: Request):
                 "user": {"email": "local", "role": "admin"},
                 "users": enhanced_users,
                 "total_users": len(users),
-                "active_users": len([u for u in users if u.receive_emails])
+                "active_users": len([u for u in users if u.receive_emails]),
+                "days_filter": days
             }
         )
 

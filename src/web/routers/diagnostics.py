@@ -13,11 +13,11 @@ from fastapi import APIRouter, Request, Depends, Query, HTTPException
 from fastapi.responses import HTMLResponse
 from typing import Dict, Any, Optional
 
-from ...core.database import DatabaseManager, JobQueue, Meeting
+from ...core.database import DatabaseManager, JobQueue, Meeting, SubscriptionEvent
 from ...core.config import get_config
 from ...graph.client import GraphAPIClient
 from ..app import limiter
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, and_
 
 
 logger = logging.getLogger(__name__)
@@ -497,8 +497,8 @@ async def force_webhook_resubscribe(request: Request):
 
         logger.info("Force resubscribe triggered from diagnostics page")
 
-        # Delete all existing and create fresh
-        success = manager.recreate_subscription()
+        # Delete all existing and create fresh (with 'manual' source)
+        success = manager.recreate_subscription('manual')
 
         if success:
             # Get the new subscription info
@@ -562,3 +562,105 @@ async def get_backfill_history(
                 for run in runs
             ]
         }
+
+
+@router.get("/api/subscription-stats")
+async def get_subscription_stats(
+    days: int = Query(default=7, ge=1, le=365),
+    db: DatabaseManager = Depends(get_db)
+):
+    """
+    Get subscription uptime statistics for the specified time period.
+
+    Args:
+        days: Number of days to analyze (1-365, default 7)
+
+    Returns:
+        Statistics including uptime %, disconnect count, average downtime
+    """
+    with db.get_session() as session:
+        # Calculate date range
+        end_time = datetime.utcnow()
+        start_time = end_time - timedelta(days=days)
+        total_period_seconds = days * 24 * 3600
+
+        # Get all events in the time period
+        events = session.query(SubscriptionEvent).filter(
+            SubscriptionEvent.timestamp >= start_time
+        ).order_by(SubscriptionEvent.timestamp.desc()).all()
+
+        # Count events by type
+        down_events = [e for e in events if e.event_type == 'down']
+        up_events = [e for e in events if e.event_type == 'up']
+        created_events = [e for e in events if e.event_type == 'created']
+        renewed_events = [e for e in events if e.event_type == 'renewed']
+        failed_events = [e for e in events if e.event_type == 'failed']
+
+        # Calculate total downtime from 'up' events that have downtime_seconds
+        downtime_values = [e.downtime_seconds for e in up_events if e.downtime_seconds is not None]
+        total_downtime_seconds = sum(downtime_values)
+
+        # Calculate average downtime per incident
+        avg_downtime_seconds = total_downtime_seconds / len(downtime_values) if downtime_values else 0
+
+        # Calculate uptime percentage
+        uptime_seconds = total_period_seconds - total_downtime_seconds
+        uptime_percentage = (uptime_seconds / total_period_seconds) * 100 if total_period_seconds > 0 else 100
+
+        # Format recent events for display
+        recent_events = []
+        for event in events[:20]:  # Last 20 events
+            event_data = {
+                "id": event.id,
+                "event_type": event.event_type,
+                "timestamp": event.timestamp.isoformat() + 'Z' if event.timestamp else None,
+                "source": event.source,
+                "subscription_id": event.subscription_id[:20] + "..." if event.subscription_id and len(event.subscription_id) > 20 else event.subscription_id
+            }
+
+            if event.event_type == 'down' or event.event_type == 'failed':
+                event_data["error_message"] = event.error_message
+
+            if event.event_type == 'up' and event.downtime_seconds is not None:
+                event_data["downtime_seconds"] = event.downtime_seconds
+                event_data["downtime_formatted"] = _format_duration(event.downtime_seconds)
+
+            recent_events.append(event_data)
+
+        return {
+            "period": {
+                "days": days,
+                "start": start_time.isoformat() + 'Z',
+                "end": end_time.isoformat() + 'Z'
+            },
+            "summary": {
+                "uptime_percentage": round(uptime_percentage, 2),
+                "total_downtime_seconds": total_downtime_seconds,
+                "total_downtime_formatted": _format_duration(total_downtime_seconds),
+                "avg_downtime_seconds": round(avg_downtime_seconds, 0),
+                "avg_downtime_formatted": _format_duration(int(avg_downtime_seconds))
+            },
+            "counts": {
+                "down_events": len(down_events),
+                "up_events": len(up_events),
+                "created": len(created_events),
+                "renewed": len(renewed_events),
+                "failed": len(failed_events),
+                "total_events": len(events)
+            },
+            "recent_events": recent_events
+        }
+
+
+def _format_duration(seconds: int) -> str:
+    """Format seconds into a human-readable duration string."""
+    if seconds < 60:
+        return f"{seconds}s"
+    elif seconds < 3600:
+        minutes = seconds // 60
+        secs = seconds % 60
+        return f"{minutes}m {secs}s"
+    else:
+        hours = seconds // 3600
+        minutes = (seconds % 3600) // 60
+        return f"{hours}h {minutes}m"

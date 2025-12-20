@@ -3,7 +3,7 @@
 {% block title %}System Diagnostics - Teams Notetaker{% endblock %}
 
 {% block content %}
-<div x-data="diagnosticsData()" x-init="loadStatus(); loadWebhookStatus(); setInterval(loadStatus, 5000); setInterval(loadWebhookStatus, 30000); init()">
+<div x-data="diagnosticsData()" x-init="loadStatus(); loadWebhookStatus(); loadSubscriptionStats(); setInterval(loadStatus, 5000); setInterval(loadWebhookStatus, 30000); init()">
     <div class="flex justify-between items-center mb-6">
         <h1 class="text-3xl font-bold text-gray-900">System Diagnostics</h1>
         <div class="flex items-center space-x-4">
@@ -177,6 +177,97 @@
 
         <div class="mt-2 text-xs text-gray-400" x-show="webhookStatus.checked_at">
             <span x-text="'Last checked: ' + formatDateTime(webhookStatus.checked_at)"></span>
+        </div>
+
+        <!-- Subscription Statistics (collapsible) -->
+        <div class="mt-6 border-t pt-4">
+            <div class="flex justify-between items-center cursor-pointer" @click="showSubscriptionStats = !showSubscriptionStats">
+                <h3 class="text-sm font-semibold text-gray-700">Subscription Statistics</h3>
+                <div class="flex items-center space-x-4">
+                    <select x-model="subscriptionStatsDays" @change="loadSubscriptionStats()" @click.stop class="px-2 py-1 border border-gray-300 rounded text-xs">
+                        <option value="1">Last 24h</option>
+                        <option value="7">Last 7 days</option>
+                        <option value="30">Last 30 days</option>
+                        <option value="90">Last 90 days</option>
+                    </select>
+                    <svg class="w-5 h-5 text-gray-500 transform transition-transform" :class="{ 'rotate-180': showSubscriptionStats }" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                        <path fill-rule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clip-rule="evenodd" />
+                    </svg>
+                </div>
+            </div>
+
+            <div x-show="showSubscriptionStats" x-transition class="mt-4">
+                <!-- Stats summary cards -->
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+                    <div class="bg-gray-50 rounded p-3">
+                        <p class="text-xs text-gray-500 uppercase">Uptime</p>
+                        <p class="text-xl font-bold" :class="subscriptionStats?.summary?.uptime_percentage >= 99 ? 'text-green-600' : subscriptionStats?.summary?.uptime_percentage >= 95 ? 'text-yellow-600' : 'text-red-600'" x-text="(subscriptionStats?.summary?.uptime_percentage || 100) + '%'"></p>
+                    </div>
+                    <div class="bg-gray-50 rounded p-3">
+                        <p class="text-xs text-gray-500 uppercase">Disconnects</p>
+                        <p class="text-xl font-bold text-gray-900" x-text="subscriptionStats?.counts?.down_events || 0"></p>
+                    </div>
+                    <div class="bg-gray-50 rounded p-3">
+                        <p class="text-xs text-gray-500 uppercase">Total Downtime</p>
+                        <p class="text-xl font-bold text-gray-900" x-text="subscriptionStats?.summary?.total_downtime_formatted || '0s'"></p>
+                    </div>
+                    <div class="bg-gray-50 rounded p-3">
+                        <p class="text-xs text-gray-500 uppercase">Avg Recovery</p>
+                        <p class="text-xl font-bold text-gray-900" x-text="subscriptionStats?.summary?.avg_downtime_formatted || '0s'"></p>
+                    </div>
+                </div>
+
+                <!-- Event counts row -->
+                <div class="flex flex-wrap gap-2 mb-4 text-xs">
+                    <span class="px-2 py-1 bg-green-100 text-green-800 rounded">Created: <span x-text="subscriptionStats?.counts?.created || 0"></span></span>
+                    <span class="px-2 py-1 bg-blue-100 text-blue-800 rounded">Renewed: <span x-text="subscriptionStats?.counts?.renewed || 0"></span></span>
+                    <span class="px-2 py-1 bg-red-100 text-red-800 rounded">Failed: <span x-text="subscriptionStats?.counts?.failed || 0"></span></span>
+                    <span class="px-2 py-1 bg-gray-100 text-gray-800 rounded">Total Events: <span x-text="subscriptionStats?.counts?.total_events || 0"></span></span>
+                </div>
+
+                <!-- Recent events table -->
+                <template x-if="subscriptionStats?.recent_events?.length > 0">
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full text-xs">
+                            <thead class="bg-gray-100">
+                                <tr>
+                                    <th class="px-3 py-2 text-left font-medium text-gray-500">Time</th>
+                                    <th class="px-3 py-2 text-left font-medium text-gray-500">Event</th>
+                                    <th class="px-3 py-2 text-left font-medium text-gray-500">Source</th>
+                                    <th class="px-3 py-2 text-left font-medium text-gray-500">Details</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100">
+                                <template x-for="event in subscriptionStats.recent_events" :key="event.id">
+                                    <tr>
+                                        <td class="px-3 py-2 text-gray-600" x-text="formatDateTime(event.timestamp)"></td>
+                                        <td class="px-3 py-2">
+                                            <span class="px-2 py-0.5 rounded text-xs font-medium"
+                                                  :class="{
+                                                      'bg-red-100 text-red-800': event.event_type === 'down',
+                                                      'bg-green-100 text-green-800': event.event_type === 'up' || event.event_type === 'created',
+                                                      'bg-blue-100 text-blue-800': event.event_type === 'renewed',
+                                                      'bg-orange-100 text-orange-800': event.event_type === 'failed'
+                                                  }"
+                                                  x-text="event.event_type">
+                                            </span>
+                                        </td>
+                                        <td class="px-3 py-2 text-gray-600" x-text="event.source || '-'"></td>
+                                        <td class="px-3 py-2 text-gray-600">
+                                            <span x-show="event.downtime_formatted" class="text-orange-600" x-text="'Downtime: ' + event.downtime_formatted"></span>
+                                            <span x-show="event.error_message" class="text-red-600 truncate max-w-xs inline-block" :title="event.error_message" x-text="event.error_message?.substring(0, 50) + (event.error_message?.length > 50 ? '...' : '')"></span>
+                                            <span x-show="event.subscription_id && event.event_type !== 'down' && event.event_type !== 'failed'" class="text-gray-400 font-mono" x-text="event.subscription_id"></span>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </template>
+                <template x-if="!subscriptionStats?.recent_events?.length">
+                    <p class="text-gray-500 text-sm">No subscription events recorded yet.</p>
+                </template>
+            </div>
         </div>
     </div>
 
@@ -362,6 +453,9 @@ function diagnosticsData() {
         logEntries: [],
         autoRefreshLogs: true,
         logRefreshInterval: null,
+        showSubscriptionStats: false,
+        subscriptionStatsDays: 7,
+        subscriptionStats: null,
 
         async loadStatus() {
             try {
@@ -387,6 +481,16 @@ function diagnosticsData() {
             } catch (error) {
                 console.error('Failed to load webhook status:', error);
                 this.webhookStatus = { active: false, error: error.message, subscriptions: [] };
+            }
+        },
+
+        async loadSubscriptionStats() {
+            try {
+                const response = await fetch(`/diagnostics/api/subscription-stats?days=${this.subscriptionStatsDays}`);
+                this.subscriptionStats = await response.json();
+            } catch (error) {
+                console.error('Failed to load subscription stats:', error);
+                this.subscriptionStats = null;
             }
         },
 

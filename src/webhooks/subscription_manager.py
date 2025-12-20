@@ -18,6 +18,7 @@ from typing import Optional, Dict, Any, List
 
 from ..graph.client import GraphAPIClient
 from ..core.config import AppConfig
+from ..core.database import get_db_manager, SubscriptionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,121 @@ class SubscriptionManager:
         self._last_alert_time: Optional[datetime] = None
         self._alert_cooldown_hours = 6  # Don't spam alerts
         self._subscription_down = self._load_down_state()  # Load persisted state
+        self._down_event_id: Optional[int] = None  # Track current down event for recovery logging
+        self._down_timestamp: Optional[datetime] = None  # Track when we went down
+
+    # =========================================================================
+    # EVENT LOGGING
+    # =========================================================================
+
+    def _log_event(
+        self,
+        event_type: str,
+        source: str,
+        subscription_id: Optional[str] = None,
+        error_message: Optional[str] = None,
+        down_event_id: Optional[int] = None,
+        downtime_seconds: Optional[int] = None
+    ) -> Optional[int]:
+        """
+        Log a subscription event to the database.
+
+        Args:
+            event_type: 'down', 'up', 'created', 'renewed', 'failed'
+            source: 'startup', 'check', 'daily_refresh', 'manual'
+            subscription_id: Graph subscription ID if applicable
+            error_message: Error details for 'down' or 'failed' events
+            down_event_id: ID of corresponding 'down' event for 'up' events
+            downtime_seconds: Calculated downtime for 'up' events
+
+        Returns:
+            Event ID if logged successfully, None otherwise
+        """
+        try:
+            db_manager = get_db_manager()
+            with db_manager.session() as session:
+                event = SubscriptionEvent(
+                    event_type=event_type,
+                    timestamp=datetime.utcnow(),
+                    subscription_id=subscription_id,
+                    error_message=error_message,
+                    down_event_id=down_event_id,
+                    downtime_seconds=downtime_seconds,
+                    source=source
+                )
+                session.add(event)
+                session.commit()
+                logger.debug(f"Logged subscription event: {event_type} (source={source})")
+                return event.id
+        except Exception as e:
+            logger.error(f"Failed to log subscription event: {e}")
+            return None
+
+    def _log_down_event(self, source: str, error_message: str) -> Optional[int]:
+        """Log that the subscription went down and store the event for recovery tracking."""
+        event_id = self._log_event(
+            event_type='down',
+            source=source,
+            error_message=error_message
+        )
+        if event_id:
+            self._down_event_id = event_id
+            self._down_timestamp = datetime.utcnow()
+        return event_id
+
+    def _log_up_event(self, source: str, subscription_id: Optional[str] = None) -> tuple:
+        """
+        Log that the subscription recovered and calculate downtime.
+
+        Returns:
+            Tuple of (down_timestamp, up_timestamp, downtime_seconds)
+        """
+        now = datetime.utcnow()
+        down_timestamp = self._down_timestamp
+        downtime_seconds = None
+
+        if down_timestamp:
+            downtime_seconds = int((now - down_timestamp).total_seconds())
+
+        self._log_event(
+            event_type='up',
+            source=source,
+            subscription_id=subscription_id,
+            down_event_id=self._down_event_id,
+            downtime_seconds=downtime_seconds
+        )
+
+        # Clear the down tracking
+        old_down_event_id = self._down_event_id
+        old_down_timestamp = self._down_timestamp
+        self._down_event_id = None
+        self._down_timestamp = None
+
+        return (old_down_timestamp, now, downtime_seconds)
+
+    def _log_created_event(self, source: str, subscription_id: str):
+        """Log that a subscription was created."""
+        self._log_event(
+            event_type='created',
+            source=source,
+            subscription_id=subscription_id
+        )
+
+    def _log_renewed_event(self, source: str, subscription_id: str):
+        """Log that a subscription was renewed."""
+        self._log_event(
+            event_type='renewed',
+            source=source,
+            subscription_id=subscription_id
+        )
+
+    def _log_failed_event(self, source: str, error_message: str):
+        """Log that a subscription operation failed."""
+        self._log_event(
+            event_type='failed',
+            source=source,
+            error_message=error_message
+        )
 
     def _load_down_state(self) -> bool:
         """Load subscription down state from file."""
@@ -123,9 +239,12 @@ class SubscriptionManager:
             logger.error(f"Failed to get subscriptions: {e}")
             return []
 
-    def create_subscription(self) -> Optional[Dict[str, Any]]:
+    def create_subscription(self, source: str = 'check') -> Optional[Dict[str, Any]]:
         """
         Create a new callRecords subscription.
+
+        Args:
+            source: What triggered this creation ('startup', 'check', 'daily_refresh', 'manual')
 
         Returns:
             Created subscription dict or None on failure
@@ -145,11 +264,13 @@ class SubscriptionManager:
             response = self.graph_client.post("/subscriptions", json=subscription)
 
             logger.info(f"✅ Subscription created: {response['id']} (expires: {response['expirationDateTime']})")
-            self._check_and_send_recovery_alert()
+            self._log_created_event(source, response['id'])
+            self._check_and_send_recovery_alert(source, response.get('id'))
             return response
 
         except Exception as e:
             logger.error(f"Failed to create subscription: {e}")
+            self._log_failed_event(source, str(e))
             return None
 
     def delete_subscription(self, subscription_id: str) -> bool:
@@ -170,12 +291,13 @@ class SubscriptionManager:
             logger.error(f"Failed to delete subscription {subscription_id}: {e}")
             return False
 
-    def renew_subscription(self, subscription_id: str) -> Optional[Dict[str, Any]]:
+    def renew_subscription(self, subscription_id: str, source: str = 'check') -> Optional[Dict[str, Any]]:
         """
         Renew an existing subscription.
 
         Args:
             subscription_id: Subscription ID to renew
+            source: What triggered this renewal ('startup', 'check', 'daily_refresh', 'manual')
 
         Returns:
             Updated subscription dict or None on failure
@@ -191,20 +313,25 @@ class SubscriptionManager:
             response = self.graph_client.patch(f"/subscriptions/{subscription_id}", json=update_payload)
 
             logger.info(f"✅ Subscription renewed: {response['expirationDateTime']}")
-            self._check_and_send_recovery_alert()
+            self._log_renewed_event(source, subscription_id)
+            self._check_and_send_recovery_alert(source, subscription_id)
             return response
 
         except Exception as e:
             logger.error(f"Failed to renew subscription {subscription_id}: {e}")
+            self._log_failed_event(source, str(e))
             return None
 
-    def ensure_subscription(self) -> bool:
+    def ensure_subscription(self, source: str = 'check') -> bool:
         """
         Ensure at least one valid callRecords subscription exists.
 
         Checks for existing subscriptions and creates one if:
         - No subscriptions exist
         - All existing subscriptions are expired or expiring soon
+
+        Args:
+            source: What triggered this check ('startup', 'check', 'daily_refresh', 'manual')
 
         Returns:
             True if a valid subscription exists (or was created)
@@ -215,7 +342,7 @@ class SubscriptionManager:
 
         if not subscriptions:
             logger.warning("No callRecords subscriptions found, creating one...")
-            return self.create_subscription() is not None
+            return self.create_subscription(source) is not None
 
         # Check if any subscription is still valid (not expiring soon)
         now = datetime.utcnow()
@@ -229,20 +356,20 @@ class SubscriptionManager:
                 if expiry > threshold:
                     hours_remaining = (expiry - now).total_seconds() / 3600
                     logger.info(f"✅ Valid subscription found: {sub['id'][:20]}... ({hours_remaining:.1f}h remaining)")
-                    self._check_and_send_recovery_alert()
+                    self._check_and_send_recovery_alert(source, sub['id'])
                     return True
                 else:
                     # Subscription expiring soon, try to renew
                     hours_remaining = (expiry - now).total_seconds() / 3600
                     logger.warning(f"Subscription expiring soon ({hours_remaining:.1f}h), renewing...")
 
-                    if self.renew_subscription(sub["id"]):
+                    if self.renew_subscription(sub["id"], source):
                         return True
                     else:
                         # Renewal failed, try to delete and create new
                         logger.warning("Renewal failed, recreating subscription...")
                         self.delete_subscription(sub["id"])
-                        return self.create_subscription() is not None
+                        return self.create_subscription(source) is not None
 
             except Exception as e:
                 logger.error(f"Error parsing subscription expiry: {e}")
@@ -250,13 +377,16 @@ class SubscriptionManager:
 
         # All subscriptions are invalid, create new one
         logger.warning("No valid subscriptions found, creating new one...")
-        return self.create_subscription() is not None
+        return self.create_subscription(source) is not None
 
-    def recreate_subscription(self) -> bool:
+    def recreate_subscription(self, source: str = 'daily_refresh') -> bool:
         """
         Delete all existing subscriptions and create a fresh one.
 
         Used for daily proactive recreation to ensure clean state.
+
+        Args:
+            source: What triggered this recreation ('startup', 'check', 'daily_refresh', 'manual')
 
         Returns:
             True if new subscription was created successfully
@@ -269,23 +399,75 @@ class SubscriptionManager:
             self.delete_subscription(sub["id"])
 
         # Create fresh subscription
-        return self.create_subscription() is not None
+        return self.create_subscription(source) is not None
 
-    def _check_and_send_recovery_alert(self):
+    def _check_and_send_recovery_alert(self, source: str = 'check', subscription_id: Optional[str] = None):
         """Send recovery alert if we were previously in a down state."""
         if self._subscription_down:
+            # Log the up event and get timing info
+            down_timestamp, up_timestamp, downtime_seconds = self._log_up_event(source, subscription_id)
+
             self._subscription_down = False
             self._save_down_state(False)  # Clear persisted state
-            self._send_recovery_alert()
+            self._send_recovery_alert(down_timestamp, up_timestamp, downtime_seconds)
 
-    def _send_recovery_alert(self):
-        """Send a recovery/up alert when subscription is restored."""
+    def _format_downtime(self, seconds: Optional[int]) -> str:
+        """Format downtime seconds into a human-readable string."""
+        if seconds is None:
+            return "Unknown"
+
+        if seconds < 60:
+            return f"{seconds} seconds"
+        elif seconds < 3600:
+            minutes = seconds // 60
+            secs = seconds % 60
+            return f"{minutes}m {secs}s"
+        else:
+            hours = seconds // 3600
+            minutes = (seconds % 3600) // 60
+            return f"{hours}h {minutes}m"
+
+    def _send_recovery_alert(
+        self,
+        down_timestamp: Optional[datetime] = None,
+        up_timestamp: Optional[datetime] = None,
+        downtime_seconds: Optional[int] = None
+    ):
+        """
+        Send a recovery/up alert when subscription is restored.
+
+        Args:
+            down_timestamp: When the subscription went down (UTC)
+            up_timestamp: When the subscription recovered (UTC)
+            downtime_seconds: Total downtime in seconds
+        """
         if not self.alert_enabled or not self.alert_recipients or not self.from_email:
             return
 
         try:
             hostname = socket.gethostname()
-            now = datetime.utcnow()
+            now = up_timestamp or datetime.utcnow()
+
+            # Build timing details section
+            timing_details = ""
+            if down_timestamp or up_timestamp or downtime_seconds:
+                timing_items = []
+                if down_timestamp:
+                    timing_items.append(f"<strong>Disconnected:</strong> {down_timestamp.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                if up_timestamp:
+                    timing_items.append(f"<strong>Reconnected:</strong> {up_timestamp.strftime('%Y-%m-%d %H:%M:%S')} UTC")
+                if downtime_seconds is not None:
+                    timing_items.append(f"<strong>Total Downtime:</strong> {self._format_downtime(downtime_seconds)}")
+
+                timing_details = f"""
+                <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 12px; margin: 16px 0;">
+                    <h3 style="margin: 0 0 8px 0; font-size: 14px; color: #475569;">Outage Details</h3>
+                    <p style="margin: 0; font-size: 14px;">
+                        {'<br/>'.join(timing_items)}
+                    </p>
+                </div>
+                """
+
             html_body = f"""
             <html>
             <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
@@ -295,6 +477,7 @@ class SubscriptionManager:
                     <p>The Microsoft Graph webhook subscription has been successfully created/restored.</p>
                     <p>Real-time meeting notifications are now working normally.</p>
                 </div>
+                {timing_details}
                 <p style="color: #666; font-size: 12px;">
                     Server: {hostname}<br/>
                     Time: {now.strftime('%Y-%m-%d %H:%M:%S')} UTC<br/>
@@ -327,11 +510,16 @@ class SubscriptionManager:
         except Exception as e:
             logger.error(f"Failed to send recovery alert email: {e}")
 
-    def _send_alert_email(self, subject: str, body: str):
+    def _send_alert_email(self, subject: str, body: str, source: str = 'check'):
         """
         Send an alert email to configured recipients.
 
         Respects cooldown period to avoid spamming.
+
+        Args:
+            subject: Email subject
+            body: HTML body content
+            source: What triggered this alert ('startup', 'check', 'daily_refresh', 'manual')
         """
         if not self.alert_enabled or not self.alert_recipients or not self.from_email:
             logger.warning(f"Alert not sent (enabled={self.alert_enabled}, recipients={len(self.alert_recipients)}, from={self.from_email}): {subject}")
@@ -390,8 +578,12 @@ class SubscriptionManager:
                     logger.error(f"Failed to send alert to {recipient}: {e}")
 
             self._last_alert_time = now
-            self._subscription_down = True  # Mark as down when sending failure alert
-            self._save_down_state(True)  # Persist across restarts
+
+            # Mark as down and log the down event
+            if not self._subscription_down:
+                self._subscription_down = True
+                self._save_down_state(True)  # Persist across restarts
+                self._log_down_event(source, subject)
 
         except Exception as e:
             logger.error(f"Failed to send alert email: {e}")
@@ -414,7 +606,7 @@ class SubscriptionManager:
 
         # Initial subscription creation with retries
         # Send recovery alert if we succeed after failures (indicates previous down state)
-        if not await self._ensure_subscription_with_retry(send_recovery_on_retry_success=True):
+        if not await self._ensure_subscription_with_retry(source='startup', send_recovery_on_retry_success=True):
             logger.error("⚠️ Failed to create webhook subscription after retries - webhook notifications may not work!")
             self._send_alert_email(
                 subject="Webhook Subscription Failed",
@@ -429,7 +621,8 @@ class SubscriptionManager:
                     <li>Network latency between Graph API and Azure Relay</li>
                 </ul>
                 <p><strong>Action:</strong> Check the service logs for details. The system will automatically retry when it restarts or at the next scheduled check.</p>
-                """
+                """,
+                source='startup'
             )
 
         last_daily_recreate: Optional[datetime] = None
@@ -443,28 +636,30 @@ class SubscriptionManager:
                     # Only recreate once per day
                     if last_daily_recreate is None or (now - last_daily_recreate).days >= 1:
                         logger.info(f"Daily subscription recreation time ({DAILY_RECREATE_HOUR_UTC}:00 UTC)")
-                        if not self.recreate_subscription():
+                        if not self.recreate_subscription('daily_refresh'):
                             self._send_alert_email(
                                 subject="Daily Webhook Subscription Refresh Failed",
                                 body="""
                                 <p>The daily webhook subscription refresh failed.</p>
                                 <p><strong>Impact:</strong> Webhook notifications may not work correctly.</p>
                                 <p>The system will retry at the next scheduled check in 6 hours.</p>
-                                """
+                                """,
+                                source='daily_refresh'
                             )
                         last_daily_recreate = now
                 else:
                     # Regular check - ensure subscription exists and is valid
-                    if not self.ensure_subscription():
+                    if not self.ensure_subscription('check'):
                         # Try with retries before alerting
-                        if not await self._ensure_subscription_with_retry():
+                        if not await self._ensure_subscription_with_retry(source='check'):
                             self._send_alert_email(
                                 subject="Webhook Subscription Check Failed",
                                 body=f"""
                                 <p>Periodic subscription check found no valid subscription, and recreation failed after {MAX_CREATION_RETRIES} attempts.</p>
                                 <p><strong>Impact:</strong> Real-time meeting notifications are NOT working.</p>
                                 <p>The system will retry at the next scheduled check in {CHECK_INTERVAL_MINUTES} minutes.</p>
-                                """
+                                """,
+                                source='check'
                             )
 
                 # Sleep until next check
@@ -480,7 +675,11 @@ class SubscriptionManager:
 
         logger.info("Subscription manager stopped")
 
-    async def _ensure_subscription_with_retry(self, send_recovery_on_retry_success: bool = False) -> bool:
+    async def _ensure_subscription_with_retry(
+        self,
+        source: str = 'check',
+        send_recovery_on_retry_success: bool = False
+    ) -> bool:
         """
         Ensure subscription exists, retrying if creation fails.
 
@@ -489,6 +688,7 @@ class SubscriptionManager:
         a subscription.
 
         Args:
+            source: What triggered this check ('startup', 'check', 'daily_refresh', 'manual')
             send_recovery_on_retry_success: If True, send recovery alert when
                 subscription succeeds after initial failure(s)
 
@@ -498,7 +698,7 @@ class SubscriptionManager:
         had_failure = False
 
         for attempt in range(1, MAX_CREATION_RETRIES + 1):
-            if self.ensure_subscription():
+            if self.ensure_subscription(source):
                 # Check if we should send recovery alert:
                 # - Either we had failures during this startup cycle
                 # - Or there was a persisted down state from before (already loaded into _subscription_down)
@@ -507,7 +707,7 @@ class SubscriptionManager:
                     if not self._subscription_down and had_failure:
                         # Had failures this cycle but no persisted state - set it to trigger recovery
                         self._subscription_down = True
-                    self._check_and_send_recovery_alert()
+                    self._check_and_send_recovery_alert(source)
                 return True
 
             had_failure = True

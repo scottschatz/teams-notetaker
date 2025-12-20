@@ -653,6 +653,44 @@ class BackfillRun(Base):
         return f"<BackfillRun(id={self.id}, status='{self.status}', started={self.started_at})>"
 
 
+class SubscriptionEvent(Base):
+    """
+    Track webhook subscription lifecycle events for monitoring and statistics.
+
+    Events are logged when subscriptions go down, recover, or encounter errors.
+    Used to calculate uptime, average downtime, and display on diagnostics page.
+    """
+    __tablename__ = "subscription_events"
+
+    id = Column(Integer, primary_key=True)
+    event_type = Column(String(20), nullable=False, index=True)  # 'down', 'up', 'created', 'renewed', 'failed'
+    timestamp = Column(DateTime, default=func.now(), nullable=False, index=True)
+
+    # Subscription details (if applicable)
+    subscription_id = Column(String(100))
+
+    # For 'down' events - track what caused it
+    error_message = Column(Text)
+
+    # For 'up' events - link to the 'down' event and calculate downtime
+    down_event_id = Column(Integer, ForeignKey("subscription_events.id"))
+    downtime_seconds = Column(Integer)  # Calculated when going back up
+
+    # Source of the event
+    source = Column(String(50))  # 'startup', 'check', 'daily_refresh', 'manual'
+
+    __table_args__ = (
+        CheckConstraint(
+            "event_type IN ('down', 'up', 'created', 'renewed', 'failed')",
+            name="valid_subscription_event_type"
+        ),
+        Index("idx_subscription_events_type_time", "event_type", "timestamp"),
+    )
+
+    def __repr__(self):
+        return f"<SubscriptionEvent(id={self.id}, type='{self.event_type}', time={self.timestamp})>"
+
+
 # ============================================================================
 # INBOX MONITORING MODELS (Phase 5)
 # ============================================================================
@@ -1170,3 +1208,30 @@ class DatabaseManager:
             raise
         finally:
             session.close()
+
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+_db_manager_instance: Optional[DatabaseManager] = None
+
+
+def get_db_manager() -> DatabaseManager:
+    """
+    Get or create a shared DatabaseManager instance.
+
+    Uses the connection string from the application config.
+    Thread-safe due to SQLAlchemy's built-in connection pooling.
+
+    Returns:
+        DatabaseManager instance
+    """
+    global _db_manager_instance
+
+    if _db_manager_instance is None:
+        from .config import get_config
+        config = get_config()
+        _db_manager_instance = DatabaseManager(config.database.connection_string)
+
+    return _db_manager_instance

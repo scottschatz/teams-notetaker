@@ -127,14 +127,7 @@ async def get_overview(days: int = Query(default=30, description="Number of days
         for row in cost_query.all():
             input_tokens = row.input_tokens or 0
             output_tokens = row.output_tokens or 0
-            model = row.model or ''
-
-            if 'haiku' in model.lower():
-                # Haiku: $1/$5 per million tokens (input/output)
-                total_cost += (input_tokens * 1 + output_tokens * 5) / 1_000_000
-            elif 'sonnet' in model.lower():
-                # Sonnet: $3/$15 per million tokens
-                total_cost += (input_tokens * 3 + output_tokens * 15) / 1_000_000
+            total_cost += calculate_cost(row.model, input_tokens, output_tokens)
 
         avg_cost = total_cost / total_summaries if total_summaries > 0 else 0
 
@@ -153,12 +146,7 @@ async def get_overview(days: int = Query(default=30, description="Number of days
             for row in prev_cost_query.all():
                 input_tokens = row.input_tokens or 0
                 output_tokens = row.output_tokens or 0
-                model = row.model or ''
-
-                if 'haiku' in model.lower():
-                    prev_cost += (input_tokens * 1 + output_tokens * 5) / 1_000_000
-                elif 'sonnet' in model.lower():
-                    prev_cost += (input_tokens * 3 + output_tokens * 15) / 1_000_000
+                prev_cost += calculate_cost(row.model, input_tokens, output_tokens)
 
         return {
             "meetings": {
@@ -350,20 +338,21 @@ async def get_ai_costs(days: int = Query(default=30)):
         for r in results:
             date_str = str(r.date)
             if date_str not in dates:
-                dates[date_str] = {"haiku": 0, "sonnet": 0, "other": 0}
+                dates[date_str] = {"haiku": 0, "sonnet": 0, "opus": 0, "other": 0}
 
             input_tokens = r.input_tokens or 0
             output_tokens = r.output_tokens or 0
             model = (r.model or '').lower()
+            cost = calculate_cost(r.model, input_tokens, output_tokens)
 
             if 'haiku' in model:
-                cost = (input_tokens * 1 + output_tokens * 5) / 1_000_000
                 dates[date_str]["haiku"] += cost
             elif 'sonnet' in model:
-                cost = (input_tokens * 3 + output_tokens * 15) / 1_000_000
                 dates[date_str]["sonnet"] += cost
+            elif 'opus' in model:
+                dates[date_str]["opus"] += cost
             else:
-                dates[date_str]["other"] += (input_tokens + output_tokens) / 1_000_000
+                dates[date_str]["other"] += cost
 
         sorted_dates = sorted(dates.keys())
 
@@ -372,6 +361,7 @@ async def get_ai_costs(days: int = Query(default=30)):
             "datasets": {
                 "haiku": [round(dates[d]["haiku"], 4) for d in sorted_dates],
                 "sonnet": [round(dates[d]["sonnet"], 4) for d in sorted_dates],
+                "opus": [round(dates[d]["opus"], 4) for d in sorted_dates],
                 "other": [round(dates[d]["other"], 4) for d in sorted_dates]
             }
         }
@@ -584,15 +574,36 @@ async def get_recent_activity(days: int = Query(default=30), limit: int = Query(
         }
 
 
+# Model pricing (per million tokens) - keep in sync with ClaudeClient.MODEL_PRICING
+# Note: Historical multi-stage summaries may have incomplete token counts
+MODEL_PRICING = {
+    "haiku": {"input": 1.00, "output": 5.00},      # Claude 3.5/4.5 Haiku
+    "sonnet": {"input": 3.00, "output": 15.00},    # Claude 3.5/4.5 Sonnet
+    "opus": {"input": 15.00, "output": 75.00},     # Claude 3/4.5 Opus
+}
+
+
+def get_model_pricing(model: str) -> dict:
+    """Get pricing for a model based on model name pattern matching."""
+    model_lower = (model or '').lower()
+    if 'haiku' in model_lower:
+        return MODEL_PRICING["haiku"]
+    elif 'sonnet' in model_lower:
+        return MODEL_PRICING["sonnet"]
+    elif 'opus' in model_lower:
+        return MODEL_PRICING["opus"]
+    else:
+        # Default to Sonnet pricing for unknown models
+        return MODEL_PRICING["sonnet"]
+
+
 def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> float:
     """Calculate AI cost based on model and token usage."""
     prompt_tokens = prompt_tokens or 0
     completion_tokens = completion_tokens or 0
-    model = (model or '').lower()
 
-    if 'haiku' in model:
-        return round((prompt_tokens * 1 + completion_tokens * 5) / 1_000_000, 4)
-    elif 'sonnet' in model:
-        return round((prompt_tokens * 3 + completion_tokens * 15) / 1_000_000, 4)
-    else:
-        return round((prompt_tokens + completion_tokens) / 1_000_000, 4)
+    pricing = get_model_pricing(model)
+    input_cost = (prompt_tokens / 1_000_000) * pricing["input"]
+    output_cost = (completion_tokens / 1_000_000) * pricing["output"]
+
+    return round(input_cost + output_cost, 4)

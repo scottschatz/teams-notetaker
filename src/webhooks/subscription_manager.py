@@ -105,25 +105,32 @@ class SubscriptionManager:
         Returns:
             Event ID if logged successfully, None otherwise
         """
+        session = None
         try:
             db_manager = get_db_manager()
-            with db_manager.session() as session:
-                event = SubscriptionEvent(
-                    event_type=event_type,
-                    timestamp=datetime.utcnow(),
-                    subscription_id=subscription_id,
-                    error_message=error_message,
-                    down_event_id=down_event_id,
-                    downtime_seconds=downtime_seconds,
-                    source=source
-                )
-                session.add(event)
-                session.commit()
-                logger.debug(f"Logged subscription event: {event_type} (source={source})")
-                return event.id
+            session = db_manager.get_session()
+            event = SubscriptionEvent(
+                event_type=event_type,
+                timestamp=datetime.utcnow(),
+                subscription_id=subscription_id,
+                error_message=error_message,
+                down_event_id=down_event_id,
+                downtime_seconds=downtime_seconds,
+                source=source
+            )
+            session.add(event)
+            session.commit()
+            session.refresh(event)
+            logger.debug(f"Logged subscription event: {event_type} (source={source})")
+            return event.id
         except Exception as e:
             logger.error(f"Failed to log subscription event: {e}")
+            if session:
+                session.rollback()
             return None
+        finally:
+            if session:
+                session.close()
 
     def _log_down_event(self, source: str, error_message: str) -> Optional[int]:
         """Log that the subscription went down and store the event for recovery tracking."""

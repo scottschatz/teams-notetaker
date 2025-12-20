@@ -340,6 +340,9 @@ class TranscriptProcessor(BaseProcessor):
                 meeting_in_session = session.query(Meeting).filter_by(id=meeting_id).first()
                 if meeting_in_session:
                     meeting_in_session.has_transcript = True
+                    # If we successfully fetched a transcript, recording was definitely enabled
+                    meeting_in_session.recording_started = True
+                    meeting_in_session.transcript_available = True
                     if recording_sharepoint_url:
                         meeting_in_session.recording_sharepoint_url = recording_sharepoint_url
 

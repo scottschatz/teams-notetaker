@@ -1,8 +1,16 @@
 # Teams Meeting Transcript Summarizer - System Architecture
 
-**Version**: 3.0 (Webhook-driven with opt-in system)
-**Last Updated**: 2025-12-18
+**Version**: 3.0 (Webhook-driven with subscriber system)
+**Last Updated**: 2025-12-19
 **Status**: Production
+
+## Recent Updates (December 2025)
+- **Column Header Filters**: Dropdown filters on Status, Source, Organizer, Model, Rec/Tsc columns
+- **Subscriber Counts**: Meeting attendance and summary counts per user with time filtering
+- **Download Endpoints**: VTT transcript and Markdown summary downloads
+- **Chat Event Detection**: Auto-detection of recording/transcript availability from Teams chat
+- **Enhanced Emails**: Optional transcript attachment, improved formatting
+- **Inbox Monitoring**: Automated subscribe/unsubscribe email processing
 
 ---
 
@@ -27,14 +35,15 @@ The Teams Meeting Transcript Summarizer is an enterprise-grade system that autom
 
 1. **Discovers** Microsoft Teams meetings with transcripts (webhook-driven + backfill)
 2. **Fetches** VTT transcripts from Microsoft Graph API
-3. **Generates** AI-powered structured summaries using Claude Sonnet 4.5
-4. **Distributes** summaries via email with rich formatting and profile photos
-5. **Monitors** Teams chat for user preference commands (opt-in/opt-out)
+3. **Generates** AI-powered structured summaries using Claude Haiku 4.5
+4. **Distributes** summaries via email with rich formatting and profile photos to subscribers
+5. **Monitors** email inbox for subscribe/unsubscribe requests
+6. **Detects** chat events for optimal transcript retry timing
 
 ### Key Design Principles
 
 - **Webhook-First**: Real-time meeting discovery via Azure Relay webhooks (org-wide)
-- **Opt-In System**: Users must explicitly opt-in to receive summaries
+- **Subscriber System**: Users opt-in by email, inbox monitoring processes requests automatically
 - **Async Processing**: Job queue with concurrent workers (5-10 jobs in parallel)
 - **Idempotency**: Duplicate-safe with deduplication at multiple levels
 - **Self-Healing**: Automatic recovery of stale/orphaned jobs

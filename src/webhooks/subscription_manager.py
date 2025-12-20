@@ -31,8 +31,8 @@ CALLRECORDS_MAX_EXPIRATION_MINUTES = 4200
 # Renew when less than this many hours remaining
 RENEW_THRESHOLD_HOURS = 12
 
-# How often to check subscription status (minutes) - aggressive retry
-CHECK_INTERVAL_MINUTES = 10
+# How often to check subscription status (minutes)
+CHECK_INTERVAL_MINUTES = 5
 
 # Hour of day (UTC) to proactively recreate subscription (3 AM UTC = ~10 PM Eastern)
 DAILY_RECREATE_HOUR_UTC = 3

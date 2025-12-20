@@ -1,0 +1,653 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - Teams Notetaker{% endblock %}
+
+{% block extra_head %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="min-h-screen" x-data="analyticsData()" x-init="loadAllData()">
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-gray-900">Analytics</h1>
+
+        <!-- Time Period Filter -->
+        <div class="flex items-center space-x-2">
+            <span class="text-sm text-gray-500">Period:</span>
+            <div class="inline-flex rounded-lg shadow-sm">
+                <button
+                    @click="setDays(7)"
+                    :class="days === 7 ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                    class="px-4 py-2 text-sm font-medium border border-gray-300 rounded-l-lg"
+                >7d</button>
+                <button
+                    @click="setDays(30)"
+                    :class="days === 30 ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                    class="px-4 py-2 text-sm font-medium border-t border-b border-gray-300"
+                >30d</button>
+                <button
+                    @click="setDays(90)"
+                    :class="days === 90 ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                    class="px-4 py-2 text-sm font-medium border border-gray-300"
+                >90d</button>
+                <button
+                    @click="setDays(0)"
+                    :class="days === 0 ? 'bg-blue-600 text-white' : 'bg-white text-gray-700 hover:bg-gray-50'"
+                    class="px-4 py-2 text-sm font-medium border border-gray-300 rounded-r-lg"
+                >All</button>
+            </div>
+            <button @click="loadAllData()" class="ml-4 p-2 text-gray-500 hover:text-gray-700" title="Refresh">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- KPI Cards Row -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+        <!-- Meetings Card -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Meetings Processed</p>
+                    <p class="text-3xl font-bold text-blue-600" x-text="overview.meetings?.total || 0"></p>
+                    <p class="text-xs text-gray-400">
+                        <span x-text="overview.meetings?.transcript_rate || 0"></span>% with transcripts
+                    </p>
+                </div>
+                <div class="p-3 bg-blue-50 rounded-full">
+                    <svg class="w-6 h-6 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"></path>
+                    </svg>
+                </div>
+            </div>
+            <div class="mt-4 flex items-center text-sm">
+                <span :class="(overview.meetings?.change || 0) >= 0 ? 'text-green-500' : 'text-red-500'">
+                    <span x-text="(overview.meetings?.change || 0) >= 0 ? '+' : ''"></span><span x-text="overview.meetings?.change || 0"></span>%
+                </span>
+                <span class="text-gray-400 ml-2">vs previous period</span>
+            </div>
+        </div>
+
+        <!-- Summaries Card -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Summaries Generated</p>
+                    <p class="text-3xl font-bold text-green-600" x-text="overview.summaries?.total || 0"></p>
+                    <p class="text-xs text-gray-400">
+                        <span x-text="overview.summaries?.success_rate || 0"></span>% success rate
+                    </p>
+                </div>
+                <div class="p-3 bg-green-50 rounded-full">
+                    <svg class="w-6 h-6 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                    </svg>
+                </div>
+            </div>
+            <div class="mt-4 flex items-center text-sm">
+                <span :class="(overview.summaries?.change || 0) >= 0 ? 'text-green-500' : 'text-red-500'">
+                    <span x-text="(overview.summaries?.change || 0) >= 0 ? '+' : ''"></span><span x-text="overview.summaries?.change || 0"></span>%
+                </span>
+                <span class="text-gray-400 ml-2">vs previous period</span>
+            </div>
+        </div>
+
+        <!-- Emails Card -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">Emails Delivered</p>
+                    <p class="text-3xl font-bold text-purple-600" x-text="overview.emails?.total || 0"></p>
+                    <p class="text-xs text-gray-400">
+                        <span x-text="overview.emails?.unique_recipients || 0"></span> unique recipients
+                    </p>
+                </div>
+                <div class="p-3 bg-purple-50 rounded-full">
+                    <svg class="w-6 h-6 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
+                    </svg>
+                </div>
+            </div>
+            <div class="mt-4 flex items-center text-sm">
+                <span :class="(overview.emails?.change || 0) >= 0 ? 'text-green-500' : 'text-red-500'">
+                    <span x-text="(overview.emails?.change || 0) >= 0 ? '+' : ''"></span><span x-text="overview.emails?.change || 0"></span>%
+                </span>
+                <span class="text-gray-400 ml-2">vs previous period</span>
+            </div>
+        </div>
+
+        <!-- AI Cost Card -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm font-medium text-gray-500">AI Cost</p>
+                    <p class="text-3xl font-bold text-amber-600">$<span x-text="overview.ai_cost?.total || '0.00'"></span></p>
+                    <p class="text-xs text-gray-400">
+                        $<span x-text="overview.ai_cost?.avg_per_meeting || '0.00'"></span>/meeting avg
+                    </p>
+                </div>
+                <div class="p-3 bg-amber-50 rounded-full">
+                    <svg class="w-6 h-6 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                </div>
+            </div>
+            <div class="mt-4 flex items-center text-sm">
+                <span :class="(overview.ai_cost?.change || 0) >= 0 ? 'text-red-500' : 'text-green-500'">
+                    <span x-text="(overview.ai_cost?.change || 0) >= 0 ? '+' : ''"></span><span x-text="overview.ai_cost?.change || 0"></span>%
+                </span>
+                <span class="text-gray-400 ml-2">vs previous period</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row 1 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <!-- Meeting Volume Chart -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Meeting Volume Over Time</h3>
+            <div class="h-64">
+                <canvas id="volumeChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Pipeline Funnel -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Processing Pipeline</h3>
+            <div class="space-y-4">
+                <template x-for="stage in funnel.stages" :key="stage.name">
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="font-medium text-gray-700" x-text="stage.name"></span>
+                            <span class="text-gray-500">
+                                <span x-text="stage.count"></span> (<span x-text="stage.percent"></span>%)
+                            </span>
+                        </div>
+                        <div class="w-full bg-gray-200 rounded-full h-4">
+                            <div class="bg-blue-500 h-4 rounded-full transition-all duration-500"
+                                 :style="`width: ${stage.percent}%`"></div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row 2 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <!-- Top Organizers -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Top 10 Organizers</h3>
+            <div class="h-64">
+                <canvas id="organizersChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Duration Distribution -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Meeting Duration Distribution</h3>
+            <div class="h-64">
+                <canvas id="durationChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- Charts Row 3 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <!-- AI Cost by Day -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">AI Cost by Day</h3>
+            <div class="h-64">
+                <canvas id="costChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Meeting Heatmap -->
+        <div class="bg-white rounded-lg shadow p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Meeting Time Heatmap</h3>
+            <div class="overflow-x-auto">
+                <table class="w-full text-xs">
+                    <thead>
+                        <tr>
+                            <th class="p-1"></th>
+                            <template x-for="hour in heatmap.hours" :key="hour">
+                                <th class="p-1 text-gray-500" x-text="hour.replace(':00', '')"></th>
+                            </template>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(day, i) in heatmap.days" :key="day">
+                            <tr>
+                                <td class="p-1 font-medium text-gray-700" x-text="day"></td>
+                                <template x-for="(count, j) in heatmap.data[i]" :key="j">
+                                    <td class="p-1">
+                                        <div
+                                            class="w-6 h-6 rounded flex items-center justify-center text-xs"
+                                            :style="`background-color: ${getHeatmapColor(count, heatmap.max)}`"
+                                            :class="count > heatmap.max * 0.5 ? 'text-white' : 'text-gray-700'"
+                                            x-text="count || ''"
+                                        ></div>
+                                    </td>
+                                </template>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabbed Tables -->
+    <div class="bg-white rounded-lg shadow">
+        <!-- Tab Headers -->
+        <div class="border-b border-gray-200">
+            <nav class="flex -mb-px">
+                <button
+                    @click="activeTab = 'users'"
+                    :class="activeTab === 'users' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="px-6 py-4 text-sm font-medium border-b-2"
+                >Top Users</button>
+                <button
+                    @click="activeTab = 'ai'"
+                    :class="activeTab === 'ai' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="px-6 py-4 text-sm font-medium border-b-2"
+                >AI Processing</button>
+                <button
+                    @click="activeTab = 'activity'"
+                    :class="activeTab === 'activity' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="px-6 py-4 text-sm font-medium border-b-2"
+                >Recent Activity</button>
+            </nav>
+        </div>
+
+        <!-- Tab Content -->
+        <div class="p-6">
+            <!-- Top Users Table -->
+            <div x-show="activeTab === 'users'" class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">User</th>
+                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Meetings Attended</th>
+                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Organized</th>
+                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Summaries Received</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Last Meeting</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <template x-for="user in topUsers" :key="user.email">
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-4 py-3">
+                                    <div class="text-sm font-medium text-gray-900" x-text="user.name"></div>
+                                    <div class="text-xs text-gray-500" x-text="user.email"></div>
+                                </td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="text-sm font-medium text-blue-600" x-text="user.meetings_attended"></span>
+                                </td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="text-sm text-gray-600" x-text="user.meetings_organized"></span>
+                                </td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="text-sm text-green-600" x-text="user.summaries_received"></span>
+                                </td>
+                                <td class="px-4 py-3 text-sm text-gray-500" x-text="formatDate(user.last_meeting)"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- AI Processing Table -->
+            <div x-show="activeTab === 'ai'" class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Meeting</th>
+                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Model</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Tokens</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Cost</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Gen Time</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <template x-for="s in aiProcessing" :key="s.id">
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-4 py-3 text-sm text-gray-500" x-text="formatDate(s.date)"></td>
+                                <td class="px-4 py-3">
+                                    <a :href="'/dashboard/meetings/' + s.meeting_id" class="text-sm text-blue-600 hover:underline" x-text="truncate(s.subject, 40)"></a>
+                                </td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="px-2 py-1 text-xs rounded-full"
+                                          :class="s.model.includes('haiku') ? 'bg-green-100 text-green-800' : 'bg-purple-100 text-purple-800'"
+                                          x-text="s.model.includes('haiku') ? 'Haiku' : 'Sonnet'"></span>
+                                </td>
+                                <td class="px-4 py-3 text-right text-sm text-gray-600" x-text="formatTokens(s.total_tokens)"></td>
+                                <td class="px-4 py-3 text-right text-sm font-medium text-gray-900">$<span x-text="s.cost.toFixed(4)"></span></td>
+                                <td class="px-4 py-3 text-right text-sm text-gray-500" x-text="formatMs(s.gen_time_ms)"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Recent Activity Table -->
+            <div x-show="activeTab === 'activity'" class="overflow-x-auto">
+                <table class="min-w-full divide-y divide-gray-200">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Processed</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Meeting</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Organizer</th>
+                            <th class="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                            <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Duration</th>
+                        </tr>
+                    </thead>
+                    <tbody class="bg-white divide-y divide-gray-200">
+                        <template x-for="m in recentActivity" :key="m.id">
+                            <tr class="hover:bg-gray-50">
+                                <td class="px-4 py-3 text-sm text-gray-500" x-text="formatDateTime(m.discovered_at)"></td>
+                                <td class="px-4 py-3">
+                                    <a :href="'/dashboard/meetings/' + m.id" class="text-sm text-blue-600 hover:underline" x-text="truncate(m.subject, 40)"></a>
+                                </td>
+                                <td class="px-4 py-3 text-sm text-gray-600" x-text="m.organizer"></td>
+                                <td class="px-4 py-3 text-center">
+                                    <span class="px-2 py-1 text-xs rounded-full"
+                                          :class="{
+                                              'bg-green-100 text-green-800': m.status === 'completed',
+                                              'bg-red-100 text-red-800': m.status === 'failed',
+                                              'bg-gray-100 text-gray-800': m.status === 'no_transcript'
+                                          }"
+                                          x-text="m.status"></span>
+                                </td>
+                                <td class="px-4 py-3 text-right text-sm text-gray-500" x-text="m.duration_minutes ? m.duration_minutes + 'm' : '-'"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function analyticsData() {
+    return {
+        days: 30,
+        loading: false,
+        activeTab: 'users',
+
+        // Data
+        overview: {},
+        funnel: { stages: [] },
+        topUsers: [],
+        aiProcessing: [],
+        recentActivity: [],
+        heatmap: { days: [], hours: [], data: [], max: 0 },
+
+        // Charts
+        volumeChart: null,
+        organizersChart: null,
+        durationChart: null,
+        costChart: null,
+
+        async setDays(d) {
+            this.days = d;
+            await this.loadAllData();
+        },
+
+        async loadAllData() {
+            this.loading = true;
+            await Promise.all([
+                this.loadOverview(),
+                this.loadFunnel(),
+                this.loadVolumeChart(),
+                this.loadOrganizersChart(),
+                this.loadDurationChart(),
+                this.loadCostChart(),
+                this.loadHeatmap(),
+                this.loadTopUsers(),
+                this.loadAiProcessing(),
+                this.loadRecentActivity()
+            ]);
+            this.loading = false;
+        },
+
+        async loadOverview() {
+            const response = await fetch(`/analytics/api/overview?days=${this.days}`);
+            this.overview = await response.json();
+        },
+
+        async loadFunnel() {
+            const response = await fetch(`/analytics/api/pipeline-funnel?days=${this.days}`);
+            this.funnel = await response.json();
+        },
+
+        async loadVolumeChart() {
+            const response = await fetch(`/analytics/api/meeting-volume?days=${this.days}`);
+            const data = await response.json();
+
+            const ctx = document.getElementById('volumeChart').getContext('2d');
+
+            if (this.volumeChart) {
+                this.volumeChart.destroy();
+            }
+
+            this.volumeChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: data.labels,
+                    datasets: [
+                        {
+                            label: 'Completed',
+                            data: data.datasets.completed,
+                            borderColor: '#10B981',
+                            backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Failed',
+                            data: data.datasets.failed,
+                            borderColor: '#EF4444',
+                            backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Skipped',
+                            data: data.datasets.skipped,
+                            borderColor: '#9CA3AF',
+                            backgroundColor: 'rgba(156, 163, 175, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    },
+                    scales: {
+                        y: { beginAtZero: true }
+                    }
+                }
+            });
+        },
+
+        async loadOrganizersChart() {
+            const response = await fetch(`/analytics/api/top-organizers?days=${this.days}&limit=10`);
+            const data = await response.json();
+
+            const ctx = document.getElementById('organizersChart').getContext('2d');
+
+            if (this.organizersChart) {
+                this.organizersChart.destroy();
+            }
+
+            this.organizersChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.organizers.map(o => o.name.split(' ')[0]),
+                    datasets: [{
+                        label: 'Meetings',
+                        data: data.organizers.map(o => o.meetings),
+                        backgroundColor: '#3B82F6'
+                    }]
+                },
+                options: {
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        },
+
+        async loadDurationChart() {
+            const response = await fetch(`/analytics/api/duration-distribution?days=${this.days}`);
+            const data = await response.json();
+
+            const ctx = document.getElementById('durationChart').getContext('2d');
+
+            if (this.durationChart) {
+                this.durationChart.destroy();
+            }
+
+            this.durationChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.labels,
+                    datasets: [{
+                        label: 'Meetings',
+                        data: data.data,
+                        backgroundColor: ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444']
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        },
+
+        async loadCostChart() {
+            const response = await fetch(`/analytics/api/ai-costs?days=${this.days}`);
+            const data = await response.json();
+
+            const ctx = document.getElementById('costChart').getContext('2d');
+
+            if (this.costChart) {
+                this.costChart.destroy();
+            }
+
+            this.costChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: data.labels,
+                    datasets: [
+                        {
+                            label: 'Haiku',
+                            data: data.datasets.haiku,
+                            backgroundColor: '#10B981'
+                        },
+                        {
+                            label: 'Sonnet',
+                            data: data.datasets.sonnet,
+                            backgroundColor: '#8B5CF6'
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    },
+                    scales: {
+                        x: { stacked: true },
+                        y: { stacked: true, beginAtZero: true }
+                    }
+                }
+            });
+        },
+
+        async loadHeatmap() {
+            const response = await fetch(`/analytics/api/meeting-heatmap?days=${this.days}`);
+            this.heatmap = await response.json();
+        },
+
+        async loadTopUsers() {
+            const response = await fetch(`/analytics/api/top-users?days=${this.days}`);
+            const data = await response.json();
+            this.topUsers = data.users;
+        },
+
+        async loadAiProcessing() {
+            const response = await fetch(`/analytics/api/ai-processing?days=${this.days}`);
+            const data = await response.json();
+            this.aiProcessing = data.summaries;
+        },
+
+        async loadRecentActivity() {
+            const response = await fetch(`/analytics/api/recent-activity?days=${this.days}`);
+            const data = await response.json();
+            this.recentActivity = data.meetings;
+        },
+
+        getHeatmapColor(value, max) {
+            if (!value || !max) return '#F3F4F6';
+            const intensity = value / max;
+            const r = Math.round(59 + (16 - 59) * intensity);
+            const g = Math.round(130 + (185 - 130) * intensity);
+            const b = Math.round(246 + (129 - 246) * intensity);
+            return `rgb(${r}, ${g}, ${b})`;
+        },
+
+        formatDate(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr + 'Z');
+            return date.toLocaleDateString('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' });
+        },
+
+        formatDateTime(dateStr) {
+            if (!dateStr) return '-';
+            const date = new Date(dateStr + 'Z');
+            return date.toLocaleString('en-US', {
+                timeZone: 'America/New_York',
+                month: 'short',
+                day: 'numeric',
+                hour: 'numeric',
+                minute: '2-digit'
+            });
+        },
+
+        formatTokens(tokens) {
+            if (!tokens) return '0';
+            if (tokens >= 1000) return (tokens / 1000).toFixed(1) + 'k';
+            return tokens.toString();
+        },
+
+        formatMs(ms) {
+            if (!ms) return '-';
+            if (ms >= 1000) return (ms / 1000).toFixed(1) + 's';
+            return ms + 'ms';
+        },
+
+        truncate(str, len) {
+            if (!str) return '';
+            return str.length > len ? str.substring(0, len) + '...' : str;
+        }
+    };
+}
+</script>
+{% endblock %}

@@ -3,7 +3,7 @@
 {% block title %}System Diagnostics - Teams Notetaker{% endblock %}
 
 {% block content %}
-<div x-data="diagnosticsData()" x-init="loadStatus(); loadWebhookStatus(); loadSubscriptionStats(); setInterval(loadStatus, 5000); setInterval(loadWebhookStatus, 30000); init()">
+<div x-data="diagnosticsData()" x-init="loadStatus(); loadWebhookStatus(); loadSubscriptionStats(); loadAIStats(); setInterval(loadStatus, 5000); setInterval(loadWebhookStatus, 30000); init()">
     <div class="flex justify-between items-center mb-6">
         <h1 class="text-3xl font-bold text-gray-900">System Diagnostics</h1>
         <div class="flex items-center space-x-4">
@@ -271,6 +271,63 @@
         </div>
     </div>
 
+    <!-- AI Model Statistics -->
+    <div class="bg-white rounded-lg shadow p-6 mb-8">
+        <div class="flex justify-between items-center mb-4">
+            <h2 class="text-xl font-bold text-gray-900">AI Model Usage</h2>
+            <select x-model="aiStatsDays" @change="loadAIStats()" class="px-3 py-1 border border-gray-300 rounded-lg text-sm">
+                <option value="1">Last 24h</option>
+                <option value="7">Last 7 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+            </select>
+        </div>
+
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-4">
+            <div class="bg-gray-50 rounded p-3">
+                <p class="text-xs text-gray-500 uppercase">Total Summaries</p>
+                <p class="text-2xl font-bold text-gray-900" x-text="aiStats?.summary?.total_summaries || 0"></p>
+            </div>
+            <div class="bg-gray-50 rounded p-3">
+                <p class="text-xs text-gray-500 uppercase">Gemini (Primary)</p>
+                <p class="text-2xl font-bold text-green-600" x-text="aiStats?.summary?.gemini_count || 0"></p>
+            </div>
+            <div class="bg-gray-50 rounded p-3">
+                <p class="text-xs text-gray-500 uppercase">Haiku (Fallback)</p>
+                <p class="text-2xl font-bold" :class="(aiStats?.summary?.haiku_fallback_count || 0) > 0 ? 'text-orange-600' : 'text-gray-400'" x-text="aiStats?.summary?.haiku_fallback_count || 0"></p>
+            </div>
+            <div class="bg-gray-50 rounded p-3">
+                <p class="text-xs text-gray-500 uppercase">Fallback Rate</p>
+                <p class="text-2xl font-bold" :class="(aiStats?.summary?.fallback_rate_percent || 0) > 5 ? 'text-red-600' : 'text-green-600'" x-text="(aiStats?.summary?.fallback_rate_percent || 0) + '%'"></p>
+            </div>
+            <div class="bg-gray-50 rounded p-3">
+                <p class="text-xs text-gray-500 uppercase">Est. Cost</p>
+                <p class="text-2xl font-bold text-gray-900" x-text="'$' + (aiStats?.summary?.estimated_cost || 0).toFixed(4)"></p>
+            </div>
+        </div>
+
+        <!-- Recent Fallbacks -->
+        <template x-if="aiStats?.recent_fallbacks?.length > 0">
+            <div class="mt-4 border-t pt-4">
+                <h3 class="text-sm font-semibold text-gray-700 mb-2">Recent Fallbacks (Haiku used instead of Gemini)</h3>
+                <div class="space-y-2">
+                    <template x-for="fb in aiStats.recent_fallbacks" :key="fb.summary_id">
+                        <div class="flex items-center justify-between text-sm bg-orange-50 rounded p-2">
+                            <a :href="'/meetings/' + fb.meeting_id" class="text-blue-600 hover:underline truncate max-w-md" x-text="fb.subject"></a>
+                            <span class="text-gray-500 text-xs" x-text="formatDateTime(fb.generated_at)"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </template>
+        <template x-if="aiStats?.summary?.total_summaries === 0">
+            <p class="text-gray-500 text-sm">No summaries generated in this period.</p>
+        </template>
+        <template x-if="aiStats?.summary?.gemini_count === 0 && aiStats?.summary?.haiku_fallback_count === 0 && aiStats?.summary?.legacy_count > 0">
+            <p class="text-gray-500 text-sm mt-2">All summaries in this period were generated before Gemini deployment (legacy).</p>
+        </template>
+    </div>
+
     <!-- Queue Statistics -->
     <div class="bg-white rounded-lg shadow p-6 mb-8">
         <h2 class="text-xl font-bold text-gray-900 mb-4">Job Queue</h2>
@@ -456,6 +513,8 @@ function diagnosticsData() {
         showSubscriptionStats: false,
         subscriptionStatsDays: 7,
         subscriptionStats: null,
+        aiStatsDays: 7,
+        aiStats: null,
 
         async loadStatus() {
             try {
@@ -491,6 +550,16 @@ function diagnosticsData() {
             } catch (error) {
                 console.error('Failed to load subscription stats:', error);
                 this.subscriptionStats = null;
+            }
+        },
+
+        async loadAIStats() {
+            try {
+                const response = await fetch(`/diagnostics/api/ai-model-stats?days=${this.aiStatsDays}`);
+                this.aiStats = await response.json();
+            } catch (error) {
+                console.error('Failed to load AI stats:', error);
+                this.aiStats = null;
             }
         },
 

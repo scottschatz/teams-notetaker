@@ -60,11 +60,14 @@ Jobs use `depends_on_job_id` for ordering. Worker claims with `FOR UPDATE SKIP L
 
 ## Critical Implementation Details
 
-### Timezone Handling
+### Timezone Handling (DO NOT REMOVE THIS SECTION)
 - **Database stores UTC-naive datetimes** (values are UTC, no tzinfo)
+- **UI and emails display in Eastern Time** (America/New_York)
 - Graph API returns UTC with 'Z' suffix
 - JavaScript display adds 'Z' back and converts to Eastern
 - Use `datetime.utcnow()` or strip timezone: `dt.replace(tzinfo=None)`
+- PostgreSQL timezone is set to 'America/New_York' but datetime columns store UTC
+- When querying by "10am Eastern", convert to UTC first: 10am EST = 15:00 UTC (winter)
 
 ### Async Processing
 All blocking I/O in async processors must use `run_in_executor`:
@@ -227,10 +230,13 @@ WHERE status = 'running' AND heartbeat_at < NOW() - INTERVAL '15 minutes';
 - Mitigation: Exponential backoff, respects Retry-After
 - Improvement: Batch requests where possible
 
-### Claude API
-- Model: claude-haiku-4-5 (cost-optimized)
-- Cost: ~$0.02-0.04 per meeting
-- Prompt caching enabled for repeat meetings
+### AI Summarization (Gemini Primary + Haiku Fallback)
+- **Primary**: Gemini 3 Flash (`gemini-2.0-flash`) - 48% cheaper
+- **Fallback**: Claude Haiku 4.5 - used when Gemini fails
+- Cost: ~$0.0025 per meeting (Gemini), ~$0.004 (Haiku)
+- Approach tracked in `summaries.approach` column: `gemini_single_call` or `haiku_fallback`
+- Prompt files: `src/ai/prompts/gemini_prompt.py` (primary), `single_call_prompt.py` (fallback)
+- Requires `GOOGLE_API_KEY` env var; if missing, uses Haiku only
 
 ### Database Connection Pool
 - Pool: 10 base + 20 overflow

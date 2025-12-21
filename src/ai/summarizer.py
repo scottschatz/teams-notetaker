@@ -746,23 +746,80 @@ class EnhancedMeetingSummarizer:
 
 class SingleCallSummarizer:
     """
-    Single API call meeting summarizer.
+    Single API call meeting summarizer with Gemini primary + Haiku fallback.
 
-    Uses one Claude API call to extract all structured data and generate narrative.
+    MODEL HIERARCHY:
+    1. PRIMARY: Gemini 3 Flash (gemini-2.0-flash)
+       - 48% cheaper than Haiku ($0.50/$3.00 vs $1.00/$5.00 per MTok)
+       - Uses optimized prompt from gemini_prompt.py
+       - Requires GOOGLE_API_KEY environment variable
+
+    2. FALLBACK: Claude Haiku 4.5
+       - Used when Gemini fails (API errors, quota, invalid JSON)
+       - Uses haiku prompt from single_call_prompt.py
+       - Requires CLAUDE_API_KEY (already configured)
+
+    WHEN FALLBACK IS TRIGGERED:
+    - GOOGLE_API_KEY not set → immediate fallback
+    - Gemini API error (quota, rate limit, outage) → fallback after retries
+    - Gemini returns invalid/unparseable JSON → fallback
+    - Any unexpected Gemini exception → fallback
+
     Returns same EnhancedSummary structure as EnhancedMeetingSummarizer for compatibility.
-
-    Benefits:
-    - 20-40% cheaper (no prompt caching overhead)
-    - 60-65% faster (1 call vs 5)
-    - Better quality (more operational detail and strategic context)
-    - More reliable (1 JSON parse point vs 5)
     """
 
+    # ============================================================================
+    # MODEL TOGGLE - Set to True to use Gemini as primary, False to use Haiku only
+    # ============================================================================
+    # CURRENT STATUS: Using Haiku only (Gemini disabled)
+    # REASON: Haiku produces superior quality summaries with better:
+    #   - Duration extraction (Gemini showed "None minutes")
+    #   - Speaker participation stats (word counts, speaking time)
+    #   - Richer discussion notes with more detail
+    # TO RE-ENABLE GEMINI: Set USE_GEMINI_PRIMARY = True
+    # ============================================================================
+    USE_GEMINI_PRIMARY = False
+
     def __init__(self, claude_config: ClaudeConfig):
-        """Initialize with Claude config."""
-        self.config = claude_config
-        self.client = ClaudeClient(claude_config)
-        logger.info(f"Initialized SingleCallSummarizer with model {claude_config.model}")
+        """
+        Initialize with Claude config (Haiku fallback).
+
+        Gemini is initialized lazily on first use if GOOGLE_API_KEY is available.
+        """
+        self.claude_config = claude_config
+        self.claude_client = ClaudeClient(claude_config)
+        self._gemini_client = None  # Lazy initialization
+        self._gemini_available = None  # None = not checked yet
+
+        logger.info(
+            f"Initialized SingleCallSummarizer (primary: Gemini 3 Flash, "
+            f"fallback: {claude_config.model})"
+        )
+
+    def _get_gemini_client(self):
+        """
+        Lazy initialization of Gemini client.
+
+        Returns:
+            GeminiClient instance, or None if GOOGLE_API_KEY not set
+        """
+        import os
+        if self._gemini_available is None:
+            # First check - see if API key is available
+            if os.getenv("GOOGLE_API_KEY"):
+                try:
+                    from .gemini_client import GeminiClient
+                    self._gemini_client = GeminiClient()
+                    self._gemini_available = True
+                    logger.info("Gemini client initialized successfully")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Gemini client: {e}")
+                    self._gemini_available = False
+            else:
+                logger.info("GOOGLE_API_KEY not set, using Haiku fallback only")
+                self._gemini_available = False
+
+        return self._gemini_client if self._gemini_available else None
 
     def generate_enhanced_summary(
         self,
@@ -771,7 +828,9 @@ class SingleCallSummarizer:
         custom_instructions: Optional[str] = None
     ) -> EnhancedSummary:
         """
-        Generate complete meeting summary in a single API call.
+        Generate complete meeting summary with Gemini (primary) or Haiku (fallback).
+
+        Tries Gemini first for 48% cost savings. Falls back to Haiku on any error.
 
         Args:
             transcript_segments: List of transcript segments with speaker/text/timestamp
@@ -780,6 +839,43 @@ class SingleCallSummarizer:
 
         Returns:
             EnhancedSummary with all extracted data and metadata
+        """
+        # Check if Gemini is enabled via class toggle
+        if self.USE_GEMINI_PRIMARY:
+            # Try Gemini first
+            gemini_client = self._get_gemini_client()
+            if gemini_client:
+                try:
+                    return self._generate_with_gemini(
+                        gemini_client,
+                        transcript_segments,
+                        meeting_metadata,
+                        custom_instructions
+                    )
+                except Exception as e:
+                    logger.warning(f"Gemini failed, falling back to Haiku: {e}")
+                    # Fall through to Haiku
+        else:
+            logger.info("Gemini disabled (USE_GEMINI_PRIMARY=False), using Haiku directly")
+
+        # Use Haiku (either as fallback or primary when Gemini is disabled)
+        return self._generate_with_haiku(
+            transcript_segments,
+            meeting_metadata,
+            custom_instructions
+        )
+
+    def _generate_with_gemini(
+        self,
+        gemini_client,
+        transcript_segments: List[Dict[str, Any]],
+        meeting_metadata: Optional[Dict[str, Any]] = None,
+        custom_instructions: Optional[str] = None
+    ) -> EnhancedSummary:
+        """
+        Generate summary using Gemini 3 Flash.
+
+        Uses the Gemini-optimized prompt from gemini_prompt.py.
         """
         start_time = time.time()
 
@@ -792,7 +888,73 @@ class SingleCallSummarizer:
             participant_names = meeting_metadata["participant_names"]
         participant_names_str = "\n".join(f"- {name}" for name in participant_names) if participant_names else "(No participant list available)"
 
-        # Load prompt template
+        # Load Gemini-optimized prompt
+        from .prompts.gemini_prompt import GEMINI_SINGLE_CALL_PROMPT
+
+        # Build user prompt
+        user_prompt = GEMINI_SINGLE_CALL_PROMPT.format(
+            transcript=transcript_text,
+            participant_names=participant_names_str
+        )
+
+        # Add custom instructions if provided
+        if custom_instructions:
+            user_prompt = f"{custom_instructions}\n\n{user_prompt}"
+
+        # System prompt for JSON-only output
+        system_prompt = (
+            "You are an expert meeting analyst. Extract structured data accurately from transcripts. "
+            "You MUST return ONLY valid, well-formed JSON. Ensure all strings are properly quoted "
+            "and terminated. Ensure all JSON objects have matching braces. Double-check your JSON "
+            "syntax before responding. Return NOTHING except the JSON object. "
+            "Do NOT include the transcript in your response. "
+            "Preserve ALL markdown formatting including bold participant names (**Name**) and bold subheadings."
+        )
+
+        # Make Gemini API call
+        logger.info("Calling Gemini API for single-call extraction")
+        response = gemini_client.generate_text(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            max_tokens=8000,
+            temperature=0.5,
+        )
+
+        # Parse JSON response
+        content = response["content"]
+        try:
+            data = self._parse_json_response(content)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse Gemini JSON response: {e}")
+            logger.error(f"Response content: {content[:500]}...")
+            raise ValueError(f"Invalid JSON response from Gemini API: {e}")
+
+        # Extract and build result
+        return self._build_enhanced_summary(data, response, start_time, "gemini_single_call")
+
+    def _generate_with_haiku(
+        self,
+        transcript_segments: List[Dict[str, Any]],
+        meeting_metadata: Optional[Dict[str, Any]] = None,
+        custom_instructions: Optional[str] = None
+    ) -> EnhancedSummary:
+        """
+        Generate summary using Claude Haiku (fallback).
+
+        Uses the Haiku-tuned prompt from single_call_prompt.py.
+        """
+        start_time = time.time()
+
+        # Format transcript
+        transcript_text = self._format_transcript(transcript_segments)
+
+        # Extract participant names from metadata for correct spelling
+        participant_names = []
+        if meeting_metadata and meeting_metadata.get("participant_names"):
+            participant_names = meeting_metadata["participant_names"]
+        participant_names_str = "\n".join(f"- {name}" for name in participant_names) if participant_names else "(No participant list available)"
+
+        # Load Haiku fallback prompt
         from .prompts.single_call_prompt import SINGLE_CALL_COMPREHENSIVE_PROMPT
 
         # Build user prompt
@@ -815,13 +977,13 @@ class SingleCallSummarizer:
             "Preserve ALL markdown formatting including bold participant names (**Name**) and bold subheadings."
         )
 
-        # Make single API call
-        logger.info("Calling Claude API for single-call extraction")
-        response = self.client.generate_text(
+        # Make Claude API call
+        logger.info("Calling Claude Haiku API for single-call extraction (fallback)")
+        response = self.claude_client.generate_text(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            max_tokens=8000,  # Larger than multi-stage to handle all output
-            temperature=0.5,  # Balanced between extraction (0.2) and narrative (0.7)
+            max_tokens=8000,
+            temperature=0.5,
         )
 
         # Parse JSON response
@@ -829,10 +991,32 @@ class SingleCallSummarizer:
         try:
             data = self._parse_json_response(content)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse single-call JSON response: {e}")
+            logger.error(f"Failed to parse Haiku JSON response: {e}")
             logger.error(f"Response content: {content[:500]}...")
             raise ValueError(f"Invalid JSON response from Claude API: {e}")
 
+        # Extract and build result
+        return self._build_enhanced_summary(data, response, start_time, "haiku_fallback")
+
+    def _build_enhanced_summary(
+        self,
+        data: dict,
+        response: dict,
+        start_time: float,
+        approach: str
+    ) -> EnhancedSummary:
+        """
+        Build EnhancedSummary from parsed JSON data.
+
+        Args:
+            data: Parsed JSON response
+            response: Raw API response with token/cost info
+            start_time: When generation started (for timing)
+            approach: "gemini_single_call" or "haiku_fallback"
+
+        Returns:
+            EnhancedSummary object
+        """
         # Extract fields with validation
         action_items = data.get("action_items", [])
         decisions = data.get("decisions", [])
@@ -843,7 +1027,7 @@ class SingleCallSummarizer:
 
         # Log discussion notes word count for monitoring
         word_count = len(discussion_notes.split())
-        logger.info(f"Discussion notes word count: {word_count}")
+        logger.info(f"Discussion notes word count: {word_count} ({approach})")
 
         # Build metadata
         generation_time = int((time.time() - start_time) * 1000)
@@ -852,7 +1036,7 @@ class SingleCallSummarizer:
             "total_cost": response["cost"],
             "extraction_calls": 1,  # Single call
             "generation_time_ms": generation_time,
-            "approach": "single_call",
+            "approach": approach,
             "model": response["model"],
             "input_tokens": response["input_tokens"],
             "output_tokens": response["output_tokens"],
@@ -866,9 +1050,9 @@ class SingleCallSummarizer:
         return EnhancedSummary(
             action_items=action_items,
             decisions=decisions,
-            topics=[],  # Not extracted in single-call (topics were deprecated in multi-stage anyway)
+            topics=[],  # Not extracted in single-call
             highlights=highlights,
-            mentions=[],  # Not extracted in single-call (can add if needed)
+            mentions=[],  # Not extracted in single-call
             key_numbers=key_numbers,
             overall_summary=overall_summary,
             metadata=metadata

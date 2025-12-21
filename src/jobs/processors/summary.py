@@ -228,6 +228,7 @@ class SummaryProcessor(BaseProcessor):
                     summary_text=summary_text,
                     summary_html=summary_html,
                     model=model,
+                    approach=approach,  # Track gemini_single_call vs haiku_fallback
                     prompt_tokens=input_tokens,
                     completion_tokens=output_tokens,
                     total_tokens=total_tokens,

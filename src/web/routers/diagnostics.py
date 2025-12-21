@@ -13,7 +13,7 @@ from fastapi import APIRouter, Request, Depends, Query, HTTPException
 from fastapi.responses import HTMLResponse
 from typing import Dict, Any, Optional
 
-from ...core.database import DatabaseManager, JobQueue, Meeting, SubscriptionEvent
+from ...core.database import DatabaseManager, JobQueue, Meeting, SubscriptionEvent, Summary
 from ...core.config import get_config
 from ...graph.client import GraphAPIClient
 from ..app import limiter
@@ -664,3 +664,101 @@ def _format_duration(seconds: int) -> str:
         hours = seconds // 3600
         minutes = (seconds % 3600) // 60
         return f"{hours}h {minutes}m"
+
+
+@router.get("/api/ai-model-stats")
+async def get_ai_model_stats(
+    days: int = Query(default=7, ge=1, le=365),
+    db: DatabaseManager = Depends(get_db)
+):
+    """
+    Get AI model usage statistics including Gemini vs Haiku fallback rates.
+
+    Args:
+        days: Number of days to analyze (1-365, default 7)
+
+    Returns:
+        Statistics including approach counts, fallback rate, costs
+    """
+    with db.get_session() as session:
+        # Calculate date range
+        end_time = datetime.utcnow()
+        start_time = end_time - timedelta(days=days)
+
+        # Get summaries in time period
+        summaries = session.query(Summary).filter(
+            Summary.generated_at >= start_time
+        ).all()
+
+        # Count by approach
+        approach_counts = {}
+        model_counts = {}
+        total_cost = 0.0
+        total_tokens = 0
+
+        for s in summaries:
+            approach = s.approach or "legacy"  # Pre-Gemini summaries
+            model = s.model or "unknown"
+
+            approach_counts[approach] = approach_counts.get(approach, 0) + 1
+            model_counts[model] = model_counts.get(model, 0) + 1
+
+            if s.total_tokens:
+                total_tokens += s.total_tokens
+
+            # Estimate cost based on model
+            if s.prompt_tokens and s.completion_tokens:
+                if "gemini" in model.lower():
+                    cost = (s.prompt_tokens * 0.50 + s.completion_tokens * 3.00) / 1_000_000
+                elif "haiku" in model.lower():
+                    cost = (s.prompt_tokens * 1.00 + s.completion_tokens * 5.00) / 1_000_000
+                else:
+                    cost = (s.prompt_tokens * 3.00 + s.completion_tokens * 15.00) / 1_000_000
+                total_cost += cost
+
+        # Calculate rates
+        total_summaries = len(summaries)
+        gemini_count = approach_counts.get("gemini_single_call", 0)
+        haiku_fallback_count = approach_counts.get("haiku_fallback", 0)
+        legacy_count = approach_counts.get("legacy", 0) + approach_counts.get("single_call", 0) + approach_counts.get("multi_stage", 0)
+
+        # Fallback rate = haiku_fallback / (gemini + haiku_fallback)
+        gemini_attempts = gemini_count + haiku_fallback_count
+        fallback_rate = (haiku_fallback_count / gemini_attempts * 100) if gemini_attempts > 0 else 0
+
+        # Recent fallbacks (last 10)
+        recent_fallbacks = session.query(Summary).filter(
+            Summary.generated_at >= start_time,
+            Summary.approach == "haiku_fallback"
+        ).order_by(desc(Summary.generated_at)).limit(10).all()
+
+        recent_fallback_data = []
+        for s in recent_fallbacks:
+            meeting = s.meeting
+            recent_fallback_data.append({
+                "summary_id": s.id,
+                "meeting_id": s.meeting_id,
+                "subject": meeting.subject if meeting else "Unknown",
+                "generated_at": s.generated_at.isoformat() + 'Z' if s.generated_at else None,
+                "model": s.model
+            })
+
+        return {
+            "period": {
+                "days": days,
+                "start": start_time.isoformat() + 'Z',
+                "end": end_time.isoformat() + 'Z'
+            },
+            "summary": {
+                "total_summaries": total_summaries,
+                "gemini_count": gemini_count,
+                "haiku_fallback_count": haiku_fallback_count,
+                "legacy_count": legacy_count,
+                "fallback_rate_percent": round(fallback_rate, 2),
+                "total_tokens": total_tokens,
+                "estimated_cost": round(total_cost, 4)
+            },
+            "approach_counts": approach_counts,
+            "model_counts": model_counts,
+            "recent_fallbacks": recent_fallback_data
+        }

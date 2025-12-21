@@ -52,7 +52,16 @@ class DatabaseConfig:
 
 @dataclass
 class ClaudeConfig:
-    """Anthropic Claude API configuration."""
+    """
+    Anthropic Claude API configuration.
+
+    Note: Claude Haiku is now the FALLBACK model. The primary model is Gemini 3 Flash.
+    See src/ai/summarizer.py for the model hierarchy:
+    - Primary: Gemini 3 Flash (requires GOOGLE_API_KEY env var)
+    - Fallback: Claude Haiku 4.5 (this config)
+
+    If GOOGLE_API_KEY is not set, Claude Haiku is used exclusively.
+    """
 
     api_key: str
     model: str = "claude-haiku-4-5"

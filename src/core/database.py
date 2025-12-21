@@ -336,6 +336,7 @@ class Summary(Base):
 
     # AI metadata
     model = Column(String(100), default="claude-sonnet-4-20250514")
+    approach = Column(String(50))  # gemini_single_call, haiku_fallback, or legacy (pre-Gemini)
     prompt_tokens = Column(Integer)
     completion_tokens = Column(Integer)
     total_tokens = Column(Integer)

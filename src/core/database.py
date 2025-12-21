@@ -168,6 +168,41 @@ class Meeting(Base):
     # Values: 'groupCall', 'peerToPeer', 'scheduled', 'adHoc', 'unknown'
     call_type = Column(String(50))
 
+    # ========================================================================
+    # ENTERPRISE INTELLIGENCE METADATA (Graph API callRecords expansion)
+    # ========================================================================
+
+    # Modality information (from callRecords)
+    primary_modality = Column(String(20))  # audio, video, screenSharing
+    modalities_used = Column(JSONB)  # ["audio", "video", "screenSharing"]
+    is_pstn_call = Column(Boolean, default=False)  # Any participant dialed in via phone
+
+    # Duration & timing (from callRecords)
+    actual_duration_seconds = Column(Integer)  # Actual call duration from Graph
+    scheduled_duration_seconds = Column(Integer)  # From calendar event
+    overtime_seconds = Column(Integer)  # How much it ran over/under
+
+    # Engagement metrics (from callRecords sessions)
+    screen_share_duration_pct = Column(DECIMAL(5, 2))  # % of time screen sharing
+    video_on_duration_pct = Column(DECIMAL(5, 2))  # % of time with video on
+    chat_message_count = Column(Integer)  # In-meeting chat messages
+
+    # Meeting series (from callRecords/calendar)
+    is_recurring = Column(Boolean, default=False)  # Part of recurring series
+    meeting_series_id = Column(String(255))  # Link to series
+
+    # Participant metadata (from callRecords sessions)
+    external_domains = Column(JSONB)  # ["client.com", "vendor.io"]
+    device_types = Column(JSONB)  # {"desktop": 3, "mobile": 1, "room": 1}
+
+    # Quality metrics (from callRecords sessions/segments)
+    avg_packet_loss_rate = Column(DECIMAL(5, 4))  # Network quality (0.0001 - 1.0)
+    avg_jitter_ms = Column(Integer)  # Audio/video jitter
+    avg_round_trip_ms = Column(Integer)  # Network latency
+    network_quality_score = Column(DECIMAL(3, 2))  # Computed 0-1 score
+    connection_types = Column(JSONB)  # {"wired": 3, "wifi": 2, "cellular": 1}
+    had_quality_issues = Column(Boolean, default=False)  # Any metrics below threshold
+
     # Relationships
     participants = relationship("MeetingParticipant", back_populates="meeting", cascade="all, delete-orphan")
     transcript = relationship("Transcript", back_populates="meeting", uselist=False, cascade="all, delete-orphan")
@@ -348,6 +383,65 @@ class Summary(Base):
     # Quality metadata
     confidence_score = Column(DECIMAL(3, 2))  # 0.00-1.00
 
+    # ========================================================================
+    # ENTERPRISE INTELLIGENCE METADATA (AI-extracted classification)
+    # ========================================================================
+
+    # Meeting Classification (8 fields)
+    meeting_type = Column(String(50))  # sales_call, internal_sync, onboarding, coaching, planning, etc.
+    meeting_category = Column(String(50))  # internal, external_client, external_vendor, mixed
+    seniority_level = Column(String(50))  # c_suite, executive, management, individual_contributor, mixed
+    department_context = Column(String(100))  # inferred department(s) involved
+    is_onboarding = Column(Boolean, default=False)  # New hire/customer onboarding
+    is_coaching = Column(Boolean, default=False)  # 1:1 coaching/mentoring
+    is_sales_meeting = Column(Boolean, default=False)  # Sales/revenue focused
+    is_support_call = Column(Boolean, default=False)  # Customer support issue
+
+    # Sentiment & Tone (7 fields)
+    overall_sentiment = Column(String(20))  # positive, neutral, negative, mixed
+    urgency_level = Column(String(20))  # critical, high, medium, low
+    consensus_level = Column(String(20))  # unanimous, strong_agreement, split, contentious
+    has_concerns = Column(Boolean, default=False)  # Quick filter for meetings with issues
+    meeting_effectiveness = Column(String(20))  # highly_productive, productive, neutral, unproductive
+    communication_style = Column(String(20))  # formal, professional, casual, mixed
+    energy_level = Column(String(20))  # high, medium, low (engagement/enthusiasm)
+
+    # Counts & Metrics (5 fields)
+    action_item_count = Column(Integer)  # Number of action items generated
+    decision_count = Column(Integer)  # Number of decisions made
+    open_question_count = Column(Integer)  # Unresolved questions
+    blocker_count = Column(Integer)  # Blockers/risks identified
+    follow_up_required = Column(Boolean, default=False)  # Needs explicit follow-up
+
+    # Content & Topics (7 JSONB fields)
+    topics_discussed = Column(JSONB)  # ["budget", "hiring", "Q4 planning"]
+    projects_mentioned = Column(JSONB)  # ["Project Phoenix", "Website Redesign"]
+    products_mentioned = Column(JSONB)  # ["Salesforce", "our CRM", "new feature"]
+    technologies_discussed = Column(JSONB)  # ["Python", "AWS", "Teams"]
+    people_mentioned = Column(JSONB)  # People referenced but not in meeting
+    deadlines_mentioned = Column(JSONB)  # [{"date": "2024-01-15", "context": "launch"}]
+    financial_mentions = Column(JSONB)  # [{"amount": 50000, "context": "budget"}]
+
+    # Enhanced Structured Data (4 JSONB fields)
+    concerns_json = Column(JSONB)  # Detailed concern/complaint tracking
+    blockers_json = Column(JSONB)  # Detailed blocker/risk tracking
+    market_intelligence_json = Column(JSONB)  # Competitor mentions, market insights
+    training_content_json = Column(JSONB)  # Knowledge transfer/training detected
+
+    # External Detection (4 fields)
+    has_external_participants = Column(Boolean)  # Any non-internal participants?
+    external_company_names = Column(JSONB)  # ["Acme Corp", "Client Inc"]
+    client_names = Column(JSONB)  # Identified client organizations
+    competitor_names = Column(JSONB)  # Competitors mentioned by name
+
+    # Flags for Quick Filtering (6 fields)
+    has_financial_discussion = Column(Boolean, default=False)  # Money/budget discussed
+    has_deadline_pressure = Column(Boolean, default=False)  # Tight deadlines mentioned
+    has_escalation = Column(Boolean, default=False)  # Issue escalated/needs attention
+    has_customer_complaint = Column(Boolean, default=False)  # Customer expressed issue
+    has_technical_discussion = Column(Boolean, default=False)  # Technical/engineering content
+    is_confidential = Column(Boolean, default=False)  # Sensitive/NDA content detected
+
     # Relationships
     meeting = relationship("Meeting", back_populates="summaries")  # Changed to plural for multiple versions
     transcript = relationship("Transcript", back_populates="summary")
@@ -355,6 +449,14 @@ class Summary(Base):
 
     __table_args__ = (
         Index("idx_summaries_meeting_version", "meeting_id", "version"),
+        Index("idx_summaries_meeting_type", "meeting_type"),
+        Index("idx_summaries_meeting_category", "meeting_category"),
+        Index("idx_summaries_has_concerns", "has_concerns"),
+        Index("idx_summaries_has_external", "has_external_participants"),
+        Index("idx_summaries_overall_sentiment", "overall_sentiment"),
+        Index("idx_summaries_is_sales", "is_sales_meeting"),
+        Index("idx_summaries_has_escalation", "has_escalation"),
+        Index("idx_summaries_follow_up", "follow_up_required"),
     )
 
 

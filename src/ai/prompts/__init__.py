@@ -34,6 +34,9 @@ estimate_token_count = legacy_prompts.estimate_token_count
 validate_prompt_length = legacy_prompts.validate_prompt_length
 truncate_transcript_if_needed = legacy_prompts.truncate_transcript_if_needed
 
+# Import classification prompt for enterprise intelligence
+from .classification_prompt import CLASSIFICATION_PROMPT
+
 __all__ = [
     "SUMMARY_SYSTEM_PROMPT",
     "build_summary_prompt",
@@ -44,6 +47,7 @@ __all__ = [
     "build_executive_brief_prompt",
     "estimate_token_count",
     "validate_prompt_length",
-    "truncate_transcript_if_needed"
+    "truncate_transcript_if_needed",
+    "CLASSIFICATION_PROMPT"
 ]
 

@@ -322,16 +322,17 @@ class CallRecordsWebhookHandler:
                 return {"status": "duplicate", "call_record_id": call_record_id}
 
             try:
-                # Fetch full callRecord from Graph API (including sessions)
+                # Fetch full callRecord from Graph API (including sessions with segments for quality metrics)
                 call_record = self.graph_client.get(
                     f"/communications/callRecords/{call_record_id}",
-                    params={"$expand": "sessions"}
+                    params={"$expand": "sessions($expand=segments)"}
                 )
 
-                # If sessions weren't expanded, fetch them separately
+                # If sessions weren't expanded, fetch them separately (with segments)
                 if "sessions" not in call_record or not call_record["sessions"]:
                     sessions_response = self.graph_client.get(
-                        f"/communications/callRecords/{call_record_id}/sessions"
+                        f"/communications/callRecords/{call_record_id}/sessions",
+                        params={"$expand": "segments"}
                     )
                     call_record["sessions"] = sessions_response.get("value", [])
 
@@ -466,6 +467,9 @@ class CallRecordsWebhookHandler:
                         existing_meeting.organizer_user_id = organizer_user_id
                         logger.info(f"Updated organizer_user_id for meeting {meeting_id}")
                 else:
+                    # Extract enterprise intelligence metadata
+                    enterprise_metadata = self._extract_enterprise_metadata(call_record)
+
                     # Check if transcription was disabled - skip if so
                     if allow_transcription is False:
                         logger.info(f"Transcription disabled for meeting, marking as transcription_disabled")
@@ -486,7 +490,20 @@ class CallRecordsWebhookHandler:
                             status="transcription_disabled",
                             allow_transcription=False,
                             allow_recording=allow_recording,
-                            call_type=call_type
+                            call_type=call_type,
+                            # Enterprise intelligence metadata
+                            primary_modality=enterprise_metadata.get("primary_modality"),
+                            modalities_used=enterprise_metadata.get("modalities_used"),
+                            is_pstn_call=enterprise_metadata.get("is_pstn_call", False),
+                            actual_duration_seconds=enterprise_metadata.get("actual_duration_seconds"),
+                            external_domains=enterprise_metadata.get("external_domains"),
+                            device_types=enterprise_metadata.get("device_types"),
+                            avg_packet_loss_rate=enterprise_metadata.get("avg_packet_loss_rate"),
+                            avg_jitter_ms=enterprise_metadata.get("avg_jitter_ms"),
+                            avg_round_trip_ms=enterprise_metadata.get("avg_round_trip_ms"),
+                            network_quality_score=enterprise_metadata.get("network_quality_score"),
+                            connection_types=enterprise_metadata.get("connection_types"),
+                            had_quality_issues=enterprise_metadata.get("had_quality_issues", False)
                         )
                         session.add(meeting)
                         session.add(ProcessedCallRecord(call_record_id=call_record_id, source=source))
@@ -516,7 +533,20 @@ class CallRecordsWebhookHandler:
                         status="discovered",
                         allow_transcription=allow_transcription,
                         allow_recording=allow_recording,
-                        call_type=call_type  # groupCall, peerToPeer, unknown
+                        call_type=call_type,  # groupCall, peerToPeer, unknown
+                        # Enterprise intelligence metadata
+                        primary_modality=enterprise_metadata.get("primary_modality"),
+                        modalities_used=enterprise_metadata.get("modalities_used"),
+                        is_pstn_call=enterprise_metadata.get("is_pstn_call", False),
+                        actual_duration_seconds=enterprise_metadata.get("actual_duration_seconds"),
+                        external_domains=enterprise_metadata.get("external_domains"),
+                        device_types=enterprise_metadata.get("device_types"),
+                        avg_packet_loss_rate=enterprise_metadata.get("avg_packet_loss_rate"),
+                        avg_jitter_ms=enterprise_metadata.get("avg_jitter_ms"),
+                        avg_round_trip_ms=enterprise_metadata.get("avg_round_trip_ms"),
+                        network_quality_score=enterprise_metadata.get("network_quality_score"),
+                        connection_types=enterprise_metadata.get("connection_types"),
+                        had_quality_issues=enterprise_metadata.get("had_quality_issues", False)
                     )
                     session.add(meeting)
                     session.flush()
@@ -648,6 +678,228 @@ class CallRecordsWebhookHandler:
                 logger.error(f"Error processing callRecord {call_record_id}: {e}", exc_info=True)
                 session.rollback()
                 return {"status": "error", "error": str(e)}
+
+    def _extract_enterprise_metadata(self, call_record: Dict[str, Any], org_tenant_id: str = None) -> Dict[str, Any]:
+        """
+        Extract enterprise intelligence metadata from callRecord.
+
+        Extracts modalities, quality metrics, device types, and external domain detection
+        from the callRecord and its sessions/segments.
+
+        Args:
+            call_record: Full callRecord with sessions (and optionally segments)
+            org_tenant_id: Organization's tenant ID for external detection
+
+        Returns:
+            Dict with enterprise metadata fields ready to save to Meeting model
+        """
+        metadata = {
+            # Modality info
+            "primary_modality": None,
+            "modalities_used": None,
+            "is_pstn_call": False,
+
+            # Duration
+            "actual_duration_seconds": None,
+
+            # Quality metrics
+            "avg_packet_loss_rate": None,
+            "avg_jitter_ms": None,
+            "avg_round_trip_ms": None,
+            "network_quality_score": None,
+            "connection_types": None,
+            "had_quality_issues": False,
+
+            # Participants
+            "external_domains": None,
+            "device_types": None,
+        }
+
+        try:
+            # Extract modalities from callRecord level
+            modalities = call_record.get("modalities", [])
+            if modalities:
+                metadata["modalities_used"] = modalities
+                # Determine primary modality (video > screenSharing > audio)
+                if "video" in modalities:
+                    metadata["primary_modality"] = "video"
+                elif "screenSharing" in modalities:
+                    metadata["primary_modality"] = "screenSharing"
+                elif "audio" in modalities:
+                    metadata["primary_modality"] = "audio"
+
+            # Calculate actual duration from callRecord timestamps
+            start_dt = self._parse_datetime(call_record.get("startDateTime"))
+            end_dt = self._parse_datetime(call_record.get("endDateTime"))
+            if start_dt and end_dt:
+                metadata["actual_duration_seconds"] = int((end_dt - start_dt).total_seconds())
+
+            # Process sessions for quality, devices, and external detection
+            sessions = call_record.get("sessions", [])
+            if not sessions:
+                return metadata
+
+            # Collect metrics across all sessions/segments
+            packet_loss_values = []
+            jitter_values = []
+            rtt_values = []
+            connection_counts = {}
+            device_counts = {}
+            external_tenant_ids = set()
+
+            for session in sessions:
+                # Check for PSTN participants
+                for endpoint in ["caller", "callee"]:
+                    identity = session.get(endpoint, {}).get("identity", {})
+                    if identity.get("phone"):
+                        metadata["is_pstn_call"] = True
+
+                    # External domain detection via tenant ID
+                    user = identity.get("user", {})
+                    tenant_id = user.get("tenantId")
+                    if tenant_id and org_tenant_id and tenant_id != org_tenant_id:
+                        external_tenant_ids.add(tenant_id)
+
+                    # Device type detection from userAgent
+                    user_agent = session.get(endpoint, {}).get("userAgent", {})
+                    platform = user_agent.get("platform", "")
+                    if platform:
+                        platform_lower = platform.lower()
+                        if "windows" in platform_lower or "mac" in platform_lower or "linux" in platform_lower:
+                            device_type = "desktop"
+                        elif "ios" in platform_lower or "android" in platform_lower:
+                            device_type = "mobile"
+                        elif "room" in platform_lower or "teams room" in platform_lower:
+                            device_type = "room"
+                        else:
+                            device_type = "other"
+                        device_counts[device_type] = device_counts.get(device_type, 0) + 1
+
+                    # Connection type from userAgent
+                    connection_type = user_agent.get("networkInfo", {}).get("connectionType", "")
+                    if connection_type:
+                        conn_lower = connection_type.lower()
+                        if "wired" in conn_lower or "ethernet" in conn_lower:
+                            conn_type = "wired"
+                        elif "wifi" in conn_lower or "wireless" in conn_lower:
+                            conn_type = "wifi"
+                        elif "cellular" in conn_lower or "mobile" in conn_lower or "4g" in conn_lower or "5g" in conn_lower:
+                            conn_type = "cellular"
+                        else:
+                            conn_type = "other"
+                        connection_counts[conn_type] = connection_counts.get(conn_type, 0) + 1
+
+                # Process segments for quality metrics
+                segments = session.get("segments", [])
+                for segment in segments:
+                    media = segment.get("media", {})
+                    for stream in media.get("streams", []):
+                        # Packet loss rate (0-1)
+                        loss = stream.get("averagePacketLossRate")
+                        if loss is not None:
+                            packet_loss_values.append(float(loss))
+
+                        # Jitter (ISO 8601 duration like "PT0.015S")
+                        jitter_str = stream.get("averageJitter")
+                        if jitter_str:
+                            jitter_ms = self._parse_duration_ms(jitter_str)
+                            if jitter_ms is not None:
+                                jitter_values.append(jitter_ms)
+
+                        # Round trip time (ISO 8601 duration)
+                        rtt_str = stream.get("averageRoundTripTime")
+                        if rtt_str:
+                            rtt_ms = self._parse_duration_ms(rtt_str)
+                            if rtt_ms is not None:
+                                rtt_values.append(rtt_ms)
+
+            # Calculate averages
+            if packet_loss_values:
+                metadata["avg_packet_loss_rate"] = round(sum(packet_loss_values) / len(packet_loss_values), 4)
+
+            if jitter_values:
+                metadata["avg_jitter_ms"] = int(sum(jitter_values) / len(jitter_values))
+
+            if rtt_values:
+                metadata["avg_round_trip_ms"] = int(sum(rtt_values) / len(rtt_values))
+
+            # Calculate quality score (0-1)
+            if metadata["avg_packet_loss_rate"] is not None or metadata["avg_jitter_ms"] is not None or metadata["avg_round_trip_ms"] is not None:
+                score = self._calculate_quality_score(
+                    metadata.get("avg_packet_loss_rate"),
+                    metadata.get("avg_jitter_ms"),
+                    metadata.get("avg_round_trip_ms")
+                )
+                metadata["network_quality_score"] = score
+
+                # Flag quality issues if score is below threshold
+                if score is not None and score < 0.7:
+                    metadata["had_quality_issues"] = True
+
+            # Store aggregated data
+            if connection_counts:
+                metadata["connection_types"] = connection_counts
+
+            if device_counts:
+                metadata["device_types"] = device_counts
+
+            if external_tenant_ids:
+                metadata["external_domains"] = list(external_tenant_ids)
+
+        except Exception as e:
+            logger.warning(f"Error extracting enterprise metadata: {e}")
+
+        return metadata
+
+    def _parse_duration_ms(self, duration_str: str) -> int:
+        """Parse ISO 8601 duration (e.g., 'PT0.015S') to milliseconds."""
+        if not duration_str:
+            return None
+        try:
+            # Format: PT<seconds>S (e.g., PT0.015S = 15ms)
+            import re
+            match = re.search(r'PT([\d.]+)S', duration_str)
+            if match:
+                seconds = float(match.group(1))
+                return int(seconds * 1000)
+        except:
+            pass
+        return None
+
+    def _calculate_quality_score(self, packet_loss: float, jitter_ms: int, rtt_ms: int) -> float:
+        """
+        Compute 0-1 quality score based on standard thresholds.
+
+        Good thresholds: packet_loss < 0.01, jitter < 30ms, rtt < 150ms
+        """
+        scores = []
+
+        if packet_loss is not None:
+            # 0 at 5% loss, 1 at 0% loss
+            loss_score = max(0, 1 - (packet_loss / 0.05))
+            scores.append(loss_score * 0.5)  # Weight: 50%
+
+        if jitter_ms is not None:
+            # 0 at 100ms, 1 at 0ms
+            jitter_score = max(0, 1 - (jitter_ms / 100))
+            scores.append(jitter_score * 0.25)  # Weight: 25%
+
+        if rtt_ms is not None:
+            # 0 at 400ms, 1 at 0ms
+            rtt_score = max(0, 1 - (rtt_ms / 400))
+            scores.append(rtt_score * 0.25)  # Weight: 25%
+
+        if not scores:
+            return None
+
+        # Normalize to account for missing metrics
+        total_weight = sum([0.5 if packet_loss is not None else 0,
+                          0.25 if jitter_ms is not None else 0,
+                          0.25 if rtt_ms is not None else 0])
+        if total_weight > 0:
+            return round(sum(scores) / total_weight, 2)
+
+        return None
 
     def _extract_participants(self, call_record: Dict[str, Any]) -> list:
         """Extract participant list from callRecord.

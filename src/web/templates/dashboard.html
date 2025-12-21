@@ -3,102 +3,447 @@
 {% block title %}Dashboard - Teams Meeting Summarizer{% endblock %}
 
 {% block content %}
-<div x-data="dashboardData()" x-init="loadStats()">
-    <h1 class="text-3xl font-bold text-gray-900 mb-6">Dashboard</h1>
+<div x-data="dashboardData()" x-init="loadAll()">
+    <!-- Header with Time Filter -->
+    <div class="flex justify-between items-center mb-6">
+        <h1 class="text-3xl font-bold text-gray-900">Organization Intelligence</h1>
+        <div class="flex items-center space-x-4">
+            <select x-model="days" @change="loadAll()" class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 text-sm">
+                <option value="7">Last 7 days</option>
+                <option value="14">Last 14 days</option>
+                <option value="30">Last 30 days</option>
+                <option value="90">Last 90 days</option>
+            </select>
+            <button @click="loadAll()" class="text-gray-500 hover:text-gray-700">
+                <svg class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+            </button>
+        </div>
+    </div>
 
-    <!-- Stats Cards -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="p-5">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <svg class="h-6 w-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z"/>
-                        </svg>
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">Total Meetings</dt>
-                            <dd class="text-lg font-medium text-gray-900" x-text="stats.total_meetings || 0"></dd>
-                        </dl>
-                    </div>
+    <!-- System Status Banner -->
+    <div class="bg-white shadow rounded-lg p-4 mb-6">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+            <!-- Webhook Status -->
+            <div class="flex items-center space-x-2">
+                <span class="flex h-3 w-3 relative">
+                    <span :class="status.webhook?.active ? 'bg-green-400' : 'bg-red-400'" class="animate-ping absolute inline-flex h-full w-full rounded-full opacity-75"></span>
+                    <span :class="status.webhook?.active ? 'bg-green-500' : 'bg-red-500'" class="relative inline-flex rounded-full h-3 w-3"></span>
+                </span>
+                <span class="text-sm font-medium" x-text="status.webhook?.active ? 'Webhook Active' : 'Webhook Down'"></span>
+            </div>
+
+            <!-- Queue Status -->
+            <div class="flex items-center space-x-2">
+                <span class="flex h-3 w-3 relative">
+                    <span :class="(status.queue?.pending || 0) > 0 ? 'bg-yellow-400' : 'bg-green-400'" class="relative inline-flex rounded-full h-3 w-3"></span>
+                </span>
+                <span class="text-sm">
+                    <span x-text="status.queue?.pending || 0"></span> pending,
+                    <span x-text="status.queue?.running || 0"></span> running
+                </span>
+            </div>
+
+            <!-- Last Meeting -->
+            <div class="flex items-center space-x-2 text-sm text-gray-600">
+                <span>Last meeting:</span>
+                <span x-text="status.last_meeting?.subject ? (status.last_meeting.subject.substring(0, 30) + (status.last_meeting.subject.length > 30 ? '...' : '')) : 'None'"></span>
+                <span class="text-gray-400" x-text="formatTimeAgo(status.last_meeting?.time)"></span>
+            </div>
+
+            <!-- Errors Today -->
+            <div class="flex items-center space-x-2">
+                <span :class="(status.queue?.failed_today || 0) > 0 ? 'text-red-600' : 'text-gray-600'" class="text-sm">
+                    <span x-text="status.queue?.failed_today || 0"></span> errors today
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+        <!-- Meeting Breakdown Card -->
+        <div class="bg-white shadow rounded-lg p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Meeting Breakdown</h3>
+            <div class="space-y-3">
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-600">Total Meetings</span>
+                    <span class="font-bold text-xl" x-text="breakdown.total || 0"></span>
+                </div>
+                <hr class="my-2">
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-500">Group Calls</span>
+                    <span x-text="breakdown.by_type?.group_calls || 0"></span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-500">Peer-to-Peer</span>
+                    <span x-text="breakdown.by_type?.peer_to_peer || 0"></span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-500">Scheduled</span>
+                    <span x-text="breakdown.by_type?.scheduled || 0"></span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-500">Ad-hoc</span>
+                    <span x-text="breakdown.by_type?.adhoc || 0"></span>
+                </div>
+                <hr class="my-2">
+                <div class="flex justify-between text-sm">
+                    <span class="text-green-600">With Transcript</span>
+                    <span x-text="breakdown.processing?.with_transcript + ' (' + breakdown.processing?.transcript_rate + '%)'"></span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-blue-600">With Summary</span>
+                    <span x-text="breakdown.processing?.with_summary + ' (' + breakdown.processing?.summary_rate + '%)'"></span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-400">No Transcript</span>
+                    <span x-text="breakdown.processing?.no_transcript || 0"></span>
                 </div>
             </div>
         </div>
 
-        <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="p-5">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <svg class="h-6 w-6 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
+        <!-- Meeting Types Card -->
+        <div class="bg-white shadow rounded-lg p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Meeting Types</h3>
+            <div class="space-y-3">
+                <!-- By Category -->
+                <div class="mb-4">
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600">Internal</span>
+                        <span x-text="meetingTypes.by_category?.internal || 0"></span>
                     </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">Completed</dt>
-                            <dd class="text-lg font-medium text-gray-900" x-text="stats.completed_meetings || 0"></dd>
-                        </dl>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600">External (Client)</span>
+                        <span x-text="meetingTypes.by_category?.external_client || 0"></span>
                     </div>
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-600">Mixed</span>
+                        <span x-text="meetingTypes.by_category?.mixed || 0"></span>
+                    </div>
+                </div>
+                <hr class="my-2">
+                <!-- Top Meeting Types -->
+                <template x-for="(count, type) in sortedMeetingTypes" :key="type">
+                    <div class="flex justify-between text-sm">
+                        <span class="text-gray-500 capitalize" x-text="type.replace(/_/g, ' ')"></span>
+                        <span x-text="count"></span>
+                    </div>
+                </template>
+                <div x-show="Object.keys(meetingTypes.by_type || {}).length === 0" class="text-gray-400 text-sm italic">
+                    No classification data yet
                 </div>
             </div>
         </div>
 
-        <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="p-5">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <svg class="h-6 w-6 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">Processing</dt>
-                            <dd class="text-lg font-medium text-gray-900" x-text="stats.processing_meetings || 0"></dd>
-                        </dl>
-                    </div>
+        <!-- Insights Card -->
+        <div class="bg-white shadow rounded-lg p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Key Insights</h3>
+            <div class="space-y-3">
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-600">Action Items</span>
+                    <span class="font-bold text-lg text-blue-600" x-text="insights.action_items || 0"></span>
                 </div>
-            </div>
-        </div>
-
-        <div class="bg-white overflow-hidden shadow rounded-lg">
-            <div class="p-5">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <svg class="h-6 w-6 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
-                        </svg>
-                    </div>
-                    <div class="ml-5 w-0 flex-1">
-                        <dl>
-                            <dt class="text-sm font-medium text-gray-500 truncate">Queued Jobs</dt>
-                            <dd class="text-lg font-medium text-gray-900" x-text="stats.pending_jobs || 0"></dd>
-                        </dl>
-                    </div>
+                <div class="flex justify-between items-center">
+                    <span class="text-gray-600">Decisions Made</span>
+                    <span class="font-bold text-lg text-green-600" x-text="insights.decisions || 0"></span>
+                </div>
+                <hr class="my-2">
+                <div class="flex justify-between text-sm">
+                    <span class="text-orange-600">Concerns Raised</span>
+                    <span x-text="insights.concerns || 0"></span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-red-600">Escalations</span>
+                    <span x-text="insights.escalations || 0"></span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-purple-600">Follow-ups Required</span>
+                    <span x-text="insights.follow_ups_required || 0"></span>
+                </div>
+                <hr class="my-2">
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-500">External Meetings</span>
+                    <span x-text="insights.external_meetings || 0"></span>
+                </div>
+                <div class="flex justify-between text-sm">
+                    <span class="text-gray-500">Financial Discussions</span>
+                    <span x-text="insights.financial_discussions || 0"></span>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Recent Meetings -->
-    <div class="bg-white shadow rounded-lg p-6">
-        <h2 class="text-xl font-semibold mb-4">Recent Meetings</h2>
-        <p class="text-gray-600">View recent meetings in the <a href="/dashboard/meetings" class="text-blue-600 hover:underline">Meetings</a> page.</p>
+    <!-- Second Row -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        <!-- Sentiment & Effectiveness -->
+        <div class="bg-white shadow rounded-lg p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Meeting Sentiment & Effectiveness</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <!-- Sentiment -->
+                <div>
+                    <h4 class="text-sm font-medium text-gray-500 mb-2">Sentiment</h4>
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-green-600">Positive</span>
+                            <span x-text="sentiment.sentiment?.positive || 0"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-gray-600">Neutral</span>
+                            <span x-text="sentiment.sentiment?.neutral || 0"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-red-600">Negative</span>
+                            <span x-text="sentiment.sentiment?.negative || 0"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-yellow-600">Mixed</span>
+                            <span x-text="sentiment.sentiment?.mixed || 0"></span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Effectiveness -->
+                <div>
+                    <h4 class="text-sm font-medium text-gray-500 mb-2">Effectiveness</h4>
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-green-600">Highly Productive</span>
+                            <span x-text="sentiment.effectiveness?.highly_productive || 0"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-green-500">Productive</span>
+                            <span x-text="sentiment.effectiveness?.productive || 0"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-gray-500">Neutral</span>
+                            <span x-text="sentiment.effectiveness?.neutral || 0"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-red-500">Unproductive</span>
+                            <span x-text="sentiment.effectiveness?.unproductive || 0"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div x-show="Object.keys(sentiment.sentiment || {}).length === 0" class="text-gray-400 text-sm italic mt-4">
+                No sentiment data yet - will populate as meetings are processed
+            </div>
+        </div>
+
+        <!-- Quality Metrics -->
+        <div class="bg-white shadow rounded-lg p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Call Quality Metrics</h3>
+            <div class="grid grid-cols-2 gap-4">
+                <!-- Quality Score -->
+                <div>
+                    <h4 class="text-sm font-medium text-gray-500 mb-2">Network Quality</h4>
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-600">Average Score</span>
+                            <span class="font-bold" :class="(quality.quality?.avg_score || 0) >= 0.8 ? 'text-green-600' : (quality.quality?.avg_score || 0) >= 0.6 ? 'text-yellow-600' : 'text-red-600'" x-text="quality.quality?.avg_score ? (quality.quality.avg_score * 100).toFixed(0) + '%' : 'N/A'"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-red-600">Quality Issues</span>
+                            <span x-text="quality.quality?.issues_count || 0"></span>
+                        </div>
+                    </div>
+                </div>
+                <!-- Modality -->
+                <div>
+                    <h4 class="text-sm font-medium text-gray-500 mb-2">Call Modality</h4>
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-gray-600">Video</span>
+                            <span x-text="quality.modality?.video || 0"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-gray-600">Audio Only</span>
+                            <span x-text="quality.modality?.audio || 0"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-gray-600">Screen Share</span>
+                            <span x-text="quality.modality?.screen_sharing || 0"></span>
+                        </div>
+                        <div class="flex items-center justify-between text-sm">
+                            <span class="text-gray-600">PSTN Calls</span>
+                            <span x-text="quality.pstn_calls || 0"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div x-show="!quality.quality?.avg_score" class="text-gray-400 text-sm italic mt-4">
+                No quality data yet - will populate as meetings are processed
+            </div>
+        </div>
+    </div>
+
+    <!-- Third Row: Participants and Recent Activity -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Top Participants -->
+        <div class="bg-white shadow rounded-lg p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Top Participants</h3>
+            <div class="space-y-2">
+                <template x-for="(participant, index) in participants.participants || []" :key="participant.email">
+                    <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                        <div class="flex items-center">
+                            <span class="text-gray-400 text-sm w-6" x-text="index + 1 + '.'"></span>
+                            <span class="font-medium" x-text="participant.name"></span>
+                        </div>
+                        <span class="text-gray-600 text-sm" x-text="participant.meetings + ' meetings'"></span>
+                    </div>
+                </template>
+                <div x-show="(participants.participants || []).length === 0" class="text-gray-400 text-sm italic">
+                    No participant data available
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Activity -->
+        <div class="bg-white shadow rounded-lg p-6">
+            <h3 class="text-lg font-semibold text-gray-900 mb-4">Recent Activity</h3>
+            <div class="space-y-2">
+                <template x-for="meeting in recentActivity.meetings || []" :key="meeting.id">
+                    <div class="flex items-center justify-between py-2 border-b border-gray-100 last:border-0">
+                        <div class="flex-1 min-w-0">
+                            <a :href="'/dashboard/meetings/' + meeting.id" class="text-blue-600 hover:underline truncate block" x-text="meeting.subject || 'Untitled'"></a>
+                            <span class="text-xs text-gray-400" x-text="formatTimeAgo(meeting.start_time)"></span>
+                        </div>
+                        <span class="ml-2 px-2 py-1 text-xs rounded-full" :class="{
+                            'bg-green-100 text-green-800': meeting.status === 'completed',
+                            'bg-red-100 text-red-800': meeting.status === 'failed',
+                            'bg-yellow-100 text-yellow-800': meeting.status === 'processing',
+                            'bg-gray-100 text-gray-800': !['completed', 'failed', 'processing'].includes(meeting.status)
+                        }" x-text="meeting.status"></span>
+                    </div>
+                </template>
+                <div x-show="(recentActivity.meetings || []).length === 0" class="text-gray-400 text-sm italic">
+                    No recent meetings
+                </div>
+            </div>
+            <div class="mt-4 pt-4 border-t border-gray-200">
+                <a href="/dashboard/meetings" class="text-blue-600 hover:underline text-sm">View all meetings &rarr;</a>
+            </div>
+        </div>
     </div>
 </div>
 
 <script>
 function dashboardData() {
     return {
-        stats: {},
-        async loadStats() {
+        days: 7,
+        status: {},
+        breakdown: {},
+        meetingTypes: {},
+        insights: {},
+        sentiment: {},
+        quality: {},
+        participants: {},
+        recentActivity: {},
+
+        get sortedMeetingTypes() {
+            const types = this.meetingTypes.by_type || {};
+            return Object.fromEntries(
+                Object.entries(types).sort((a, b) => b[1] - a[1]).slice(0, 5)
+            );
+        },
+
+        async loadAll() {
+            await Promise.all([
+                this.loadStatus(),
+                this.loadBreakdown(),
+                this.loadMeetingTypes(),
+                this.loadInsights(),
+                this.loadSentiment(),
+                this.loadQuality(),
+                this.loadParticipants(),
+                this.loadRecentActivity()
+            ]);
+        },
+
+        async loadStatus() {
             try {
-                const response = await fetch('/api/meetings/stats/overview');
-                this.stats = await response.json();
+                const response = await fetch('/analytics/api/dashboard/status');
+                this.status = await response.json();
             } catch (error) {
-                console.error('Failed to load stats:', error);
+                console.error('Failed to load status:', error);
             }
+        },
+
+        async loadBreakdown() {
+            try {
+                const response = await fetch(`/analytics/api/dashboard/meeting-breakdown?days=${this.days}`);
+                this.breakdown = await response.json();
+            } catch (error) {
+                console.error('Failed to load breakdown:', error);
+            }
+        },
+
+        async loadMeetingTypes() {
+            try {
+                const response = await fetch(`/analytics/api/dashboard/meeting-types?days=${this.days}`);
+                this.meetingTypes = await response.json();
+            } catch (error) {
+                console.error('Failed to load meeting types:', error);
+            }
+        },
+
+        async loadInsights() {
+            try {
+                const response = await fetch(`/analytics/api/dashboard/insights?days=${this.days}`);
+                this.insights = await response.json();
+            } catch (error) {
+                console.error('Failed to load insights:', error);
+            }
+        },
+
+        async loadSentiment() {
+            try {
+                const response = await fetch(`/analytics/api/dashboard/sentiment-breakdown?days=${this.days}`);
+                this.sentiment = await response.json();
+            } catch (error) {
+                console.error('Failed to load sentiment:', error);
+            }
+        },
+
+        async loadQuality() {
+            try {
+                const response = await fetch(`/analytics/api/dashboard/quality-metrics?days=${this.days}`);
+                this.quality = await response.json();
+            } catch (error) {
+                console.error('Failed to load quality:', error);
+            }
+        },
+
+        async loadParticipants() {
+            try {
+                const response = await fetch(`/analytics/api/dashboard/top-participants?days=${this.days}&limit=10`);
+                this.participants = await response.json();
+            } catch (error) {
+                console.error('Failed to load participants:', error);
+            }
+        },
+
+        async loadRecentActivity() {
+            try {
+                const response = await fetch(`/analytics/api/recent-activity?days=${this.days}&limit=10`);
+                this.recentActivity = await response.json();
+            } catch (error) {
+                console.error('Failed to load recent activity:', error);
+            }
+        },
+
+        formatTimeAgo(dateStr) {
+            if (!dateStr) return '';
+            const date = new Date(dateStr);
+            const now = new Date();
+            const seconds = Math.floor((now - date) / 1000);
+
+            if (seconds < 60) return 'just now';
+            if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+            if (seconds < 86400) return Math.floor(seconds / 3600) + 'h ago';
+            if (seconds < 604800) return Math.floor(seconds / 86400) + 'd ago';
+            return date.toLocaleDateString();
         }
     }
 }

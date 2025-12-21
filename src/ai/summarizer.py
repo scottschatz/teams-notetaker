@@ -1088,3 +1088,169 @@ class SingleCallSummarizer:
 
         # Parse JSON
         return json.loads(content)
+
+    def extract_classification_metadata(
+        self,
+        transcript_segments: List[Dict[str, Any]],
+        meeting_metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Extract enterprise intelligence classification metadata from meeting transcript.
+
+        This is a separate AI call that extracts metadata for:
+        - Meeting classification (type, category, seniority)
+        - Sentiment and tone analysis
+        - Counts and metrics
+        - Topics and entities
+        - Structured data (concerns, blockers, market intelligence)
+        - External detection (clients, competitors)
+        - Quick filtering flags
+
+        Uses prompt caching (transcript is cached from main summary call).
+
+        Args:
+            transcript_segments: List of transcript segments with speaker/text/timestamp
+            meeting_metadata: Optional meeting metadata (for participant names)
+
+        Returns:
+            Dict with classification metadata ready to save to Summary model
+        """
+        start_time = time.time()
+
+        # Format transcript
+        transcript_text = self._format_transcript(transcript_segments)
+
+        # Extract participant names from metadata for context
+        participant_names = []
+        if meeting_metadata and meeting_metadata.get("participant_names"):
+            participant_names = meeting_metadata["participant_names"]
+        participant_names_str = "\n".join(f"- {name}" for name in participant_names) if participant_names else "(No participant list available)"
+
+        # Load classification prompt
+        from .prompts.classification_prompt import CLASSIFICATION_PROMPT
+
+        # Build user prompt
+        user_prompt = CLASSIFICATION_PROMPT.format(
+            transcript=transcript_text,
+            participant_names=participant_names_str
+        )
+
+        # System prompt for JSON-only output
+        system_prompt = (
+            "You are an expert meeting analyst specializing in meeting classification and metadata extraction. "
+            "You MUST return ONLY valid, well-formed JSON. Ensure all strings are properly quoted "
+            "and terminated. Ensure all JSON objects have matching braces. Double-check your JSON "
+            "syntax before responding. Return NOTHING except the JSON object."
+        )
+
+        # Make Claude API call (uses Haiku for cost efficiency)
+        logger.info("Calling Claude Haiku API for classification metadata extraction")
+        try:
+            response = self.claude_client.generate_text(
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_tokens=4000,  # Classification response is smaller than full summary
+                temperature=0.3,  # Lower temperature for more consistent classification
+            )
+
+            # Parse JSON response
+            content = response["content"]
+            try:
+                data = self._parse_json_response(content)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse classification JSON response: {e}")
+                logger.error(f"Response content: {content[:500]}...")
+                return {}
+
+            # Extract and flatten the nested structure for database storage
+            result = self._flatten_classification_data(data)
+
+            generation_time = int((time.time() - start_time) * 1000)
+            logger.info(
+                f"Classification extraction complete: {response['total_tokens']} tokens, "
+                f"${response['cost']:.4f}, {generation_time}ms"
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Classification extraction failed: {e}", exc_info=True)
+            return {}
+
+    def _flatten_classification_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Flatten nested classification response for database storage.
+
+        Takes the structured JSON response and maps it to flat database columns.
+
+        Args:
+            data: Parsed JSON response with nested structure
+
+        Returns:
+            Flat dict with column-friendly keys
+        """
+        result = {}
+
+        # Classification fields
+        classification = data.get("classification", {})
+        result["meeting_type"] = classification.get("meeting_type")
+        result["meeting_category"] = classification.get("meeting_category")
+        result["seniority_level"] = classification.get("seniority_level")
+        result["department_context"] = classification.get("department_context")
+        result["is_onboarding"] = classification.get("is_onboarding", False)
+        result["is_coaching"] = classification.get("is_coaching", False)
+        result["is_sales_meeting"] = classification.get("is_sales_meeting", False)
+        result["is_support_call"] = classification.get("is_support_call", False)
+
+        # Sentiment fields
+        sentiment = data.get("sentiment", {})
+        result["overall_sentiment"] = sentiment.get("overall_sentiment")
+        result["urgency_level"] = sentiment.get("urgency_level")
+        result["consensus_level"] = sentiment.get("consensus_level")
+        result["meeting_effectiveness"] = sentiment.get("meeting_effectiveness")
+        result["communication_style"] = sentiment.get("communication_style")
+        result["energy_level"] = sentiment.get("energy_level")
+
+        # Counts fields
+        counts = data.get("counts", {})
+        result["action_item_count"] = counts.get("action_item_count")
+        result["decision_count"] = counts.get("decision_count")
+        result["open_question_count"] = counts.get("open_question_count")
+        result["blocker_count"] = counts.get("blocker_count")
+        result["follow_up_required"] = counts.get("follow_up_required", False)
+        result["has_concerns"] = counts.get("blocker_count", 0) > 0 or len(data.get("structured_data", {}).get("concerns", [])) > 0
+
+        # Topics fields (JSONB)
+        topics = data.get("topics", {})
+        result["topics_discussed"] = topics.get("topics_discussed")
+        result["projects_mentioned"] = topics.get("projects_mentioned")
+        result["products_mentioned"] = topics.get("products_mentioned")
+        result["technologies_discussed"] = topics.get("technologies_discussed")
+        result["people_mentioned"] = topics.get("people_mentioned")
+        result["deadlines_mentioned"] = topics.get("deadlines_mentioned")
+        result["financial_mentions"] = topics.get("financial_mentions")
+
+        # Structured data fields (JSONB)
+        structured = data.get("structured_data", {})
+        result["concerns_json"] = structured.get("concerns")
+        result["blockers_json"] = structured.get("blockers")
+        result["market_intelligence_json"] = structured.get("market_intelligence")
+        result["training_content_json"] = structured.get("training_content")
+
+        # External detection fields
+        external = data.get("external_detection", {})
+        result["has_external_participants"] = external.get("has_external_participants", False)
+        result["external_company_names"] = external.get("external_company_names")
+        result["client_names"] = external.get("client_names")
+        result["competitor_names"] = external.get("competitor_names")
+
+        # Flag fields
+        flags = data.get("flags", {})
+        result["has_financial_discussion"] = flags.get("has_financial_discussion", False)
+        result["has_deadline_pressure"] = flags.get("has_deadline_pressure", False)
+        result["has_escalation"] = flags.get("has_escalation", False)
+        result["has_customer_complaint"] = flags.get("has_customer_complaint", False)
+        result["has_technical_discussion"] = flags.get("has_technical_discussion", False)
+        result["is_confidential"] = flags.get("is_confidential", False)
+
+        return result

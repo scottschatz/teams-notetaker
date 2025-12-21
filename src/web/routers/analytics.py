@@ -607,3 +607,394 @@ def calculate_cost(model: str, prompt_tokens: int, completion_tokens: int) -> fl
     output_cost = (completion_tokens / 1_000_000) * pricing["output"]
 
     return round(input_cost + output_cost, 4)
+
+
+# =============================================================================
+# ENTERPRISE INTELLIGENCE DASHBOARD ENDPOINTS
+# =============================================================================
+
+@router.get("/api/dashboard/status")
+async def get_dashboard_status():
+    """
+    Get system health status for dashboard.
+
+    Returns:
+        - webhook status
+        - worker status
+        - queue depth
+        - last meeting processed
+        - errors today
+    """
+    from ...core.database import JobQueue, SubscriptionEvent
+
+    with db.get_session() as session:
+        # Get queue stats
+        pending_jobs = session.query(JobQueue).filter(
+            JobQueue.status == 'pending'
+        ).count()
+
+        running_jobs = session.query(JobQueue).filter(
+            JobQueue.status == 'running'
+        ).count()
+
+        failed_today = session.query(JobQueue).filter(
+            JobQueue.status == 'failed',
+            JobQueue.updated_at >= datetime.utcnow() - timedelta(days=1)
+        ).count()
+
+        # Get last processed meeting
+        last_meeting = session.query(Meeting).filter(
+            Meeting.status == 'completed'
+        ).order_by(Meeting.updated_at.desc()).first()
+
+        last_meeting_time = None
+        last_meeting_subject = None
+        if last_meeting:
+            last_meeting_time = last_meeting.updated_at.isoformat() + 'Z' if last_meeting.updated_at else None
+            last_meeting_subject = last_meeting.subject
+
+        # Get webhook subscription status
+        active_subscription = session.query(SubscriptionEvent).filter(
+            SubscriptionEvent.event_type.in_(['created', 'renewed', 'recovered'])
+        ).order_by(SubscriptionEvent.timestamp.desc()).first()
+
+        last_down_event = session.query(SubscriptionEvent).filter(
+            SubscriptionEvent.event_type.in_(['down', 'failed', 'expired'])
+        ).order_by(SubscriptionEvent.timestamp.desc()).first()
+
+        webhook_active = False
+        webhook_expires = None
+        if active_subscription:
+            # Check if there's a more recent down event
+            if last_down_event and last_down_event.timestamp > active_subscription.timestamp:
+                webhook_active = False
+            else:
+                webhook_active = True
+                # Try to get expiration from subscription details
+                if active_subscription.details and 'expirationDateTime' in active_subscription.details:
+                    webhook_expires = active_subscription.details['expirationDateTime']
+
+        return {
+            "webhook": {
+                "active": webhook_active,
+                "expires_at": webhook_expires
+            },
+            "queue": {
+                "pending": pending_jobs,
+                "running": running_jobs,
+                "failed_today": failed_today
+            },
+            "last_meeting": {
+                "time": last_meeting_time,
+                "subject": last_meeting_subject
+            }
+        }
+
+
+@router.get("/api/dashboard/meeting-breakdown")
+async def get_meeting_breakdown(days: int = Query(default=7)):
+    """
+    Get meeting breakdown by type and processing status.
+
+    Returns:
+        - scheduled vs ad-hoc vs p2p counts
+        - transcript/summary rates
+        - no transcript/skipped counts
+    """
+    start_date = get_date_range(days)
+
+    with db.get_session() as session:
+        query = session.query(Meeting)
+        if start_date:
+            query = query.filter(Meeting.start_time >= start_date)
+
+        total = query.count()
+
+        # By call type
+        group_calls = query.filter(Meeting.call_type == 'groupCall').count()
+        peer_to_peer = query.filter(Meeting.call_type == 'peerToPeer').count()
+        scheduled = query.filter(Meeting.discovery_source == 'calendar').count()
+        adhoc = total - scheduled  # Meetings not from calendar are ad-hoc
+
+        # Processing status
+        with_transcript = query.filter(Meeting.has_transcript == True).count()
+        with_summary = query.filter(Meeting.has_summary == True).count()
+        distributed = query.filter(Meeting.has_distribution == True).count()
+        no_transcript = query.filter(
+            Meeting.status.in_(['no_transcript', 'transcription_disabled'])
+        ).count()
+        skipped = query.filter(Meeting.status == 'skipped').count()
+
+        return {
+            "total": total,
+            "by_type": {
+                "group_calls": group_calls,
+                "peer_to_peer": peer_to_peer,
+                "scheduled": scheduled,
+                "adhoc": adhoc
+            },
+            "processing": {
+                "with_transcript": with_transcript,
+                "transcript_rate": round(with_transcript / total * 100, 1) if total > 0 else 0,
+                "with_summary": with_summary,
+                "summary_rate": round(with_summary / total * 100, 1) if total > 0 else 0,
+                "distributed": distributed,
+                "distribution_rate": round(distributed / total * 100, 1) if total > 0 else 0,
+                "no_transcript": no_transcript,
+                "skipped": skipped
+            }
+        }
+
+
+@router.get("/api/dashboard/meeting-types")
+async def get_meeting_types(days: int = Query(default=7)):
+    """
+    Get meeting type classification breakdown.
+
+    Returns:
+        - meeting type counts
+        - meeting category counts (internal/external)
+    """
+    start_date = get_date_range(days)
+
+    with db.get_session() as session:
+        # Join summaries with meetings to get classification data
+        query = session.query(
+            Summary.meeting_type,
+            func.count(Summary.id).label('count')
+        ).join(Meeting).filter(
+            Summary.meeting_type.isnot(None)
+        )
+
+        if start_date:
+            query = query.filter(Meeting.start_time >= start_date)
+
+        type_counts = query.group_by(Summary.meeting_type).all()
+
+        # Get category counts
+        cat_query = session.query(
+            Summary.meeting_category,
+            func.count(Summary.id).label('count')
+        ).join(Meeting).filter(
+            Summary.meeting_category.isnot(None)
+        )
+
+        if start_date:
+            cat_query = cat_query.filter(Meeting.start_time >= start_date)
+
+        category_counts = cat_query.group_by(Summary.meeting_category).all()
+
+        return {
+            "by_type": {r.meeting_type: r.count for r in type_counts if r.meeting_type},
+            "by_category": {r.meeting_category: r.count for r in category_counts if r.meeting_category}
+        }
+
+
+@router.get("/api/dashboard/insights")
+async def get_dashboard_insights(days: int = Query(default=7)):
+    """
+    Get aggregated insights from meeting summaries.
+
+    Returns:
+        - action item counts
+        - decision counts
+        - concern counts
+        - financial discussion counts
+    """
+    start_date = get_date_range(days)
+
+    with db.get_session() as session:
+        query = session.query(Summary).join(Meeting)
+
+        if start_date:
+            query = query.filter(Meeting.start_time >= start_date)
+
+        # Aggregate counts
+        total_action_items = session.query(
+            func.sum(Summary.action_item_count)
+        ).join(Meeting)
+        if start_date:
+            total_action_items = total_action_items.filter(Meeting.start_time >= start_date)
+        action_items = total_action_items.scalar() or 0
+
+        total_decisions = session.query(
+            func.sum(Summary.decision_count)
+        ).join(Meeting)
+        if start_date:
+            total_decisions = total_decisions.filter(Meeting.start_time >= start_date)
+        decisions = total_decisions.scalar() or 0
+
+        # Flag-based counts
+        concerns_count = query.filter(Summary.has_concerns == True).count()
+        escalations = query.filter(Summary.has_escalation == True).count()
+        financial = query.filter(Summary.has_financial_discussion == True).count()
+        follow_ups = query.filter(Summary.follow_up_required == True).count()
+        external = query.filter(Summary.has_external_participants == True).count()
+
+        return {
+            "action_items": action_items,
+            "decisions": decisions,
+            "concerns": concerns_count,
+            "escalations": escalations,
+            "financial_discussions": financial,
+            "follow_ups_required": follow_ups,
+            "external_meetings": external
+        }
+
+
+@router.get("/api/dashboard/top-participants")
+async def get_top_participants(days: int = Query(default=7), limit: int = Query(default=10)):
+    """
+    Get most active meeting participants.
+
+    Returns:
+        - participant name
+        - meeting count
+        - last meeting date
+    """
+    start_date = get_date_range(days)
+
+    with db.get_session() as session:
+        query = session.query(
+            MeetingParticipant.display_name,
+            MeetingParticipant.email,
+            func.count(distinct(MeetingParticipant.meeting_id)).label('meeting_count')
+        ).join(Meeting).filter(
+            MeetingParticipant.attended == True,
+            MeetingParticipant.display_name.isnot(None)
+        )
+
+        if start_date:
+            query = query.filter(Meeting.start_time >= start_date)
+
+        query = query.group_by(
+            MeetingParticipant.display_name,
+            MeetingParticipant.email
+        ).order_by(func.count(distinct(MeetingParticipant.meeting_id)).desc()).limit(limit)
+
+        results = query.all()
+
+        return {
+            "participants": [
+                {
+                    "name": r.display_name or r.email or "Unknown",
+                    "email": r.email,
+                    "meetings": r.meeting_count
+                }
+                for r in results
+            ]
+        }
+
+
+@router.get("/api/dashboard/sentiment-breakdown")
+async def get_sentiment_breakdown(days: int = Query(default=7)):
+    """
+    Get meeting sentiment analysis breakdown.
+
+    Returns:
+        - sentiment counts (positive, neutral, negative, mixed)
+        - effectiveness counts
+        - urgency level counts
+    """
+    start_date = get_date_range(days)
+
+    with db.get_session() as session:
+        # Sentiment breakdown
+        sentiment_query = session.query(
+            Summary.overall_sentiment,
+            func.count(Summary.id).label('count')
+        ).join(Meeting).filter(
+            Summary.overall_sentiment.isnot(None)
+        )
+
+        if start_date:
+            sentiment_query = sentiment_query.filter(Meeting.start_time >= start_date)
+
+        sentiment_counts = sentiment_query.group_by(Summary.overall_sentiment).all()
+
+        # Effectiveness breakdown
+        effectiveness_query = session.query(
+            Summary.meeting_effectiveness,
+            func.count(Summary.id).label('count')
+        ).join(Meeting).filter(
+            Summary.meeting_effectiveness.isnot(None)
+        )
+
+        if start_date:
+            effectiveness_query = effectiveness_query.filter(Meeting.start_time >= start_date)
+
+        effectiveness_counts = effectiveness_query.group_by(Summary.meeting_effectiveness).all()
+
+        # Urgency breakdown
+        urgency_query = session.query(
+            Summary.urgency_level,
+            func.count(Summary.id).label('count')
+        ).join(Meeting).filter(
+            Summary.urgency_level.isnot(None)
+        )
+
+        if start_date:
+            urgency_query = urgency_query.filter(Meeting.start_time >= start_date)
+
+        urgency_counts = urgency_query.group_by(Summary.urgency_level).all()
+
+        return {
+            "sentiment": {r.overall_sentiment: r.count for r in sentiment_counts if r.overall_sentiment},
+            "effectiveness": {r.meeting_effectiveness: r.count for r in effectiveness_counts if r.meeting_effectiveness},
+            "urgency": {r.urgency_level: r.count for r in urgency_counts if r.urgency_level}
+        }
+
+
+@router.get("/api/dashboard/quality-metrics")
+async def get_quality_metrics(days: int = Query(default=7)):
+    """
+    Get meeting quality metrics from Graph API data.
+
+    Returns:
+        - average quality score
+        - quality issue count
+        - modality breakdown
+        - device type breakdown
+    """
+    start_date = get_date_range(days)
+
+    with db.get_session() as session:
+        query = session.query(Meeting)
+
+        if start_date:
+            query = query.filter(Meeting.start_time >= start_date)
+
+        total = query.count()
+
+        # Quality metrics
+        quality_issues = query.filter(Meeting.had_quality_issues == True).count()
+
+        avg_quality = session.query(
+            func.avg(Meeting.network_quality_score)
+        )
+        if start_date:
+            avg_quality = avg_quality.filter(Meeting.start_time >= start_date)
+        avg_score = avg_quality.scalar()
+
+        # Modality breakdown
+        video_count = query.filter(Meeting.primary_modality == 'video').count()
+        audio_count = query.filter(Meeting.primary_modality == 'audio').count()
+        screen_count = query.filter(Meeting.primary_modality == 'screenSharing').count()
+
+        # PSTN calls
+        pstn_count = query.filter(Meeting.is_pstn_call == True).count()
+
+        return {
+            "total_meetings": total,
+            "quality": {
+                "avg_score": round(float(avg_score), 2) if avg_score else None,
+                "issues_count": quality_issues,
+                "issue_rate": round(quality_issues / total * 100, 1) if total > 0 else 0
+            },
+            "modality": {
+                "video": video_count,
+                "audio": audio_count,
+                "screen_sharing": screen_count
+            },
+            "pstn_calls": pstn_count
+        }

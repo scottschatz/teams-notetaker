@@ -204,6 +204,27 @@ class SummaryProcessor(BaseProcessor):
                 if word_count:
                     logger.info(f"Discussion notes word count: {word_count}")
 
+                # Extract classification metadata (enterprise intelligence)
+                classification_data = {}
+                if hasattr(self.summarizer, 'extract_classification_metadata'):
+                    self._log_progress(job, "Extracting classification metadata for enterprise intelligence...")
+                    try:
+                        classification_data = await loop.run_in_executor(
+                            None,
+                            lambda: self.summarizer.extract_classification_metadata(
+                                transcript_segments=transcript.parsed_content,
+                                meeting_metadata=meeting_metadata
+                            )
+                        )
+                        self._log_progress(
+                            job,
+                            f"Classification extracted: type={classification_data.get('meeting_type')}, "
+                            f"sentiment={classification_data.get('overall_sentiment')}"
+                        )
+                    except Exception as ce:
+                        logger.warning(f"Classification extraction failed (non-fatal): {ce}")
+                        classification_data = {}
+
                 if truncated:
                     self._log_progress(
                         job,
@@ -241,7 +262,49 @@ class SummaryProcessor(BaseProcessor):
                     mentions_json=mentions,
                     key_numbers_json=key_numbers,  # FIX: Add key_numbers_json
                     version=version,
-                    custom_instructions=custom_instructions
+                    custom_instructions=custom_instructions,
+                    # Enterprise intelligence metadata (classification extraction)
+                    meeting_type=classification_data.get("meeting_type"),
+                    meeting_category=classification_data.get("meeting_category"),
+                    seniority_level=classification_data.get("seniority_level"),
+                    department_context=classification_data.get("department_context"),
+                    is_onboarding=classification_data.get("is_onboarding", False),
+                    is_coaching=classification_data.get("is_coaching", False),
+                    is_sales_meeting=classification_data.get("is_sales_meeting", False),
+                    is_support_call=classification_data.get("is_support_call", False),
+                    overall_sentiment=classification_data.get("overall_sentiment"),
+                    urgency_level=classification_data.get("urgency_level"),
+                    consensus_level=classification_data.get("consensus_level"),
+                    has_concerns=classification_data.get("has_concerns", False),
+                    meeting_effectiveness=classification_data.get("meeting_effectiveness"),
+                    communication_style=classification_data.get("communication_style"),
+                    energy_level=classification_data.get("energy_level"),
+                    action_item_count=classification_data.get("action_item_count"),
+                    decision_count=classification_data.get("decision_count"),
+                    open_question_count=classification_data.get("open_question_count"),
+                    blocker_count=classification_data.get("blocker_count"),
+                    follow_up_required=classification_data.get("follow_up_required", False),
+                    topics_discussed=classification_data.get("topics_discussed"),
+                    projects_mentioned=classification_data.get("projects_mentioned"),
+                    products_mentioned=classification_data.get("products_mentioned"),
+                    technologies_discussed=classification_data.get("technologies_discussed"),
+                    people_mentioned=classification_data.get("people_mentioned"),
+                    deadlines_mentioned=classification_data.get("deadlines_mentioned"),
+                    financial_mentions=classification_data.get("financial_mentions"),
+                    concerns_json=classification_data.get("concerns_json"),
+                    blockers_json=classification_data.get("blockers_json"),
+                    market_intelligence_json=classification_data.get("market_intelligence_json"),
+                    training_content_json=classification_data.get("training_content_json"),
+                    has_external_participants=classification_data.get("has_external_participants", False),
+                    external_company_names=classification_data.get("external_company_names"),
+                    client_names=classification_data.get("client_names"),
+                    competitor_names=classification_data.get("competitor_names"),
+                    has_financial_discussion=classification_data.get("has_financial_discussion", False),
+                    has_deadline_pressure=classification_data.get("has_deadline_pressure", False),
+                    has_escalation=classification_data.get("has_escalation", False),
+                    has_customer_complaint=classification_data.get("has_customer_complaint", False),
+                    has_technical_discussion=classification_data.get("has_technical_discussion", False),
+                    is_confidential=classification_data.get("is_confidential", False)
                 )
                 session.add(summary)
                 session.flush()

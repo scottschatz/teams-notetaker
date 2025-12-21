@@ -455,6 +455,29 @@ async def get_webhook_status():
                     "error": str(e)
                 })
 
+        # If subscription is down, find when it went down
+        down_since = None
+        down_duration = None
+        if active_count == 0:
+            db = get_db()
+            with db.get_session() as session:
+                # Find most recent 'down' or 'failed' event without a corresponding 'up'
+                from sqlalchemy import desc
+                last_down = session.query(SubscriptionEvent).filter(
+                    SubscriptionEvent.event_type.in_(['down', 'failed'])
+                ).order_by(desc(SubscriptionEvent.timestamp)).first()
+
+                if last_down:
+                    # Check if there's a more recent 'up' or 'created' event
+                    recovery = session.query(SubscriptionEvent).filter(
+                        SubscriptionEvent.event_type.in_(['up', 'created']),
+                        SubscriptionEvent.timestamp > last_down.timestamp
+                    ).first()
+
+                    if not recovery:
+                        down_since = last_down.timestamp.isoformat() + 'Z'
+                        down_duration = int((now - last_down.timestamp).total_seconds())
+
         return {
             "configured": True,
             "webhook_url": webhook_url,
@@ -462,7 +485,9 @@ async def get_webhook_status():
             "active_count": active_count,
             "total_count": len(subscriptions),
             "subscriptions": subscriptions,
-            "checked_at": now.isoformat() + 'Z'  # UTC timestamp
+            "checked_at": now.isoformat() + 'Z',  # UTC timestamp
+            "down_since": down_since,
+            "down_duration_seconds": down_duration
         }
 
     except Exception as e:
@@ -498,7 +523,7 @@ async def force_webhook_resubscribe(request: Request):
         logger.info("Force resubscribe triggered from diagnostics page")
 
         # Delete all existing and create fresh (with 'manual' source)
-        success = manager.recreate_subscription('manual')
+        success = await manager.recreate_subscription('manual')
 
         if success:
             # Get the new subscription info

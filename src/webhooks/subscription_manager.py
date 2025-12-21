@@ -246,7 +246,7 @@ class SubscriptionManager:
             logger.error(f"Failed to get subscriptions: {e}")
             return []
 
-    def create_subscription(self, source: str = 'check') -> Optional[Dict[str, Any]]:
+    async def create_subscription(self, source: str = 'check') -> Optional[Dict[str, Any]]:
         """
         Create a new callRecords subscription.
 
@@ -268,7 +268,15 @@ class SubscriptionManager:
             }
 
             logger.info(f"Creating callRecords subscription (expires: {expiry})")
-            response = self.graph_client.post("/subscriptions", json=subscription)
+            # CRITICAL: Run in executor to avoid blocking the event loop!
+            # The Azure Relay listener needs the event loop to respond to validation requests.
+            # If we block here, Microsoft's validation times out.
+            import asyncio
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,  # Use default thread pool
+                lambda: self.graph_client.post("/subscriptions", json=subscription)
+            )
 
             logger.info(f"✅ Subscription created: {response['id']} (expires: {response['expirationDateTime']})")
             self._log_created_event(source, response['id'])
@@ -329,7 +337,7 @@ class SubscriptionManager:
             self._log_failed_event(source, str(e))
             return None
 
-    def ensure_subscription(self, source: str = 'check') -> bool:
+    async def ensure_subscription(self, source: str = 'check') -> bool:
         """
         Ensure at least one valid callRecords subscription exists.
 
@@ -349,7 +357,7 @@ class SubscriptionManager:
 
         if not subscriptions:
             logger.warning("No callRecords subscriptions found, creating one...")
-            return self.create_subscription(source) is not None
+            return await self.create_subscription(source) is not None
 
         # Check if any subscription is still valid (not expiring soon)
         now = datetime.utcnow()
@@ -376,7 +384,7 @@ class SubscriptionManager:
                         # Renewal failed, try to delete and create new
                         logger.warning("Renewal failed, recreating subscription...")
                         self.delete_subscription(sub["id"])
-                        return self.create_subscription(source) is not None
+                        return await self.create_subscription(source) is not None
 
             except Exception as e:
                 logger.error(f"Error parsing subscription expiry: {e}")
@@ -384,9 +392,9 @@ class SubscriptionManager:
 
         # All subscriptions are invalid, create new one
         logger.warning("No valid subscriptions found, creating new one...")
-        return self.create_subscription(source) is not None
+        return await self.create_subscription(source) is not None
 
-    def recreate_subscription(self, source: str = 'daily_refresh') -> bool:
+    async def recreate_subscription(self, source: str = 'daily_refresh') -> bool:
         """
         Delete all existing subscriptions and create a fresh one.
 
@@ -406,7 +414,7 @@ class SubscriptionManager:
             self.delete_subscription(sub["id"])
 
         # Create fresh subscription
-        return self.create_subscription(source) is not None
+        return await self.create_subscription(source) is not None
 
     def _check_and_send_recovery_alert(self, source: str = 'check', subscription_id: Optional[str] = None):
         """Send recovery alert if we were previously in a down state."""
@@ -643,7 +651,7 @@ class SubscriptionManager:
                     # Only recreate once per day
                     if last_daily_recreate is None or (now - last_daily_recreate).days >= 1:
                         logger.info(f"Daily subscription recreation time ({DAILY_RECREATE_HOUR_UTC}:00 UTC)")
-                        if not self.recreate_subscription('daily_refresh'):
+                        if not await self.recreate_subscription('daily_refresh'):
                             self._send_alert_email(
                                 subject="Daily Webhook Subscription Refresh Failed",
                                 body="""
@@ -656,7 +664,7 @@ class SubscriptionManager:
                         last_daily_recreate = now
                 else:
                     # Regular check - ensure subscription exists and is valid
-                    if not self.ensure_subscription('check'):
+                    if not await self.ensure_subscription('check'):
                         # Try with retries before alerting
                         if not await self._ensure_subscription_with_retry(source='check'):
                             self._send_alert_email(
@@ -705,7 +713,7 @@ class SubscriptionManager:
         had_failure = False
 
         for attempt in range(1, MAX_CREATION_RETRIES + 1):
-            if self.ensure_subscription(source):
+            if await self.ensure_subscription(source):
                 # Check if we should send recovery alert:
                 # - Either we had failures during this startup cycle
                 # - Or there was a persisted down state from before (already loaded into _subscription_down)

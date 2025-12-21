@@ -74,7 +74,7 @@ async def start_webhook_listener(backfill: bool = True):
     sub_manager = SubscriptionManager(config, graph_client)
 
     click.echo("📡 Ensuring webhook subscription is active...")
-    if sub_manager.ensure_subscription():
+    if await sub_manager.ensure_subscription():
         click.echo("✅ Webhook subscription active")
     else:
         click.echo("⚠️  Could not ensure subscription (will retry in background)")

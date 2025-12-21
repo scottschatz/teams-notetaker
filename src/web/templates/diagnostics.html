@@ -172,7 +172,16 @@
             </div>
         </template>
         <template x-if="webhookStatus.subscriptions?.length === 0 && !webhookStatus.error">
-            <div class="text-sm text-gray-500">No active subscriptions. Click "Force Resubscribe" to create one.</div>
+            <div class="text-sm text-gray-500">
+                <span>No active subscriptions. Click "Force Resubscribe" to create one.</span>
+                <template x-if="webhookStatus.down_since">
+                    <div class="mt-2 text-red-600 font-medium">
+                        <span>Down since: </span>
+                        <span x-text="formatDateTime(webhookStatus.down_since)"></span>
+                        <span class="text-red-500 ml-2" x-text="'(' + formatDuration(webhookStatus.down_duration_seconds) + ')'"></span>
+                    </div>
+                </template>
+            </div>
         </template>
 
         <div class="mt-2 text-xs text-gray-400" x-show="webhookStatus.checked_at">
@@ -711,6 +720,19 @@ function diagnosticsData() {
                 timeZone: 'America/New_York',
                 timeZoneName: 'short'
             });
+        },
+
+        formatDuration(seconds) {
+            if (!seconds || seconds < 0) return '';
+            if (seconds < 60) return `${seconds}s`;
+            const minutes = Math.floor(seconds / 60);
+            if (minutes < 60) return `${minutes}m`;
+            const hours = Math.floor(minutes / 60);
+            const remainingMinutes = minutes % 60;
+            if (hours < 24) return `${hours}h ${remainingMinutes}m`;
+            const days = Math.floor(hours / 24);
+            const remainingHours = hours % 24;
+            return `${days}d ${remainingHours}h`;
         },
 
         formatTime(dateString) {

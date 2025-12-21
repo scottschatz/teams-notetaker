@@ -549,7 +549,7 @@ async def _run_consolidated_service(config, db, graph_client, handler):
 
     # Ensure subscription is active
     print("📡 Ensuring webhook subscription is active...")
-    if sub_manager.ensure_subscription():
+    if await sub_manager.ensure_subscription():
         print("   ✅ Webhook subscription active")
     else:
         print("   ⚠️  Could not ensure subscription (will retry)")

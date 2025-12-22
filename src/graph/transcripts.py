@@ -537,7 +537,8 @@ class TranscriptFetcher:
                 return result
 
             for msg in messages.get("value", []):
-                event = msg.get("eventDetail", {})
+                # Handle case where eventDetail is explicitly None (not just missing)
+                event = msg.get("eventDetail") or {}
                 event_type = event.get("@odata.type", "")
 
                 # callTranscriptEventMessageDetail = Transcript IS AVAILABLE NOW

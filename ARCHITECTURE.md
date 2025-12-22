@@ -1,7 +1,7 @@
 # Teams Meeting Transcript Summarizer - System Architecture
 
 **Version**: 3.0 (Webhook-driven with subscriber system)
-**Last Updated**: 2025-12-19
+**Last Updated**: 2025-12-22
 **Status**: Production
 
 ## Recent Updates (December 2025)
@@ -9,8 +9,12 @@
 - **Subscriber Counts**: Meeting attendance and summary counts per user with time filtering
 - **Download Endpoints**: VTT transcript and Markdown summary downloads
 - **Chat Event Detection**: Auto-detection of recording/transcript availability from Teams chat
+- **Chat ID Extraction**: Automated extraction from join URLs for event monitoring
+- **Azure AD Properties**: Participant job title, department, office location, company name
+- **1:1 Call Filtering**: Filter by call type (exclude peerToPeer calls)
 - **Enhanced Emails**: Optional transcript attachment, improved formatting
 - **Inbox Monitoring**: Automated subscribe/unsubscribe email processing
+- **Backfill Scripts**: Tools for chat_id and Azure AD property backfilling
 
 ---
 
@@ -493,15 +497,22 @@ Update Meeting status = 'completed'
 Primary meeting records with metadata and processing status.
 
 **Key Fields**:
-- `meeting_id` (unique): Graph API online meeting ID or join URL
+- `meeting_id` (unique): Graph API online meeting ID or join URL (legacy)
+- `online_meeting_id`: MSp... format, required for transcript API
+- `calendar_event_id`: AAMk... format, from calendar discovery
+- `call_record_id`: From callRecords webhook
 - `subject`, `organizer_email`, `organizer_name`, `organizer_user_id`
 - `start_time`, `end_time`, `duration_minutes`
-- `join_url`, `chat_id`
+- `join_url`: Teams meeting join URL
+- `chat_id`: Teams chat thread ID (19:...@thread.v2 format, extracted from join_url)
 - `recording_sharepoint_url`: SharePoint URL for recording
-- `status`: discovered, queued, processing, completed, failed, skipped
+- `status`: discovered, queued, processing, completed, failed, skipped, transcript_only, no_transcript
 - `has_transcript`, `has_summary`, `has_distribution`: Processing flags
 - `distribution_enabled`: Organizer can disable distribution
 - `last_chat_check`: When we last checked chat for commands
+- `recording_started`: Boolean flag from chat events
+- `transcript_available`: Boolean flag from chat events
+- `call_type`: groupCall, peerToPeer (1:1), scheduled, adHoc, unknown
 
 **Indexes**:
 - `meeting_id` (unique)
@@ -518,6 +529,10 @@ Attendees and invitees for each meeting.
 - `attended`: True if joined call, False if invited but didn't attend
 - `participant_type`: internal, pstn, guest, external
 - `is_pilot_user`: Cached pilot status
+- `job_title`: Azure AD job title
+- `department`: Azure AD department
+- `office_location`: Azure AD office location
+- `company_name`: Azure AD company name
 
 **Purpose**:
 - Distribution recipient list
@@ -1143,11 +1158,27 @@ systemctl --user enable teams-notetaker-web
 **Claude API**:
 - `POST /v1/messages`: Generate summary (Messages API)
 
+### Backfill Scripts
+
+Located in `/scripts/` directory for data enrichment:
+
+**backfill_chat_id.py**:
+- Extracts `chat_id` from `join_url` for existing meetings
+- Enables chat event detection (`recording_started`, `transcript_available`)
+- Parses `19:...@thread.v2` format from Teams URLs
+- Run: `python scripts/backfill_chat_id.py`
+
+**backfill_azure_ad.py**:
+- Fetches Azure AD properties for existing participants
+- Populates: job_title, department, office_location, company_name
+- Deduplicates Graph API calls by email
+- Run: `python scripts/backfill_azure_ad.py`
+
 ### Common Issues & Troubleshooting
 
 **Issue**: Transcripts not found (TranscriptNotFoundError)
 **Cause**: Transcript not yet available (Teams takes 5-60 minutes)
-**Solution**: Retry logic waits up to 1hr 45min
+**Solution**: Retry logic waits up to 1hr 45min, optimized by chat event signals
 
 **Issue**: 403 error accessing organizer's transcripts
 **Cause**: Application permissions don't include organizer's transcripts

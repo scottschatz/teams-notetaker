@@ -408,16 +408,24 @@ journalctl --user -u teams-notetaker-poller -f
 ```
 teams-notetaker/
 ├── src/
-│   ├── ai/              # Claude API integration
+│   ├── ai/              # Claude API integration (+ Gemini support)
+│   ├── auth/            # Web dashboard authentication
+│   ├── cli/             # Click commands
 │   ├── core/            # Database models, config
-│   ├── graph/           # Microsoft Graph API
+│   ├── discovery/       # Meeting discovery (backfill)
+│   ├── graph/           # Microsoft Graph API client
+│   ├── inbox/           # Email inbox monitoring
 │   ├── jobs/            # Job queue and processors
+│   ├── preferences/     # User preference management
+│   ├── utils/           # Utilities
 │   ├── web/             # FastAPI dashboard
-│   └── webhooks/        # Webhook handling
+│   └── webhooks/        # Azure Relay webhook handling
 ├── tests/               # Test files
 ├── migrations/          # Database migrations
 ├── docs/                # Additional documentation
-└── scripts/             # Utility scripts
+├── scripts/             # Backfill and utility scripts
+├── deployment/          # Systemd service files
+└── archive/             # Historical documentation
 ```
 
 ---
@@ -428,4 +436,18 @@ Thank you for contributing! Your efforts help make this project better for every
 
 ---
 
-**Last Updated**: 2025-12-19
+**Last Updated**: 2025-12-22
+
+---
+
+## Recent Features to Be Aware Of
+
+When contributing, be aware of these recent additions:
+
+- **Chat ID Extraction**: Meetings now extract `chat_id` from `join_url` (19:...@thread.v2 format)
+- **Chat Event Detection**: `recording_started` and `transcript_available` flags from Teams chat
+- **Azure AD Properties**: Participants have `job_title`, `department`, `office_location`, `company_name`
+- **1:1 Call Filtering**: `call_type` column filters peerToPeer calls
+- **Email Aliases**: Multiple emails can map to same user via `email_aliases` table
+- **Backfill Scripts**: `/scripts/` contains data enrichment utilities
+- **AI Models**: Haiku 4.5 primary, Gemini available but disabled (quality issues)

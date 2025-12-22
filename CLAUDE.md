@@ -84,23 +84,41 @@ client.get(f"/communications/callRecords/{id}", params={"$expand": "sessions"})
 ```
 
 ### Meeting ID Formats
-- Calendar events: `AAMkADhl...` (calendar event ID)
-- Online meetings: `MSpmMmNi...` (online meeting ID)
+- Calendar events: `AAMkADhl...` (calendar event ID) - stored in `calendar_event_id`
+- Online meetings: `MSpmMmNi...` (online meeting ID) - stored in `online_meeting_id`
+- Call records: Graph API callRecord ID - stored in `call_record_id`
+- Chat ID: `19:...@thread.v2` format - extracted from `join_url`, stored in `chat_id`
 - Transcript processor needs online meeting ID; use `online_meeting_id` in job input for calendar-discovered meetings
 
-### Subscriber System (NOT Pilot Users)
+### Subscriber System (Opt-In via Email)
 - **Users opt-in by sending email** to note.taker@townsquaremedia.com with subject "subscribe"
-- Pilot mode is DEPRECATED - now only filters by subscriber list
-- Distribution only sends to users in `meeting_subscribers` table with `is_subscribed = true`
+- Pilot mode is DEPRECATED - now filters by user preferences
+- Distribution only sends to users who have opted-in via email or admin configuration
 - Inbox monitoring automatically processes subscribe/unsubscribe emails
+- Email aliases supported - multiple emails can map to same user
 
-### Chat Event Signals (Sprint 3)
+### Chat Event Signals & Transcript Detection
 - System monitors Teams chat for recording/transcript availability events
+- Chat ID extraction from `join_url` enables event monitoring: `19:...@thread.v2`
 - Uses chat signals to determine optimal retry timing:
-  - **Recording started** → Transcript likely ready in 5-10 min
-  - **Transcript available** → Fetch immediately
+  - **Recording started** (`recording_started` flag) → Transcript likely ready in 5-10 min
+  - **Transcript available** (`transcript_available` flag) → Fetch immediately
   - **No signals** → Use conservative 15/30/60 min retry schedule
-- Auto-sets `recording_started` and `transcript_available` flags on successful transcript fetch
+- Auto-sets flags on successful transcript fetch
+- **Backfill script**: `/scripts/backfill_chat_id.py` extracts chat_id from existing meetings
+
+### Azure AD User Properties
+- Participant metadata enrichment from Azure AD Graph API
+- Properties fetched: `job_title`, `department`, `office_location`, `company_name`
+- Stored in `meeting_participants` table for each attendee
+- **Backfill script**: `/scripts/backfill_azure_ad.py` populates existing participants
+- Used for enhanced email formatting and future analytics
+
+### 1:1 Call Filtering
+- Meetings can be filtered by call type (`call_type` column)
+- Call types: `groupCall`, `peerToPeer` (1:1), `scheduled`, `adHoc`, `unknown`
+- Web dashboard: `include_one_on_one` parameter excludes peerToPeer calls by default
+- Useful for excluding 1:1 conversations from meeting summaries
 
 ### Recent Features (December 2025)
 
@@ -173,6 +191,26 @@ Located in `~/.config/systemd/user/`:
 - Subscribe/unsubscribe actions
 - Time-filtered statistics
 
+## Backfill Scripts
+
+Located in `/scripts/` directory:
+
+### backfill_chat_id.py
+- Extracts `chat_id` from `join_url` for existing meetings
+- Enables chat event detection for transcript retry logic
+- Parses format: `19:...@thread.v2` from Teams meeting URLs
+- Run: `python scripts/backfill_chat_id.py`
+
+### backfill_azure_ad.py
+- Fetches Azure AD properties for existing participants
+- Populates: `job_title`, `department`, `office_location`, `company_name`
+- Deduplicates API calls by email
+- Run: `python scripts/backfill_azure_ad.py`
+
+### setup-webhook-service.sh
+- Deploys systemd webhook listener service (optional)
+- Alternative to embedding webhook in poller service
+
 ## Development Workflow
 
 ### Making Changes
@@ -230,13 +268,14 @@ WHERE status = 'running' AND heartbeat_at < NOW() - INTERVAL '15 minutes';
 - Mitigation: Exponential backoff, respects Retry-After
 - Improvement: Batch requests where possible
 
-### AI Summarization (Gemini Primary + Haiku Fallback)
-- **Primary**: Gemini 3 Flash (`gemini-2.0-flash`) - 48% cheaper
-- **Fallback**: Claude Haiku 4.5 - used when Gemini fails
-- Cost: ~$0.0025 per meeting (Gemini), ~$0.004 (Haiku)
-- Approach tracked in `summaries.approach` column: `gemini_single_call` or `haiku_fallback`
-- Prompt files: `src/ai/prompts/gemini_prompt.py` (primary), `single_call_prompt.py` (fallback)
-- Requires `GOOGLE_API_KEY` env var; if missing, uses Haiku only
+### AI Summarization (Haiku Primary, Gemini Available)
+- **Current**: Claude Haiku 4.5 (`claude-haiku-4-5`) - PRIMARY (Gemini disabled due to quality issues)
+- **Available**: Gemini 3 Flash (`gemini-2.0-flash`) - can be enabled by setting `USE_GEMINI_PRIMARY = True` in code
+- Cost: ~$0.004 per meeting (Haiku)
+- **Gemini temporarily disabled**: Duration extraction issues ("None minutes")
+- Approach tracked in `summaries.approach` column: `haiku_single_call` or `gemini_single_call`
+- Prompt files: `src/ai/prompts/single_call_prompt.py` (Haiku), `gemini_prompt.py` (Gemini)
+- `GOOGLE_API_KEY` env var optional; if missing, uses Haiku only
 
 ### Database Connection Pool
 - Pool: 10 base + 20 overflow
@@ -358,5 +397,5 @@ ORDER BY start_time DESC LIMIT 10;
 
 ---
 
-**Last Updated**: 2025-12-19
+**Last Updated**: 2025-12-22
 **Status**: Production Ready

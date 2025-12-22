@@ -56,11 +56,18 @@ See [PERMISSIONS_SETUP.md](PERMISSIONS_SETUP.md) for detailed instructions.
 
 See [AZURE_RELAY_SETUP.md](AZURE_RELAY_SETUP.md) for setup instructions.
 
-### 4. Claude API Key
+### 4. Claude API Key (Required)
 
 - Sign up at https://console.anthropic.com/
 - Create an API key
-- Ensure sufficient credits for usage
+- Ensure sufficient credits for usage (~$0.004 per meeting)
+
+### 5. Google API Key (Optional)
+
+- Sign up at https://console.cloud.google.com/
+- Enable Generative AI API
+- Create an API key
+- Note: Gemini is currently disabled due to quality issues, but can be enabled
 
 ---
 
@@ -142,8 +149,11 @@ GRAPH_CLIENT_ID=your-app-id
 GRAPH_CLIENT_SECRET=your-secret
 GRAPH_TENANT_ID=your-tenant-id
 
-# Claude API
+# Claude API (required)
 ANTHROPIC_API_KEY=sk-ant-xxxxx
+
+# Google API (optional, for Gemini - currently disabled)
+GOOGLE_API_KEY=your-google-api-key
 
 # Database
 DATABASE_URL=postgresql://your_username:your_password@localhost/teams_notetaker
@@ -223,12 +233,15 @@ python -m src.main db init
 ```
 
 This creates all necessary tables:
-- `meetings`, `meeting_participants`
+- `meetings`, `meeting_participants` (with Azure AD properties)
 - `transcripts`, `summaries`, `distributions`
 - `job_queue`
-- `meeting_subscribers`, `email_aliases`
-- `processed_call_records`, `processed_inbox_items`
-- Supporting tables (pilot_users, app_config, etc.)
+- `user_preferences`, `meeting_preferences`, `email_aliases`
+- `processed_call_records`, `processed_inbox_items`, `processed_chat_messages`
+- Supporting tables (pilot_users, app_config, backfill_runs, etc.)
+
+Note: `chat_id`, `recording_started`, `transcript_available`, `call_type` columns added to meetings
+Note: `job_title`, `department`, `office_location`, `company_name` columns added to meeting_participants
 
 ### 2. Verify Database
 
@@ -506,6 +519,32 @@ python -m src.main test-email your.email@company.com
    - **Meetings** - View processed meetings
    - **Diagnostics** - System health and controls
    - **Admin > Users** - Subscriber management
+
+---
+
+## Backfill Scripts
+
+After initial deployment, run these scripts to enrich existing data:
+
+### Backfill Chat IDs
+
+```bash
+# Extract chat_id from join_url for existing meetings
+source venv/bin/activate
+python scripts/backfill_chat_id.py
+```
+
+This enables chat event detection for transcript retry optimization.
+
+### Backfill Azure AD Properties
+
+```bash
+# Fetch Azure AD properties for existing participants
+source venv/bin/activate
+python scripts/backfill_azure_ad.py
+```
+
+This populates job_title, department, office_location, company_name for participants.
 
 ---
 
@@ -877,6 +916,18 @@ For issues or questions:
 
 ---
 
-**Last Updated**: 2025-12-19
+**Last Updated**: 2025-12-22
 **Version**: 3.0
 **Status**: Production Ready
+
+---
+
+## New Features in Version 3.0
+
+- Chat ID extraction from meeting URLs
+- Chat event detection (recording_started, transcript_available)
+- Azure AD user properties (job_title, department, location)
+- 1:1 call filtering (call_type)
+- Email alias support
+- Enhanced subscriber system
+- Backfill scripts for data enrichment

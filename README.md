@@ -40,7 +40,8 @@ Production-ready AI-powered meeting summary system for Microsoft Teams. Automati
 - **Key Numbers**: All financial metrics, percentages, and quantities
 - **Executive Summary**: Variable length (50-125 words) based on meeting complexity
 - **Discussion Notes**: Thematic narrative with organized sub-sections
-- **Cost-Optimized**: Uses Claude Haiku 4.5 (~$0.02-0.04 per meeting)
+- **Cost-Optimized**: Uses Claude Haiku 4.5 (~$0.004 per meeting)
+- **Gemini Available**: Google Gemini 3 Flash available as alternative (currently disabled due to quality issues)
 
 ### Professional Email Distribution
 - **Profile Photos**: Circular 48x48 photos for all attendees
@@ -59,18 +60,22 @@ Production-ready AI-powered meeting summary system for Microsoft Teams. Automati
 - **Email Aliases**: Supports multiple email addresses per user
 
 ### Chat Event Intelligence
+- **Chat ID Extraction**: Automatically extracts chat ID from meeting join URLs (`19:...@thread.v2`)
 - **Recording Signals**: Monitors Teams chat for recording/transcript events
-- **Adaptive Retries**: Optimizes retry timing based on availability signals
+- **Adaptive Retries**: Optimizes retry timing based on availability signals (`recording_started`, `transcript_available` flags)
 - **Immediate Processing**: Transcript fetched as soon as available
 - **Conservative Fallback**: 15/30/60-minute retry schedule if no signals
+- **Backfill Support**: Script available to extract chat IDs from existing meetings
 
 ### Web Dashboard (FastAPI + Alpine.js + Tailwind)
 - **Meetings Browser**: Sortable table with column filters and pagination
 - **Live Filtering**: Filter by status, source, organizer, model, recording/transcript availability
+- **1:1 Call Filtering**: Option to include/exclude peerToPeer (1:1) calls
 - **Download Options**: VTT transcripts and Markdown summaries
 - **Diagnostics**: Force backfill, inbox monitoring, test emails
 - **User Management**: Subscriber counts, meeting statistics, time-period filtering
 - **Admin Tools**: Email alias management, manual processing controls
+- **Azure AD Properties**: View participant job titles, departments, locations
 
 ### Production Robustness
 - **Auto-Start**: systemd services start with WSL boot
@@ -159,11 +164,26 @@ Job Worker (async, 5 concurrent)
 - Improved formatting and layout
 - Better mobile responsiveness
 
-#### Chat Event Detection
+#### Chat Event Detection & ID Extraction
+- Extracts chat ID from join URLs (`19:...@thread.v2` format)
 - Monitors Teams chat for recording/transcript events
 - Auto-sets `recording_started` and `transcript_available` flags
 - Optimizes retry timing based on signals
 - Reduces unnecessary API calls
+- Backfill script: `/scripts/backfill_chat_id.py`
+
+#### Azure AD User Properties
+- Enriches participant data with Azure AD properties
+- Fetches: job title, department, office location, company name
+- Stored in `meeting_participants` table
+- Used for enhanced email formatting
+- Backfill script: `/scripts/backfill_azure_ad.py`
+
+#### 1:1 Call Filtering
+- Filter meetings by call type (groupCall, peerToPeer, etc.)
+- Web dashboard excludes 1:1 calls by default
+- `include_one_on_one` query parameter for control
+- Stored in `call_type` column
 
 ---
 
@@ -181,7 +201,8 @@ Job Worker (async, 5 concurrent)
   - `Mail.Send`
   - `Mail.Read` (for inbox monitoring)
   - `User.Read.All`
-- **Claude API Key** from Anthropic
+- **Claude API Key** from Anthropic (required)
+- **Google API Key** (optional, for Gemini - currently disabled)
 - **Azure Relay** (Hybrid Connection for webhooks)
 
 ### Quick Start
@@ -237,8 +258,11 @@ GRAPH_CLIENT_ID=your-app-id
 GRAPH_CLIENT_SECRET=your-secret
 GRAPH_TENANT_ID=your-tenant-id
 
-# Claude API
+# Claude API (required)
 ANTHROPIC_API_KEY=your-api-key
+
+# Google API (optional, for Gemini - currently disabled)
+GOOGLE_API_KEY=your-google-api-key
 
 # Database
 DATABASE_URL=postgresql://user:password@localhost/teams_notetaker
@@ -709,7 +733,7 @@ ORDER BY start_time DESC LIMIT 10;
 - **Subscribers**: Growing user base
 - **Job Success Rate**: >90%
 - **Average Processing Time**: ~60 seconds per meeting
-- **API Cost**: ~$0.02-0.04 per meeting (Haiku)
+- **API Cost**: ~$0.004 per meeting (Claude Haiku 4.5)
 - **Token Usage**: ~34K input, ~1.3K output per meeting
 
 ### Scalability
@@ -794,7 +818,7 @@ Please include:
 ---
 
 **Status**: Production Ready
-**Last Updated**: 2025-12-19
+**Last Updated**: 2025-12-22
 **Version**: 3.0
 
 Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>

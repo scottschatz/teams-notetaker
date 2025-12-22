@@ -639,40 +639,40 @@ async def get_dashboard_status():
 
         failed_today = session.query(JobQueue).filter(
             JobQueue.status == 'failed',
-            JobQueue.updated_at >= datetime.utcnow() - timedelta(days=1)
+            JobQueue.created_at >= datetime.utcnow() - timedelta(days=1)
         ).count()
 
         # Get last processed meeting
         last_meeting = session.query(Meeting).filter(
             Meeting.status == 'completed'
-        ).order_by(Meeting.updated_at.desc()).first()
+        ).order_by(Meeting.end_time.desc()).first()
 
         last_meeting_time = None
         last_meeting_subject = None
         if last_meeting:
-            last_meeting_time = last_meeting.updated_at.isoformat() + 'Z' if last_meeting.updated_at else None
+            last_meeting_time = last_meeting.end_time.isoformat() + 'Z' if last_meeting.end_time else None
             last_meeting_subject = last_meeting.subject
 
-        # Get webhook subscription status
-        active_subscription = session.query(SubscriptionEvent).filter(
-            SubscriptionEvent.event_type.in_(['created', 'renewed', 'recovered'])
+        # Get webhook subscription status from SubscriptionEvent
+        # Look for the most recent "up" event (created, renewed, up) vs "down" event
+        from ...core.database import SubscriptionEvent
+
+        last_up = session.query(SubscriptionEvent).filter(
+            SubscriptionEvent.event_type.in_(['created', 'renewed', 'up', 'recovered'])
         ).order_by(SubscriptionEvent.timestamp.desc()).first()
 
-        last_down_event = session.query(SubscriptionEvent).filter(
+        last_down = session.query(SubscriptionEvent).filter(
             SubscriptionEvent.event_type.in_(['down', 'failed', 'expired'])
         ).order_by(SubscriptionEvent.timestamp.desc()).first()
 
+        # Webhook is active if last up event is more recent than last down event
         webhook_active = False
         webhook_expires = None
-        if active_subscription:
-            # Check if there's a more recent down event
-            if last_down_event and last_down_event.timestamp > active_subscription.timestamp:
-                webhook_active = False
-            else:
+        if last_up:
+            if last_down is None or last_up.timestamp > last_down.timestamp:
                 webhook_active = True
-                # Try to get expiration from subscription details
-                if active_subscription.details and 'expirationDateTime' in active_subscription.details:
-                    webhook_expires = active_subscription.details['expirationDateTime']
+                # Note: expiration info is not stored in SubscriptionEvent, would need
+                # to query Graph API or cache it separately if needed
 
         return {
             "webhook": {

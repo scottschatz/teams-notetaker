@@ -174,13 +174,28 @@
         <h2 class="text-xl font-semibold mb-4">Participants</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
             <template x-for="p in meeting.participants" :key="p.email">
-                <div class="flex items-center p-2 bg-gray-50 rounded">
-                    <div class="flex-1">
-                        <p class="font-medium text-sm" x-text="p.display_name || p.email"></p>
-                        <p class="text-xs text-gray-500" x-text="p.email"></p>
+                <div class="flex items-start p-3 bg-gray-50 rounded" :class="{ 'opacity-60': !p.attended }">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2">
+                            <p class="font-medium text-sm truncate" x-text="p.display_name || p.email"></p>
+                            <span x-show="!p.attended" class="px-1.5 py-0.5 bg-gray-200 text-gray-600 text-xs rounded">Invited</span>
+                        </div>
+                        <p class="text-xs text-gray-500 truncate" x-text="p.email"></p>
+                        <!-- Azure AD info -->
+                        <div x-show="p.job_title || p.department" class="mt-1">
+                            <p class="text-xs text-gray-600">
+                                <span x-show="p.job_title" x-text="p.job_title"></span>
+                                <span x-show="p.job_title && p.department"> · </span>
+                                <span x-show="p.department" class="text-blue-600" x-text="p.department"></span>
+                            </p>
+                        </div>
+                        <p x-show="p.office_location" class="text-xs text-gray-400" x-text="'📍 ' + p.office_location"></p>
                     </div>
-                    <span x-show="p.is_pilot_user" class="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded-full">Opted In</span>
-                    <span x-show="p.role === 'organizer'" class="px-2 py-0.5 bg-purple-100 text-purple-800 text-xs rounded-full ml-1">Organizer</span>
+                    <div class="flex flex-col gap-1 ml-2">
+                        <span x-show="p.is_pilot_user" class="px-2 py-0.5 bg-blue-100 text-blue-800 text-xs rounded-full whitespace-nowrap">Opted In</span>
+                        <span x-show="p.role === 'organizer'" class="px-2 py-0.5 bg-purple-100 text-purple-800 text-xs rounded-full whitespace-nowrap">Organizer</span>
+                        <span x-show="p.participant_type === 'external' || p.participant_type === 'guest'" class="px-2 py-0.5 bg-orange-100 text-orange-800 text-xs rounded-full whitespace-nowrap">External</span>
+                    </div>
                 </div>
             </template>
         </div>

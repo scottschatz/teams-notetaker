@@ -253,7 +253,13 @@ async def get_meeting(
                     "email": p.email,
                     "display_name": p.display_name,
                     "role": p.role,
-                    "is_pilot_user": p.is_pilot_user
+                    "is_pilot_user": p.is_pilot_user,
+                    "job_title": p.job_title,
+                    "department": p.department,
+                    "office_location": p.office_location,
+                    "company_name": p.company_name,
+                    "participant_type": p.participant_type,
+                    "attended": p.attended
                 }
                 for p in participants
             ]

@@ -234,6 +234,12 @@ class MeetingParticipant(Base):
     attended = Column(Boolean, default=True, index=True)  # True=joined call, False=invited but didn't join
     participant_type = Column(String(20))  # 'internal', 'pstn', 'guest', 'external'
 
+    # Azure AD user properties (fetched from Graph API)
+    job_title = Column(String(255))  # User's job title
+    department = Column(String(255))  # User's department (e.g., "Sales", "Engineering")
+    office_location = Column(String(255))  # Office location (e.g., "Building A", "Remote")
+    company_name = Column(String(255))  # Company name (useful for external participants)
+
     # Relationships
     meeting = relationship("Meeting", back_populates="participants")
 

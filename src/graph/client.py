@@ -471,7 +471,7 @@ class GraphAPIClient:
         """
         try:
             endpoint = f"/users/{user_id}"
-            params = {"$select": "displayName,mail,userPrincipalName,jobTitle,department,officeLocation"}
+            params = {"$select": "displayName,mail,userPrincipalName,jobTitle,department,officeLocation,companyName"}
 
             user_data = self.get(endpoint, params=params)
             logger.debug(f"Fetched details for user {user_id}: {user_data.get('displayName')}")
@@ -497,6 +497,9 @@ class GraphAPIClient:
             "displayName": display_name,
             "email": user_email,
             "jobTitle": None,
+            "department": None,
+            "officeLocation": None,
+            "companyName": None,
             "photo_base64": None
         }
 
@@ -521,6 +524,8 @@ class GraphAPIClient:
                 if details:
                     enriched["jobTitle"] = details.get("jobTitle")
                     enriched["department"] = details.get("department")
+                    enriched["officeLocation"] = details.get("officeLocation")
+                    enriched["companyName"] = details.get("companyName")
 
                     # Get profile photo (48x48 thumbnail)
                     photo = self.get_user_photo(attempt_email, size="48x48")

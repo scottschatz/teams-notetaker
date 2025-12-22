@@ -562,6 +562,12 @@ class CallRecordsWebhookHandler:
                         participant_type = p.get("type", "internal")
                         email = p.get("email", "")
 
+                        # Azure AD properties (fetched for internal users with email)
+                        job_title = None
+                        department = None
+                        office_location = None
+                        company_name = None
+
                         # For PSTN participants, include phone number in display name
                         if participant_type == "pstn" and p.get("phone"):
                             phone = p["phone"]
@@ -581,13 +587,29 @@ class CallRecordsWebhookHandler:
                             logger.debug(f"Skipping participant without email: {display_name}")
                             continue
 
+                        # Fetch Azure AD properties for internal users with email
+                        if email and participant_type == "internal":
+                            try:
+                                user_details = self.graph_client.get_user_details(email)
+                                if user_details:
+                                    job_title = user_details.get("jobTitle")
+                                    department = user_details.get("department")
+                                    office_location = user_details.get("officeLocation")
+                                    company_name = user_details.get("companyName")
+                            except Exception as e:
+                                logger.debug(f"Could not fetch Azure AD details for {email}: {e}")
+
                         participant = MeetingParticipant(
                             meeting_id=meeting_id,
                             email=email,
                             display_name=display_name,
                             role=p.get("role", "attendee"),
                             attended=True,
-                            participant_type=participant_type
+                            participant_type=participant_type,
+                            job_title=job_title,
+                            department=department,
+                            office_location=office_location,
+                            company_name=company_name
                         )
                         session.add(participant)
                         participants_added += 1
@@ -1101,7 +1123,7 @@ class CallRecordsWebhookHandler:
             logger.warning(f"Could not fetch meeting invitees: {e}")
             return []
 
-    async def backfill_recent_meetings(self, lookback_hours: int = 48) -> Dict[str, Any]:
+    async def backfill_recent_meetings(self, lookback_hours: int = 48, source: str = "automatic", triggered_by: str = "system") -> Dict[str, Any]:
         """
         Enhanced backfill with retry logic and progress tracking.
 
@@ -1110,12 +1132,16 @@ class CallRecordsWebhookHandler:
 
         Args:
             lookback_hours: Maximum hours to look back (fallback if no previous webhook found)
+            source: Source of backfill trigger ('automatic', 'manual', 'force')
+            triggered_by: Who/what triggered the backfill (user email or 'system')
 
         Returns:
             Dict with statistics:
             - call_records_found, meetings_created, transcripts_found,
             - transcripts_pending, skipped_no_optin, jobs_created, errors
         """
+        from ..core.database import BackfillRun
+
         stats = {
             "call_records_found": 0,
             "meetings_created": 0,
@@ -1125,6 +1151,26 @@ class CallRecordsWebhookHandler:
             "jobs_created": 0,
             "errors": 0
         }
+
+        # Create BackfillRun record for tracking
+        backfill_run = None
+        cutoff = None
+
+        try:
+            with self.db.get_session() as session:
+                backfill_run = BackfillRun(
+                    lookback_hours=lookback_hours,
+                    source=source,
+                    triggered_by=triggered_by,
+                    status="running"
+                )
+                session.add(backfill_run)
+                session.commit()
+                backfill_run_id = backfill_run.id
+
+        except Exception as e:
+            logger.warning(f"Could not create BackfillRun record: {e}")
+            backfill_run_id = None
 
         try:
             # Calculate cutoff time - use the LATER of:
@@ -1274,8 +1320,40 @@ class CallRecordsWebhookHandler:
                 f"{stats['errors']} errors"
             )
 
+            # Update BackfillRun with success stats
+            if backfill_run_id:
+                try:
+                    with self.db.get_session() as session:
+                        run = session.query(BackfillRun).filter_by(id=backfill_run_id).first()
+                        if run:
+                            run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                            run.status = "completed"
+                            run.cutoff_time = cutoff.replace(tzinfo=None) if cutoff else None
+                            run.call_records_found = stats["call_records_found"]
+                            run.meetings_created = stats["meetings_created"]
+                            run.transcripts_found = stats["transcripts_found"]
+                            run.transcripts_pending = stats["transcripts_pending"]
+                            run.skipped_no_optin = stats["skipped_no_optin"]
+                            run.jobs_created = stats["jobs_created"]
+                            run.errors = stats["errors"]
+                            session.commit()
+                except Exception as e:
+                    logger.warning(f"Could not update BackfillRun record: {e}")
+
             return stats
 
         except Exception as e:
             logger.error(f"Backfill failed: {e}", exc_info=True)
+            # Update BackfillRun with failure status
+            if backfill_run_id:
+                try:
+                    with self.db.get_session() as session:
+                        run = session.query(BackfillRun).filter_by(id=backfill_run_id).first()
+                        if run:
+                            run.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                            run.status = "failed"
+                            run.errors = stats.get("errors", 0) + 1
+                            session.commit()
+                except Exception:
+                    pass
             raise

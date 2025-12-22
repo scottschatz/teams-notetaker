@@ -107,18 +107,6 @@ class AzureRelayWebhookListener:
         self.callback = callback
         self.running = True
 
-        # Generate SAS token (Microsoft example format)
-        # Resource URI does NOT include /$hc/ path
-        resource_uri = f"http://{self.relay_namespace}/{self.hybrid_connection_name}"
-        sas_token = self._generate_sas_token(resource_uri)
-
-        # Build WebSocket URL (Microsoft example format)
-        # Requires: sb-hc-action=listen and sb-hc-id parameters
-        from urllib.parse import quote
-        ws_url = (f"wss://{self.relay_namespace}/$hc/{self.hybrid_connection_name}"
-                 f"?sb-hc-action=listen&sb-hc-id=listener-{id(self)}"
-                 f"&sb-hc-token={quote(sas_token)}")
-
         logger.info(f"Starting Azure Relay listener on wss://{self.relay_namespace}/$hc/{self.hybrid_connection_name}")
 
         # Create reusable session for fast rendezvous connections
@@ -131,6 +119,17 @@ class AzureRelayWebhookListener:
 
         try:
             while self.running:
+                # Generate fresh SAS token on each connection attempt (tokens expire after 1 hour)
+                # Resource URI does NOT include /$hc/ path
+                resource_uri = f"http://{self.relay_namespace}/{self.hybrid_connection_name}"
+                sas_token = self._generate_sas_token(resource_uri)
+
+                # Build WebSocket URL (Microsoft example format)
+                from urllib.parse import quote
+                ws_url = (f"wss://{self.relay_namespace}/$hc/{self.hybrid_connection_name}"
+                         f"?sb-hc-action=listen&sb-hc-id=listener-{id(self)}"
+                         f"&sb-hc-token={quote(sas_token)}")
+
                 try:
                     async with self._session.ws_connect(ws_url) as ws:
                         logger.info("✅ Connected to Azure Relay")

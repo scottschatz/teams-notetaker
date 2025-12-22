@@ -861,6 +861,49 @@ class EmailSender:
 
 """
 
+        # AI Research Assistant Section (v2.2: NEW - questions AI can help answer)
+        ai_questions = enhanced_summary_data.get("ai_answerable_questions", [])
+        if ai_questions:
+            html += """        <div style="background: #f3e5f5; padding: 15px; margin: 25px 0; border-radius: 4px; border-left: 4px solid #9c27b0;">
+            <h3 style="margin-top: 0; color: #7b1fa2;">🤖 AI Research Assistant</h3>
+            <p style="font-size: 12px; color: #666; margin-top: -5px; margin-bottom: 15px;">Questions from this meeting that AI can help answer</p>
+"""
+            for i, q in enumerate(ai_questions[:5]):  # Limit to 5 questions
+                question = q.get("question", "")
+                asked_by = q.get("asked_by", "")
+                answer = q.get("answer", "")
+                follow_ups = q.get("follow_up_prompts", [])
+
+                # Apply blue+bold styling to names
+                question = self._make_names_blue(question)
+                answer = self._make_names_blue(answer)
+                if asked_by:
+                    asked_by = self._make_names_blue(f"**{asked_by}**")
+
+                html += f"""            <div style="background: white; padding: 12px; margin-bottom: 12px; border-radius: 4px; border: 1px solid #e1bee7;">
+                <p style="margin: 0 0 8px 0; font-weight: 600; color: #4a148c;">❓ {question}</p>
+"""
+                if asked_by:
+                    html += f"""                <p style="margin: 0 0 8px 0; font-size: 12px; color: #666;">Asked by: {asked_by}</p>
+"""
+                if answer:
+                    html += f"""                <p style="margin: 0 0 8px 0; color: #333;"><strong>Answer:</strong> {answer}</p>
+"""
+                if follow_ups:
+                    html += """                <p style="margin: 0 0 4px 0; font-size: 12px; color: #7b1fa2;"><strong>Dig deeper:</strong></p>
+                <ul style="margin: 0; padding-left: 20px; font-size: 12px; color: #666;">
+"""
+                    for prompt in follow_ups[:2]:  # Limit to 2 follow-up prompts
+                        html += f"""                    <li style="margin-bottom: 4px;">{prompt}</li>
+"""
+                    html += """                </ul>
+"""
+                html += """            </div>
+"""
+            html += """        </div>
+
+"""
+
         # Key Moments Section (ordered by importance, timestamp at end)
         if highlights:
             # Limit to 8 highlights (already ordered by importance from AI)

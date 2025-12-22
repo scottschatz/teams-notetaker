@@ -179,6 +179,7 @@ class SummaryProcessor(BaseProcessor):
                 highlights = enhanced_result.highlights
                 mentions = enhanced_result.mentions
                 key_numbers = enhanced_result.key_numbers  # FIX: Extract key_numbers
+                ai_answerable_questions = enhanced_result.ai_answerable_questions
                 metadata = enhanced_result.metadata
 
                 input_tokens = metadata.get("input_tokens", 0)
@@ -261,6 +262,7 @@ class SummaryProcessor(BaseProcessor):
                     highlights_json=highlights,
                     mentions_json=mentions,
                     key_numbers_json=key_numbers,  # FIX: Add key_numbers_json
+                    ai_answerable_questions_json=ai_answerable_questions,
                     version=version,
                     custom_instructions=custom_instructions,
                     # Enterprise intelligence metadata (classification extraction)

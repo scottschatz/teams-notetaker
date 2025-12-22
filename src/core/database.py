@@ -369,6 +369,7 @@ class Summary(Base):
     highlights_json = Column(JSONB)  # List of {title, timestamp, why_important, type}
     mentions_json = Column(JSONB)  # List of {person, mentioned_by, context, timestamp, type}
     key_numbers_json = Column(JSONB)  # List of {value, unit, context, magnitude} - financial/quantitative metrics
+    ai_answerable_questions_json = Column(JSONB)  # List of {question, asked_by, context, answer, follow_up_prompts} - questions AI can help answer
 
     # Versioning (NEW - for re-summarization)
     version = Column(Integer, default=1, nullable=False, index=True)

@@ -37,8 +37,7 @@ The following are the correct spellings of participant names from the meeting in
   "highlights": [...],         // Array of key moment objects (5-8 max)
   "key_numbers": [...],        // Array of quantitative metric objects (max 20)
   "executive_summary": "...",  // String (50-125 words, varies by meeting complexity)
-  "discussion_notes": "...",   // String (appropriate length based on meeting complexity)
-  "ai_answerable_questions": [...] // Array of questions AI can help answer (0-5 max)
+  "discussion_notes": "..."    // String (appropriate length based on meeting complexity)
 }}
 
 ---
@@ -237,66 +236,6 @@ The meeting addressed several staffing decisions. **Scott** approved immediate t
 **Market Opportunities and Financial Analysis**
 
 **Eric Williams** and the team evaluated a proposed $600K Danbury-Shreveport market swap with Cumulus. While the strategic benefits were clear, **Bill Jones** raised concerns about Danbury cash flow implications and emphasized the need for careful CapEx analysis before proceeding. **Eric** also highlighted that trade revenue reached $3.8M this year versus the typical $1M baseline, demonstrating strong performance."
-
----
-
-**AI-ANSWERABLE QUESTIONS EXTRACTION:**
-
-Identify questions raised during the meeting that AI can help answer with general knowledge. For each provide:
-- **question**: The question as stated or implied (clear, specific)
-- **asked_by**: Who raised it (full name)
-- **context**: Why this came up in the meeting (1 sentence)
-- **answer**: Your helpful answer (2-4 sentences with specific details, tools, or approaches)
-- **follow_up_prompts**: Array of 1-2 suggested prompts for deeper research
-
-**INCLUDE questions about (any domain):**
-- External tools, software, or services ("Does [tool] have a feature for X?")
-- Industry best practices ("What's the standard approach for X?")
-- General knowledge ("How does X work?", "What is X?")
-- Regulations, compliance, standards ("What are the requirements for X?")
-- Market rates, benchmarks ("What's typical pricing for X?")
-- Technology or methodology comparisons ("Should we use X or Y?")
-
-**EXCLUDE questions about (filter these out):**
-- Internal company data ("How many X do we have?", "What's our budget?")
-- Specific people's actions or status ("Is [person] doing X?", "Did [person] finish?")
-- Company-specific decisions ("Did we approve X?", "What did leadership decide?")
-- Internal processes or logistics ("Where is our meeting room?")
-- Rhetorical or social questions ("How are you?", "Right?")
-
-Guidelines:
-- Maximum 5 questions (only the most valuable/answerable)
-- ONLY include questions where your answer would genuinely help the team
-- Provide SPECIFIC, ACTIONABLE answers (tool names, approaches, resources)
-- If you're not confident in an answer, still provide it with appropriate caveats
-- Follow-up prompts should help them dig deeper on the topic
-- **CRITICAL: Bold all participant names using **Name** markdown syntax**
-
-Example ai_answerable_questions entry:
-{{
-  "question": "Does GitHub have a feature to create a showcase or library page for our repositories?",
-  "asked_by": "Scott Schatz",
-  "context": "Team wants to create a centralized catalog of internal tools for stakeholder visibility",
-  "answer": "GitHub doesn't have a built-in showcase feature, but there are excellent options: (1) **Backstage.io** - Spotify's open-source developer portal designed exactly for this, with service catalogs, documentation, and discoverability; (2) **GitHub Pages** with the GitHub API to build a custom portal; (3) **GitHub Organization README** for a simpler profile page. Backstage.io is the most comprehensive solution for internal tool discovery.",
-  "follow_up_prompts": [
-    "How do I set up Backstage.io for a small team with 50 repositories?",
-    "Show me examples of GitHub Pages sites that showcase internal tools"
-  ]
-}}
-
-Example (finance domain):
-{{
-  "question": "How should we account for software subscription costs under GAAP?",
-  "asked_by": "Bill Jones",
-  "context": "Discussing whether to capitalize or expense new SaaS platform costs",
-  "answer": "Under ASC 350-40, most SaaS costs are expensed as incurred since you don't control the software. However, implementation costs can be capitalized if they meet criteria (application development stage, probable future benefit). Hosting costs are always expensed. The key distinction is whether you have the right to take possession of the software or it's purely a service arrangement.",
-  "follow_up_prompts": [
-    "What implementation costs can be capitalized for SaaS under ASC 350-40?",
-    "How do I document SaaS capitalization decisions for auditors?"
-  ]
-}}
-
-If no AI-answerable questions are identified, use: "ai_answerable_questions": []
 
 ---
 

@@ -353,6 +353,7 @@ class EnhancedSummary:
         highlights: List of key moments
         mentions: List of person mentions
         key_numbers: List of extracted quantitative metrics
+        ai_answerable_questions: List of questions AI can help answer with responses
         metadata: Summary generation metadata
     """
     overall_summary: str  # Markdown narrative
@@ -362,6 +363,7 @@ class EnhancedSummary:
     highlights: List[Dict[str, Any]]
     mentions: List[Dict[str, Any]]
     key_numbers: List[Dict[str, Any]]
+    ai_answerable_questions: List[Dict[str, Any]]
     metadata: SummaryMetadata
 
     def to_dict(self) -> Dict[str, Any]:
@@ -374,6 +376,7 @@ class EnhancedSummary:
             "highlights": self.highlights,
             "mentions": self.mentions,
             "key_numbers": self.key_numbers,
+            "ai_answerable_questions": self.ai_answerable_questions,
             "metadata": asdict(self.metadata)
         }
 
@@ -584,6 +587,7 @@ class EnhancedMeetingSummarizer:
                 highlights=highlights,
                 mentions=mentions,
                 key_numbers=key_numbers,
+                ai_answerable_questions=[],  # Not extracted in multi-stage
                 metadata=metadata
             )
 
@@ -1022,6 +1026,7 @@ class SingleCallSummarizer:
         decisions = data.get("decisions", [])
         highlights = data.get("highlights", [])
         key_numbers = data.get("key_numbers", [])
+        ai_answerable_questions = data.get("ai_answerable_questions", [])
         executive_summary = data.get("executive_summary", "")
         discussion_notes = data.get("discussion_notes", "")
 
@@ -1054,6 +1059,7 @@ class SingleCallSummarizer:
             highlights=highlights,
             mentions=[],  # Not extracted in single-call
             key_numbers=key_numbers,
+            ai_answerable_questions=ai_answerable_questions,
             overall_summary=overall_summary,
             metadata=metadata
         )

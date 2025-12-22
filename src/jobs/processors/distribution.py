@@ -226,7 +226,8 @@ class DistributionProcessor(BaseProcessor):
                     "topics": summary.topics_json or [],
                     "highlights": summary.highlights_json or [],
                     "mentions": summary.mentions_json or [],
-                    "key_numbers": summary.key_numbers_json or []  # NEW: Financial/quantitative metrics
+                    "key_numbers": summary.key_numbers_json or [],  # Financial/quantitative metrics
+                    "ai_answerable_questions": summary.ai_answerable_questions_json or []  # AI research assistant
                 }
             else:
                 enhanced_summary_data = {
@@ -235,7 +236,8 @@ class DistributionProcessor(BaseProcessor):
                     "topics": [],
                     "highlights": [],
                     "mentions": [],
-                    "key_numbers": []
+                    "key_numbers": [],
+                    "ai_answerable_questions": []
                 }
 
             # Build transcript stats (v2.1: includes speaker breakdown)

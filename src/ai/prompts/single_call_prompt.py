@@ -81,13 +81,19 @@ These are key executives frequently referenced in meetings. ALWAYS use these exa
 **REQUIRED OUTPUT STRUCTURE:**
 
 {{
-  "action_items": [...],      // Array of action item objects
+  "action_items": [...],      // Array of action item objects (with category: immediate/follow_up/sop)
   "decisions": [...],          // Array of decision objects (8-10 max)
   "highlights": [...],         // Array of key moment objects (5-8 max)
   "key_numbers": [...],        // Array of quantitative metric objects (max 20)
   "executive_summary": "...",  // String (50-125 words, varies by meeting complexity)
   "discussion_notes": "...",   // String (appropriate length based on meeting complexity)
-  "ai_answerable_questions": [...] // Array of ALL questions AI can help answer (no limit)
+  "ai_answerable_questions": [...], // Array of ALL questions AI can help answer (no limit)
+
+  // RAG/SEARCH METADATA (for future chatbot and knowledge base)
+  "technical_entities": [...],     // Array of tools, libraries, ports, services mentioned
+  "projects_referenced": [...],    // Array of project/repo names discussed
+  "rejected_alternatives": [...],  // Array of options that were NOT chosen (with reasons)
+  "risk_indicators": {{...}}       // Object with sentiment, urgency, risk flags
 }}
 
 ---
@@ -104,6 +110,10 @@ Extract ALL action items, tasks, and to-dos. For each provide:
   - Unknown: "Not specified"
 - **context**: Why this task is needed (1-2 sentences of background)
 - **timestamp**: When it was mentioned in the meeting (format: H:MM:SS)
+- **category**: One of:
+  - "immediate" - One-time task with specific deadline or near-term due date
+  - "follow_up" - Task to be done but no specific deadline mentioned
+  - "sop" - Standard Operating Procedure / ongoing practice / cultural habit (e.g., "commit code frequently", "document projects", "check in weekly")
 
 Guidelines:
 - Only include EXPLICIT action items (not general discussions)
@@ -111,18 +121,27 @@ Guidelines:
 - **NEVER COMBINE**: If the same task applies to multiple people, create SEPARATE action items for each person
 - Include both immediate tasks and follow-up items
 - Do NOT include hypothetical or conditional tasks ("if we decide to...")
-- **ORDERING**: List one-time tasks with specific deadlines FIRST, then ongoing/habit items LAST
+- **ORDERING**: List "immediate" tasks FIRST, then "follow_up", then "sop" items LAST
 - **CRITICAL: Bold all participant names using **Name** markdown syntax**
 - **CRITICAL: Verify assignee attribution by checking the <v SpeakerName> tags - only assign to people who explicitly accepted the task**
 - **CRITICAL: Prefer MORE action items over fewer. If in doubt about whether something is an action item, include it.**
 
-Example action_items entry:
+Example action_items entries:
 {{
   "description": "Review Q4 budget proposal and provide feedback to **Sarah Johnson**",
   "assignee": "Sarah Johnson",
   "deadline": "Friday, December 15",
   "context": "Budget needs approval before EOQ planning session next week with **Mike Chen**",
-  "timestamp": "0:12:34"
+  "timestamp": "0:12:34",
+  "category": "immediate"
+}}
+{{
+  "description": "Commit code frequently to GitHub for backup and version control",
+  "assignee": "James Tejada",
+  "deadline": "Ongoing practice",
+  "context": "Ensures code backup and enables knowledge transfer across the team",
+  "timestamp": "0:45:12",
+  "category": "sop"
 }}
 
 If no action items, use: "action_items": []
@@ -300,9 +319,16 @@ The meeting addressed several staffing decisions. **Scott** approved immediate t
 
 **AI-ANSWERABLE QUESTIONS EXTRACTION:**
 
-Identify questions raised during the meeting that AI can help answer with general knowledge. For each provide:
-- **question**: The question as stated or implied (clear, specific)
-- **asked_by**: Who raised it (full name)
+Identify questions EXPLICITLY ASKED during the meeting that AI can help answer with general knowledge.
+
+**CRITICAL: Only include questions that were ACTUALLY ASKED verbally.**
+- Look for question marks, interrogative phrases ("What is...", "How do I...", "Why does...")
+- The speaker must have genuinely asked for information or clarification
+- Do NOT infer questions from tool mentions or discussions (e.g., if someone mentions "Zetta" or "Red Canary", that is NOT a question unless they explicitly asked "What is Zetta?")
+
+For each ACTUAL question provide:
+- **question**: The question as actually stated (verbatim or close paraphrase)
+- **asked_by**: Who asked it (full name) - verify with <v SpeakerName> tags
 - **context**: Why this came up in the meeting (1 sentence)
 - **answer**: Your helpful answer (2-4 sentences with specific details, tools, or approaches)
 - **follow_up_prompts**: Array of 1-2 suggested prompts for deeper research
@@ -310,25 +336,25 @@ Identify questions raised during the meeting that AI can help answer with genera
 **INCLUDE questions about (any domain):**
 - External tools, software, or services ("Does [tool] have a feature for X?")
 - Industry best practices ("What's the standard approach for X?")
-- General knowledge ("How does X work?", "What is X?")
+- Technical concepts someone asked to have explained ("What is a web socket?")
 - Regulations, compliance, standards ("What are the requirements for X?")
-- Market rates, benchmarks ("What's typical pricing for X?")
 - Technology or methodology comparisons ("Should we use X or Y?")
 
-**EXCLUDE questions about (filter these out):**
+**EXCLUDE (filter these out):**
+- INFERRED questions from tool/platform mentions (someone saying "we use Zetta" is NOT a question)
 - Internal company data ("How many X do we have?", "What's our budget?")
 - Specific people's actions or status ("Is [person] doing X?", "Did [person] finish?")
 - Company-specific decisions ("Did we approve X?", "What did leadership decide?")
-- Internal processes or logistics ("Where is our meeting room?")
-- Rhetorical or social questions ("How are you?", "Right?")
+- Rhetorical or social questions ("How are you?", "Right?", "You know?")
 
 Guidelines:
-- Include ALL AI-answerable questions identified (no limit - this section is high value)
+- Include ALL genuinely asked AI-answerable questions (no limit - this section is high value)
 - ONLY include questions where your answer would genuinely help the team
 - Provide SPECIFIC, ACTIONABLE answers (tool names, approaches, resources)
 - If you're not confident in an answer, still provide it with appropriate caveats
 - Follow-up prompts should help them dig deeper on the topic
 - **CRITICAL: Bold all participant names using **Name** markdown syntax**
+- **CRITICAL: Verify the question was ACTUALLY ASKED by checking the transcript. Do NOT hallucinate questions.**
 
 Example ai_answerable_questions entry:
 {{
@@ -355,6 +381,50 @@ Example (finance domain):
 }}
 
 If no AI-answerable questions are identified, use: "ai_answerable_questions": []
+
+---
+
+**RAG METADATA EXTRACTION (for future knowledge base and chatbot):**
+
+These fields enable powerful search, RAG retrieval, and organizational intelligence.
+
+**TECHNICAL ENTITIES:**
+Extract all tools, technologies, services, libraries, ports, and technical terms mentioned.
+For each provide:
+- **name**: The tool/technology name (e.g., "Nginx", "FastAPI", "Port 443")
+- **type**: One of: tool, library, service, port, protocol, framework, platform, language
+- **context**: Brief description of how it was discussed (max 10 words)
+
+Example: {{"name": "Nginx", "type": "service", "context": "Used as reverse proxy for Docker containers"}}
+
+**PROJECTS REFERENCED:**
+List all project names, repository names, or internal tools mentioned.
+For each provide:
+- **name**: Project or repo name (e.g., "TLA Upload Tool", "Audio Verification System")
+- **owner**: Person responsible if mentioned
+- **status**: One of: active, planned, completed, mentioned
+
+Example: {{"name": "TLA Upload Tool", "owner": "Erica Anderson", "status": "active"}}
+
+**REJECTED ALTERNATIVES:**
+Capture options that were discussed but NOT chosen (prevents re-litigating old decisions).
+For each provide:
+- **option**: What was considered
+- **rejected_because**: Why it wasn't chosen (1 sentence)
+- **chosen_instead**: What was chosen instead
+
+Example: {{"option": "Gemini Flash for summarization", "rejected_because": "40% detail loss compared to Haiku", "chosen_instead": "Claude Haiku"}}
+
+**RISK INDICATORS:**
+Assess the meeting's overall risk/urgency profile:
+{{
+  "overall_sentiment": "positive" | "neutral" | "negative" | "mixed",
+  "urgency_level": "critical" | "high" | "medium" | "low",
+  "has_blockers": true | false,
+  "has_customer_issues": true | false,
+  "has_deadline_pressure": true | false,
+  "risk_keywords": ["disaster recovery", "compaction", "bug", etc.] // Keywords that indicate risk
+}}
 
 ---
 

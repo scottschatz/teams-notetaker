@@ -763,46 +763,72 @@ class EmailSender:
 """
 
         # FEATURE 5: Enhanced Action Items with Structured Data (Grouped by Person)
+        # Separate immediate/follow_up items from SOPs (Standard Operating Procedures)
         if action_items:
-            # Group action items by assignee
             from collections import defaultdict
-            items_by_person = defaultdict(list)
-            for item in action_items:
-                assignee = item.get("assignee", "Unassigned")
-                items_by_person[assignee].append(item)
 
-            html += """        <div class="action-items-callout">
+            # Separate items by category
+            immediate_items = []
+            sop_items = []
+            for item in action_items:
+                category = item.get("category", "follow_up")
+                if category == "sop":
+                    sop_items.append(item)
+                else:
+                    immediate_items.append(item)
+
+            # Display immediate/follow_up items first (grouped by person)
+            if immediate_items:
+                items_by_person = defaultdict(list)
+                for item in immediate_items:
+                    assignee = item.get("assignee", "Unassigned")
+                    items_by_person[assignee].append(item)
+
+                html += """        <div class="action-items-callout">
             <h3>✅ Action Items</h3>
 """
-            # Display items grouped by person
-            for assignee, items in items_by_person.items():
-                # Person header with bold and color (no inline emoji)
-                if assignee and assignee != "Unassigned":
-                    html += f"""            <h4 style="color: #0078d4; font-weight: 700; margin-top: 15px; margin-bottom: 8px;"><strong>{assignee}</strong></h4>
+                for assignee, items in items_by_person.items():
+                    if assignee and assignee != "Unassigned":
+                        html += f"""            <h4 style="color: #0078d4; font-weight: 700; margin-top: 15px; margin-bottom: 8px;"><strong>{assignee}</strong></h4>
             <ul style="margin-top: 0;">
 """
-                else:
-                    html += """            <h4 style="color: #666; font-weight: 700; margin-top: 15px; margin-bottom: 8px;"><strong>Unassigned</strong></h4>
+                    else:
+                        html += """            <h4 style="color: #666; font-weight: 700; margin-top: 15px; margin-bottom: 8px;"><strong>Unassigned</strong></h4>
             <ul style="margin-top: 0;">
+"""
+                    for item in items:
+                        description = item.get("description", "")
+                        deadline = item.get("deadline", "Not specified")
+                        description = self._make_names_blue(description)
+                        item_text = description
+                        if deadline and deadline != "Not specified":
+                            item_text += f" → {deadline}"
+                        html += f"""                <li>{item_text}</li>
+"""
+                    html += """            </ul>
+"""
+                html += """        </div>
+
 """
 
-                for item in items:
+            # Display SOPs in a separate section at the bottom
+            if sop_items:
+                html += """        <div style="background: #f5f5f5; padding: 12px; margin: 20px 0; border-radius: 4px; border-left: 4px solid #9e9e9e;">
+            <h4 style="margin-top: 0; color: #616161; font-size: 14px;">📋 Standard Operating Procedures (Ongoing)</h4>
+            <ul style="margin: 8px 0 0 0; font-size: 13px; color: #666;">
+"""
+                for item in sop_items:
                     description = item.get("description", "")
-                    deadline = item.get("deadline", "Not specified")
-
-                    # Apply blue+bold styling to names in description
+                    assignee = item.get("assignee", "")
                     description = self._make_names_blue(description)
-
-                    # Single-line format: description → deadline (no timestamps)
-                    item_text = description
-                    if deadline and deadline != "Not specified":
-                        item_text += f" → {deadline}"
-
-                    html += f"""                <li>{item_text}</li>
+                    if assignee and assignee != "Unassigned":
+                        html += f"""                <li><strong>{assignee}</strong>: {description}</li>
+"""
+                    else:
+                        html += f"""                <li>{description}</li>
 """
                 html += """            </ul>
-"""
-            html += """        </div>
+        </div>
 
 """
         elif action_items_html and "None recorded" not in action_items_html:

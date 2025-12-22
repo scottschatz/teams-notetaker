@@ -477,7 +477,7 @@ class CallRecordsWebhookHandler:
                             end_time=self._parse_datetime(call_record.get("endDateTime")),
                             participant_count=len(participants),
                             join_url=online_meeting_id,
-                            chat_id=call_record.get("chatId"),
+                            chat_id=self._extract_chat_id_from_url(online_meeting_id),
                             status="transcription_disabled",
                             allow_transcription=False,
                             allow_recording=allow_recording,
@@ -520,7 +520,7 @@ class CallRecordsWebhookHandler:
                         end_time=self._parse_datetime(call_record.get("endDateTime")),
                         participant_count=len(participants),
                         join_url=online_meeting_id,
-                        chat_id=call_record.get("chatId"),
+                        chat_id=self._extract_chat_id_from_url(online_meeting_id),
                         status="discovered",
                         allow_transcription=allow_transcription,
                         allow_recording=allow_recording,
@@ -1058,6 +1058,36 @@ class CallRecordsWebhookHandler:
             return upn.lower()
 
         return ""
+
+    def _extract_chat_id_from_url(self, join_url: str) -> str:
+        """
+        Extract Teams chat ID from meeting join URL.
+
+        The chat ID is embedded in the joinWebUrl and can be used to query
+        meeting chat events (recording started, transcript available).
+
+        Args:
+            join_url: Teams meeting join URL (joinWebUrl from callRecord or onlineMeeting)
+
+        Returns:
+            Chat thread ID (e.g., "19:meeting_xxx@thread.v2") or None if not found
+        """
+        if not join_url:
+            return None
+
+        try:
+            # URL decode the join URL
+            import urllib.parse
+            decoded = urllib.parse.unquote(join_url)
+
+            # Pattern: 19:meeting_xxx@thread.v2 or 19:xxx@thread.v2
+            match = re.search(r'(19:[^/]+@thread\.v2)', decoded)
+            if match:
+                return match.group(1)
+        except Exception as e:
+            logger.debug(f"Could not extract chat_id from URL: {e}")
+
+        return None
 
     def _fetch_meeting_invitees(self, organizer_user_id: str, join_url: str) -> list:
         """

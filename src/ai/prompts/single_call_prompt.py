@@ -87,7 +87,7 @@ These are key executives frequently referenced in meetings. ALWAYS use these exa
   "key_numbers": [...],        // Array of quantitative metric objects (max 20)
   "executive_summary": "...",  // String (50-125 words, varies by meeting complexity)
   "discussion_notes": "...",   // String (appropriate length based on meeting complexity)
-  "ai_answerable_questions": [...] // Array of questions AI can help answer (0-5 max)
+  "ai_answerable_questions": [...] // Array of ALL questions AI can help answer (no limit)
 }}
 
 ---
@@ -323,7 +323,7 @@ Identify questions raised during the meeting that AI can help answer with genera
 - Rhetorical or social questions ("How are you?", "Right?")
 
 Guidelines:
-- Maximum 5 questions (only the most valuable/answerable)
+- Include ALL AI-answerable questions identified (no limit - this section is high value)
 - ONLY include questions where your answer would genuinely help the team
 - Provide SPECIFIC, ACTIONABLE answers (tool names, approaches, resources)
 - If you're not confident in an answer, still provide it with appropriate caveats

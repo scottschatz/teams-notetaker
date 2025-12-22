@@ -349,23 +349,14 @@ class CallRecordsWebhookHandler:
                 participants = self._extract_participants(call_record)
 
                 # Check if any participants have opted-in (for auto-processing decision)
-                # Do this BEFORE the <3 filter so pilot users can test with small meetings
                 opted_in_participants = [
                     p for p in participants
                     if p.get("email") and self.pref_manager.get_user_preference(p["email"])
                 ]
                 has_opted_in = len(opted_in_participants) > 0
 
-                # Skip 1-on-1 calls (less than 3 participants) - but allow if pilot user is present
-                # This lets opted-in users test with small meetings while filtering general 1-on-1s
-                if len(participants) < 3 and not has_opted_in:
-                    logger.info(f"Skipping 1-on-1 call with {len(participants)} participants (no pilot users)")
-                    session.add(ProcessedCallRecord(
-                        call_record_id=call_record_id,
-                        source=source
-                    ))
-                    session.commit()
-                    return {"status": "skipped", "reason": "1-on-1 call (< 3 participants, no pilot users)"}
+                # Note: 1:1 calls (peerToPeer) are now captured in DB but filtered in UI by default.
+                # Users can toggle "Include 1:1" on the meetings page to see them.
 
                 # Always capture transcript, but only auto-process if opted-in participants exist
                 if has_opted_in:
@@ -1266,24 +1257,8 @@ class CallRecordsWebhookHandler:
                     participants = self._extract_participants(record)
                     logger.debug(f"CallRecord {call_record_id[:16]}... has {len(participants)} participants: {[p.get('email') for p in participants]}")
 
-                    # Skip 1-on-1 calls (less than 3 participants) - only capture group meetings
-                    if len(participants) < 3:
-                        logger.debug(f"Skipping 1-on-1 call {call_record_id} with {len(participants)} participants")
-                        stats["skipped_no_optin"] += 1  # Reuse this counter for skipped calls
-                        try:
-                            with self.db.get_session() as session:
-                                existing = session.query(ProcessedCallRecord).filter_by(
-                                    call_record_id=call_record_id
-                                ).first()
-                                if not existing:
-                                    session.add(ProcessedCallRecord(
-                                        call_record_id=call_record_id,
-                                        source="backfill"
-                                    ))
-                                    session.commit()
-                        except Exception as e:
-                            logger.debug(f"Could not mark {call_record_id} as processed: {e}")
-                        continue
+                    # Note: 1:1 calls (peerToPeer) are now captured in DB but filtered in UI by default.
+                    # Users can toggle "Include 1:1" on the meetings page to see them.
 
                     # Check for opted-in participants (for logging, but process all meetings now)
                     opted_in_participants = [

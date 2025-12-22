@@ -14,6 +14,13 @@
             <input type="text" x-model="searchFilter" @input="applyFilters()" placeholder="Search subject, organizer..."
                    class="px-3 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 w-64">
 
+            <!-- 1:1 Calls Toggle -->
+            <label class="flex items-center space-x-2 text-sm cursor-pointer">
+                <input type="checkbox" x-model="includeOneOnOne" @change="loadMeetings()"
+                       class="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                <span class="text-gray-700">Include 1:1</span>
+            </label>
+
             <!-- Department filter dropdown -->
             <div class="relative" x-data="{ open: false }">
                 <button @click="open = !open"
@@ -41,8 +48,8 @@
             </div>
 
             <!-- Active filters indicator -->
-            <template x-if="statusFilter || sourceFilter || organizerFilter || modelFilter || recFilter || tscFilter || departmentFilter">
-                <button @click="statusFilter = ''; sourceFilter = ''; organizerFilter = ''; modelFilter = ''; recFilter = ''; tscFilter = ''; departmentFilter = ''; loadMeetings()"
+            <template x-if="statusFilter || sourceFilter || organizerFilter || modelFilter || recFilter || tscFilter || departmentFilter || includeOneOnOne">
+                <button @click="statusFilter = ''; sourceFilter = ''; organizerFilter = ''; modelFilter = ''; recFilter = ''; tscFilter = ''; departmentFilter = ''; includeOneOnOne = false; loadMeetings()"
                         class="text-xs text-blue-600 hover:text-blue-800 flex items-center space-x-1">
                     <span>Clear filters</span>
                     <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -500,6 +507,7 @@ function meetingsData() {
         recFilter: '',  // '', 'true', 'false'
         tscFilter: '',  // '', 'true', 'false'
         departmentFilter: '',
+        includeOneOnOne: false,  // Exclude 1:1 calls by default
         departments: [],
         sortColumn: 'id',
         sortDirection: 'desc',
@@ -513,10 +521,13 @@ function meetingsData() {
         async loadMeetings() {
             try {
                 console.log('Fetching meetings...');
-                // Build URL with optional department filter (server-side filtering)
+                // Build URL with optional filters (server-side filtering)
                 let url = '/api/meetings/?limit=500';
                 if (this.departmentFilter) {
                     url += `&department=${encodeURIComponent(this.departmentFilter)}`;
+                }
+                if (this.includeOneOnOne) {
+                    url += '&include_one_on_one=true';
                 }
                 const response = await fetch(url);
                 if (!response.ok) {

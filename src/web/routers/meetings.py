@@ -86,6 +86,7 @@ async def list_meetings(
     status: Optional[str] = None,
     participant: Optional[str] = None,
     department: Optional[str] = None,
+    include_one_on_one: bool = Query(False, description="Include 1:1 (peerToPeer) calls"),
     db: DatabaseManager = Depends(get_db)
 ):
     """
@@ -97,6 +98,7 @@ async def list_meetings(
         status: Filter by status
         participant: Filter by participant email
         department: Filter by participant department (Azure AD)
+        include_one_on_one: If False (default), exclude peerToPeer calls from results
         db: Database manager
 
     Returns:
@@ -153,6 +155,12 @@ async def list_meetings(
 
         if status:
             query = query.filter(Meeting.status == status)
+
+        # Filter out 1:1 calls by default (peerToPeer)
+        if not include_one_on_one:
+            query = query.filter(
+                (Meeting.call_type != 'peerToPeer') | (Meeting.call_type.is_(None))
+            )
 
         if participant:
             # Filter by participant email

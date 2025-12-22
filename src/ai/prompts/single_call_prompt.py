@@ -75,8 +75,7 @@ These are key executives frequently referenced in meetings. ALWAYS use these exa
 - Stuart Rosenstein - Chief Financial Officer (CFO)
 - Erik Hellum - Chief Operating Officer (COO)
 - Scott Schatz - Executive Vice President, Technology
-- Claire Yenicay - Executive Vice President, General Counsel
-- Allison Zolot - Executive Vice President, People
+- Claire Yenicay - Executive Vice President, Investor Relations and Corporate Communications
 - Heather Hagar - Senior Vice President, Communications
 
 **REQUIRED OUTPUT STRUCTURE:**

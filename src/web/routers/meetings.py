@@ -83,6 +83,7 @@ async def list_meetings(
     limit: int = Query(50, ge=1, le=1000),
     status: Optional[str] = None,
     participant: Optional[str] = None,
+    department: Optional[str] = None,
     db: DatabaseManager = Depends(get_db)
 ):
     """
@@ -93,6 +94,7 @@ async def list_meetings(
         limit: Number of records to return
         status: Filter by status
         participant: Filter by participant email
+        department: Filter by participant department (Azure AD)
         db: Database manager
 
     Returns:
@@ -154,6 +156,13 @@ async def list_meetings(
             # Filter by participant email
             query = query.join(MeetingParticipant, Meeting.id == MeetingParticipant.meeting_id)
             query = query.filter(MeetingParticipant.email == participant)
+
+        if department:
+            # Filter by participant department (Azure AD)
+            # Use distinct to avoid duplicates when multiple participants match
+            if not participant:  # Only join if not already joined
+                query = query.join(MeetingParticipant, Meeting.id == MeetingParticipant.meeting_id)
+            query = query.filter(MeetingParticipant.department == department).distinct()
 
         query = query.order_by(Meeting.start_time.desc())
 
@@ -646,4 +655,34 @@ async def send_summary_to_email(
             "success": True,
             "message": f"Meeting {content_type} queued to send to {email}",
             "job_id": job_id
+        }
+
+
+@router.get("/api/departments")
+async def get_departments(db: DatabaseManager = Depends(get_db)):
+    """
+    Get list of unique departments from Azure AD data.
+
+    Returns:
+        List of department names with counts
+    """
+    with db.get_session() as session:
+        from sqlalchemy import func
+        results = session.query(
+            MeetingParticipant.department,
+            func.count(func.distinct(MeetingParticipant.meeting_id)).label('meeting_count')
+        ).filter(
+            MeetingParticipant.department.isnot(None),
+            MeetingParticipant.department != ''
+        ).group_by(
+            MeetingParticipant.department
+        ).order_by(
+            func.count(func.distinct(MeetingParticipant.meeting_id)).desc()
+        ).all()
+
+        return {
+            "departments": [
+                {"name": dept, "meeting_count": count}
+                for dept, count in results
+            ]
         }

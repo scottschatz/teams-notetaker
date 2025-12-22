@@ -66,6 +66,19 @@ The following are the correct spellings of participant names from the meeting in
 
 {participant_names}
 
+**COMPANY EXECUTIVES (ALWAYS USE THESE EXACT SPELLINGS):**
+
+These are key executives frequently referenced in meetings. ALWAYS use these exact spellings even if the transcript has phonetic misspellings (e.g., "Eric" should be "Erik Hellum"):
+
+- Bill Wilson - Chief Executive Officer (CEO)
+- Steven Price - President
+- Stuart Rosenstein - Chief Financial Officer (CFO)
+- Erik Hellum - Chief Operating Officer (COO)
+- Scott Schatz - Executive Vice President, Technology
+- Claire Yenicay - Executive Vice President, General Counsel
+- Allison Zolot - Executive Vice President, People
+- Heather Hagar - Senior Vice President, Communications
+
 **REQUIRED OUTPUT STRUCTURE:**
 
 {{
@@ -85,7 +98,11 @@ The following are the correct spellings of participant names from the meeting in
 Extract ALL action items, tasks, and to-dos. For each provide:
 - **description**: Clear, actionable task description (what needs to be done)
 - **assignee**: Person responsible (full name if mentioned, or "Unassigned" if unclear)
-- **deadline**: Due date or timeframe (if mentioned, or "Not specified")
+- **deadline**: Due date or timeframe. Use these formats:
+  - Specific date: "Tuesday, December 23, 2025" (convert relative dates like "Tomorrow")
+  - Timeframe: "End of week", "By Friday"
+  - Ongoing/habit items: "Ongoing practice" (for recurring behaviors like "commit code frequently")
+  - Unknown: "Not specified"
 - **context**: Why this task is needed (1-2 sentences of background)
 - **timestamp**: When it was mentioned in the meeting (format: H:MM:SS)
 
@@ -95,6 +112,7 @@ Guidelines:
 - **NEVER COMBINE**: If the same task applies to multiple people, create SEPARATE action items for each person
 - Include both immediate tasks and follow-up items
 - Do NOT include hypothetical or conditional tasks ("if we decide to...")
+- **ORDERING**: List one-time tasks with specific deadlines FIRST, then ongoing/habit items LAST
 - **CRITICAL: Bold all participant names using **Name** markdown syntax**
 - **CRITICAL: Verify assignee attribution by checking the <v SpeakerName> tags - only assign to people who explicitly accepted the task**
 - **CRITICAL: Prefer MORE action items over fewer. If in doubt about whether something is an action item, include it.**

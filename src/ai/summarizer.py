@@ -1003,7 +1003,7 @@ class SingleCallSummarizer:
         response = self.claude_client.generate_text(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            max_tokens=8000,
+            max_tokens=16000,  # Increased for RAG metadata fields
             temperature=0.5,
         )
 

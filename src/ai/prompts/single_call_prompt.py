@@ -23,6 +23,24 @@ SINGLE_CALL_COMPREHENSIVE_PROMPT = """Analyze this meeting transcript and extrac
 
 You MUST return ONLY a valid JSON object. No explanatory text before or after. No markdown code blocks. Start with {{ and end with }}.
 
+---
+
+**CRITICAL PRESERVATION RULES (APPLY TO ALL SECTIONS):**
+
+These rules ensure NO detail is lost. Each section is INDEPENDENT - do not reduce detail in one section to make room for another.
+
+1. **ENTITY PRESERVATION**: If a person is associated with a specific number or metric, that association MUST appear in the output. Example: "Erica has 6 projects" → key_numbers MUST include "6 - Number of projects Erica Anderson has in development"
+
+2. **ACTION ITEM GRANULARITY**: NEVER combine action items for multiple people into one entry. If "James and Joe should commit code frequently" is mentioned, create TWO separate action items - one for James, one for Joe.
+
+3. **NUMERIC COMPLETENESS**: Every significant number mentioned (costs, counts, percentages, timeframes) MUST appear in key_numbers. If in doubt, include it.
+
+4. **THEMATIC EXHAUSTIVENESS**: Discussion notes MUST cover ALL distinct topics discussed. If the meeting covered 5 different areas, create 5 themed sections. Do not merge or skip topics for brevity.
+
+5. **SECTION INDEPENDENCE**: The ai_answerable_questions section is a BONUS section that DOES NOT reduce the detail level of any other section. Treat it as additive, not competitive.
+
+---
+
 **PARTICIPANT NAMES (USE THESE EXACT SPELLINGS):**
 
 The following are the correct spellings of participant names from the meeting invite. When mentioning anyone in your summary, use these EXACT spellings (the transcript may have phonetic misspellings):
@@ -55,11 +73,12 @@ Extract ALL action items, tasks, and to-dos. For each provide:
 Guidelines:
 - Only include EXPLICIT action items (not general discussions)
 - Look for phrases like: "can you...", "please...", "we need to...", "I'll...", "[name] will..."
-- If multiple people discuss the same task, choose the primary assignee
+- **NEVER COMBINE**: If the same task applies to multiple people, create SEPARATE action items for each person
 - Include both immediate tasks and follow-up items
 - Do NOT include hypothetical or conditional tasks ("if we decide to...")
 - **CRITICAL: Bold all participant names using **Name** markdown syntax**
 - **CRITICAL: Verify assignee attribution by checking the <v SpeakerName> tags - only assign to people who explicitly accepted the task**
+- **CRITICAL: Prefer MORE action items over fewer. If in doubt about whether something is an action item, include it.**
 
 Example action_items entry:
 {{
@@ -151,12 +170,14 @@ What to extract:
 
 Guidelines:
 - Extract ALL significant numbers mentioned (financial, operational, metrics)
+- **PERSON-SPECIFIC METRICS**: If a number is associated with a specific person (e.g., "Erica has 6 projects", "Joe tested 3 configurations"), include the person's name in the context
 - Round approximate values appropriately (e.g., "$1M" not "$1,000,000")
 - Include context that makes the number meaningful
 - Sort by magnitude (largest to smallest) or logical grouping
-- Maximum 20 entries (prioritize most important)
+- Maximum 20 entries (but INCLUDE all person-specific counts even if over 20)
 - Skip trivial numbers (page numbers, timestamps, percentages under 5%)
 - **CRITICAL: Bold all participant names using **Name** markdown syntax**
+- **CRITICAL: When in doubt, INCLUDE the number. More is better than fewer.**
 
 Example key_numbers entry:
 {{
@@ -207,7 +228,8 @@ The goal is comprehensive coverage of key themes, not arbitrary word limits.
 Focus on quality and completeness over brevity.
 
 Structure:
-- Include 2-3 thematic subheadings (e.g., **Cost Savings**, **Personnel Decisions**, **Strategic Initiatives**)
+- Include as many thematic subheadings as the meeting requires (minimum 3, more for complex meetings)
+- **EXHAUSTIVE COVERAGE**: If 5 distinct topics were discussed, create 5 sections. Do NOT merge topics for brevity.
 - Each theme should be covered thoroughly with operational details and strategic context
 - Reference the topic segments and extracted data
 - Include important context, reasoning, and background
@@ -317,4 +339,11 @@ Remember:
 - Ensure all strings are properly quoted and escaped
 - Ensure all JSON arrays and objects are properly closed
 - Discussion notes should be appropriate length for meeting complexity (200-800 words)
+
+**FINAL PRESERVATION CHECK:**
+Before returning, verify:
+□ Every person mentioned with a specific number has that association in key_numbers
+□ No action items combine multiple assignees - each person gets their own entry
+□ Discussion notes cover ALL distinct topics (count them - if 5 topics, 5 sections)
+□ The ai_answerable_questions section did NOT cause reduction in any other section
 """

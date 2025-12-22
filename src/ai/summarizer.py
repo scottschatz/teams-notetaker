@@ -958,13 +958,30 @@ class SingleCallSummarizer:
             participant_names = meeting_metadata["participant_names"]
         participant_names_str = "\n".join(f"- {name}" for name in participant_names) if participant_names else "(No participant list available)"
 
+        # Extract meeting date for resolving relative deadlines (e.g., "Tomorrow" → actual date)
+        meeting_date_str = "Unknown date"
+        if meeting_metadata and meeting_metadata.get("start_time"):
+            try:
+                from datetime import datetime
+                start_time_val = meeting_metadata["start_time"]
+                if isinstance(start_time_val, str):
+                    # Parse ISO format
+                    dt = datetime.fromisoformat(start_time_val.replace("Z", "+00:00"))
+                else:
+                    dt = start_time_val
+                meeting_date_str = dt.strftime("%A, %B %d, %Y")  # e.g., "Sunday, December 22, 2025"
+            except Exception as e:
+                logger.debug(f"Could not parse meeting date: {e}")
+                meeting_date_str = "Unknown date"
+
         # Load Haiku fallback prompt
         from .prompts.single_call_prompt import SINGLE_CALL_COMPREHENSIVE_PROMPT
 
         # Build user prompt
         user_prompt = SINGLE_CALL_COMPREHENSIVE_PROMPT.format(
             transcript=transcript_text,
-            participant_names=participant_names_str
+            participant_names=participant_names_str,
+            meeting_date=meeting_date_str
         )
 
         # Add custom instructions if provided

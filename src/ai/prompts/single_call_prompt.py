@@ -39,6 +39,25 @@ These rules ensure NO detail is lost. Each section is INDEPENDENT - do not reduc
 
 5. **SECTION INDEPENDENCE**: The ai_answerable_questions section is a BONUS section that DOES NOT reduce the detail level of any other section. Treat it as additive, not competitive.
 
+6. **ENTITY ANCHORING**: Important proper nouns (tool names like Nginx, Zetta, Red Canary, FastAPI, Datto) and specific numbers (50 projects, 40% savings, $2M budget) are "anchors." Each anchor should appear in at least TWO sections - once in a structured field (key_numbers, highlights, decisions) AND once in discussion_notes with context.
+
+7. **DECISION JUSTIFICATION**: Every decision in the decisions array MUST include technical or business justification in the reasoning field. Not just "what" was decided, but "why" (e.g., "to prevent port conflicts", "to maintain detail quality", "due to cost constraints").
+
+8. **CROSS-REFERENCE COHERENCE**: Before finalizing, verify that every specific detail mentioned in executive_summary is explained with context in discussion_notes. If the summary mentions "Nginx proxy manager," the discussion notes must explain what it does and why it matters.
+
+---
+
+**MEETING DATE CONTEXT:**
+
+This meeting occurred on: {meeting_date}
+
+Use this date to resolve relative deadlines in action items:
+- "Tomorrow" → the day after {meeting_date}
+- "Next week" → the week after {meeting_date}
+- "Friday" → the Friday of or after {meeting_date}
+
+Always convert relative dates to absolute dates (e.g., "Tomorrow" → "Monday, December 23, 2025").
+
 ---
 
 **PARTICIPANT NAMES (USE THESE EXACT SPELLINGS):**
@@ -346,4 +365,8 @@ Before returning, verify:
 □ No action items combine multiple assignees - each person gets their own entry
 □ Discussion notes cover ALL distinct topics (count them - if 5 topics, 5 sections)
 □ The ai_answerable_questions section did NOT cause reduction in any other section
+□ Key tool/product names appear in BOTH a structured field AND discussion_notes (Entity Anchoring)
+□ Every decision has technical/business justification in reasoning, not just "what" but "why"
+□ Every specific detail in executive_summary is explained in discussion_notes (Cross-Reference)
+□ All relative dates (Tomorrow, Next week) are converted to absolute dates
 """

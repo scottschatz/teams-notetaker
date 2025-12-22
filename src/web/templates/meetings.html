@@ -90,6 +90,9 @@
                                 </template>
                             </div>
                         </th>
+                        <th class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase" title="Organizer's Department">
+                            Dept
+                        </th>
                         <th @click="sortBy('start_time')" class="px-2 py-2 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100">
                             Start <span x-show="sortColumn === 'start_time'" x-text="sortDirection === 'asc' ? '↑' : '↓'"></span>
                         </th>
@@ -274,6 +277,10 @@
                             <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.id"></td>
                             <td class="px-2 py-2 font-medium text-gray-900 text-xs max-w-[250px] truncate" x-text="meeting.subject" :title="meeting.subject"></td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-900 text-xs" x-text="meeting.organizer_name" :title="meeting.organizer_email"></td>
+                            <td class="px-2 py-2 whitespace-nowrap text-xs">
+                                <span x-show="meeting.organizer_department" class="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs" x-text="meeting.organizer_department"></span>
+                                <span x-show="!meeting.organizer_department" class="text-gray-400">-</span>
+                            </td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="formatDateTime(meeting.start_time)"></td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.duration_minutes ? meeting.duration_minutes + 'm' : '-'"></td>
                             <td class="px-2 py-2 whitespace-nowrap text-gray-500 text-xs" x-text="meeting.participant_count || '-'"></td>

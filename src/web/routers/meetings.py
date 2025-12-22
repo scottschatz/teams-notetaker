@@ -34,6 +34,8 @@ class MeetingResponse(BaseModel):
     subject: Optional[str] = None
     organizer_name: Optional[str] = None
     organizer_email: Optional[str] = None
+    organizer_department: Optional[str] = None
+    organizer_job_title: Optional[str] = None
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     duration_minutes: Optional[int] = None
@@ -170,6 +172,22 @@ async def list_meetings(
 
         # Build response with transcript and summary data
         meetings = []
+
+        # Pre-fetch organizer departments for all meetings in one query
+        meeting_ids = [r[0].id for r in results]
+        organizer_depts = {}
+        if meeting_ids:
+            dept_results = session.query(
+                MeetingParticipant.meeting_id,
+                MeetingParticipant.department,
+                MeetingParticipant.job_title
+            ).filter(
+                MeetingParticipant.meeting_id.in_(meeting_ids),
+                MeetingParticipant.role == 'organizer'
+            ).all()
+            for mid, dept, title in dept_results:
+                organizer_depts[mid] = {"department": dept, "job_title": title}
+
         for meeting, word_count, speaker_count, model, prompt_tokens, completion_tokens, total_tokens, generation_time_ms, retry_count, max_retries, next_retry_at in results:
             # Calculate actual duration if we have start and end times
             actual_duration = None
@@ -177,12 +195,17 @@ async def list_meetings(
                 duration_delta = meeting.end_time - meeting.start_time
                 actual_duration = int(duration_delta.total_seconds() / 60)  # Convert to minutes
 
+            # Get organizer's department
+            org_info = organizer_depts.get(meeting.id, {})
+
             meeting_dict = {
                 "id": meeting.id,
                 "meeting_id": meeting.meeting_id,
                 "subject": meeting.subject,
                 "organizer_name": meeting.organizer_name,
                 "organizer_email": meeting.organizer_email,
+                "organizer_department": org_info.get("department"),
+                "organizer_job_title": org_info.get("job_title"),
                 "start_time": meeting.start_time,
                 "end_time": meeting.end_time,
                 "duration_minutes": actual_duration if actual_duration else meeting.duration_minutes,

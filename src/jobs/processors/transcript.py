@@ -320,6 +320,33 @@ class TranscriptProcessor(BaseProcessor):
                 f"{actual_duration_minutes} min actual duration"
             )
 
+            # Validate transcript completeness against call record duration
+            # This catches transcripts fetched before Microsoft finished processing
+            # (which happened with Meeting 809 - we got 10 min of a 47 min call)
+            expected_duration_seconds = None
+            if meeting.end_time and meeting.start_time:
+                expected_duration_seconds = (meeting.end_time - meeting.start_time).total_seconds()
+            elif meeting.duration_minutes:
+                expected_duration_seconds = meeting.duration_minutes * 60
+
+            if expected_duration_seconds and expected_duration_seconds > 60:
+                # Only validate if meeting was > 1 minute (short calls may be accurate)
+                # Allow 20% tolerance for normal variation
+                MIN_TRANSCRIPT_RATIO = 0.8
+                transcript_ratio = duration_seconds / expected_duration_seconds
+
+                if transcript_ratio < MIN_TRANSCRIPT_RATIO:
+                    shortfall_pct = (1 - transcript_ratio) * 100
+                    self._log_progress(
+                        job,
+                        f"⚠️ Transcript may be incomplete: meeting was {expected_duration_seconds:.0f}s "
+                        f"({expected_duration_seconds/60:.1f} min), transcript is only {duration_seconds:.0f}s "
+                        f"({duration_seconds/60:.1f} min) - missing ~{shortfall_pct:.0f}%",
+                        "warning"
+                    )
+                    # Note: We still save the transcript but log the warning.
+                    # A future enhancement could trigger automatic re-fetch after a delay.
+
             # Save to database
             with self.db.get_session() as session:
                 transcript = Transcript(

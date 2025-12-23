@@ -547,6 +547,101 @@ class GraphAPIClient:
 
         return enriched
 
+    def get_distribution_group_members(self, group_email: str) -> List[Dict[str, Any]]:
+        """
+        Get members of a distribution group or mail-enabled security group.
+
+        Args:
+            group_email: Email address of the group (e.g., salesleadership@company.com)
+
+        Returns:
+            List of member dictionaries with email, displayName, id
+            Empty list if not a group or group not found
+        """
+        try:
+            # First, find the group by its mail address
+            # Use $filter to search for groups with matching mail or proxyAddresses
+            groups_response = self.get(
+                "/groups",
+                params={
+                    "$filter": f"mail eq '{group_email}'",
+                    "$select": "id,displayName,mail,groupTypes"
+                }
+            )
+
+            groups = groups_response.get("value", [])
+            if not groups:
+                # Try searching by proxyAddresses (for aliases)
+                groups_response = self.get(
+                    "/groups",
+                    params={
+                        "$filter": f"proxyAddresses/any(p:p eq 'smtp:{group_email}')",
+                        "$select": "id,displayName,mail,groupTypes"
+                    }
+                )
+                groups = groups_response.get("value", [])
+
+            if not groups:
+                logger.debug(f"No group found with email: {group_email}")
+                return []
+
+            group = groups[0]
+            group_id = group["id"]
+            logger.info(f"Found group '{group.get('displayName')}' (id: {group_id}) for email {group_email}")
+
+            # Get group members
+            members = []
+            members_response = self.get_paged(
+                f"/groups/{group_id}/members",
+                params={"$select": "id,displayName,mail,userPrincipalName"},
+                max_pages=10  # Limit to prevent huge groups
+            )
+
+            for member in members_response:
+                # Only include users (not nested groups or other object types)
+                odata_type = member.get("@odata.type", "")
+                if odata_type == "#microsoft.graph.user" or "userPrincipalName" in member:
+                    email = member.get("mail") or member.get("userPrincipalName")
+                    if email:
+                        members.append({
+                            "id": member.get("id"),
+                            "displayName": member.get("displayName"),
+                            "email": email.lower()
+                        })
+
+            logger.info(f"Found {len(members)} user members in group '{group.get('displayName')}'")
+            return members
+
+        except GraphAPIError as e:
+            # 403 = insufficient permissions, 404 = not found
+            if "403" in str(e) or "Insufficient privileges" in str(e):
+                logger.warning(f"Cannot read groups - need Group.Read.All permission: {e}")
+            else:
+                logger.debug(f"Could not get group members for {group_email}: {e}")
+            return []
+        except Exception as e:
+            logger.warning(f"Error getting distribution group members for {group_email}: {e}")
+            return []
+
+    def is_distribution_group(self, email: str) -> bool:
+        """
+        Check if an email address belongs to a distribution group.
+
+        Args:
+            email: Email address to check
+
+        Returns:
+            True if the email is a distribution group, False otherwise
+        """
+        try:
+            # First try to resolve as a user
+            self.get(f"/users/{email}")
+            return False  # It's a user, not a group
+        except GraphAPIError:
+            # Not a user - check if it's a group
+            members = self.get_distribution_group_members(email)
+            return len(members) > 0
+
     def test_connection(self) -> bool:
         """
         Test Graph API connection by fetching organization info.

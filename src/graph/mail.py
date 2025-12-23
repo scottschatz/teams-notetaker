@@ -561,15 +561,15 @@ class EmailSender:
         <!-- Meeting Statistics -->
         <div class="stats-box">
             <div class="stat">
-                <div class="stat-value">{duration_display}</div>
+                <div class="stat-value">{duration_display if duration > 0 else 'N/A'}</div>
                 <div class="stat-label">Duration</div>
             </div>
             <div class="stat">
-                <div class="stat-value">{len(participants) if participants else participant_count}</div>
+                <div class="stat-value">{speaker_count if speaker_count > 0 else (len(participants) if participants else participant_count)}</div>
                 <div class="stat-label">Speakers</div>
             </div>
             <div class="stat">
-                <div class="stat-value">{word_count:,}</div>
+                <div class="stat-value">{f'{word_count:,}' if word_count > 0 else 'N/A'}</div>
                 <div class="stat-label">Words Spoken</div>
             </div>
         </div>

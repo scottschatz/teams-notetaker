@@ -342,6 +342,26 @@ class CallRecordsWebhookHandler:
                     logger.warning(f"No joinWebUrl in callRecord {call_record_id}")
                     return {"status": "skipped", "reason": "No joinWebUrl"}
 
+                # Filter out very brief call records (< 30 seconds)
+                # These are usually diagnostic pings, network tests, or someone briefly rejoining
+                # after the main meeting ended (which happened with Meeting 809 - 3-second "ping"
+                # caused us to fetch an incomplete transcript)
+                MIN_CALL_DURATION_SECONDS = 30
+                start_dt = self._parse_datetime(call_record.get("startDateTime"))
+                end_dt = self._parse_datetime(call_record.get("endDateTime"))
+                if start_dt and end_dt:
+                    duration_seconds = (end_dt - start_dt).total_seconds()
+                    if duration_seconds < MIN_CALL_DURATION_SECONDS:
+                        logger.info(
+                            f"Skipping call record {call_record_id}: too short "
+                            f"({duration_seconds:.0f}s, threshold: {MIN_CALL_DURATION_SECONDS}s)"
+                        )
+                        return {
+                            "status": "skipped",
+                            "reason": "call_record_too_short",
+                            "duration_seconds": duration_seconds
+                        }
+
                 # Extract call type from callRecord (groupCall, peerToPeer, unknown)
                 call_type = call_record.get("type", "unknown")
 

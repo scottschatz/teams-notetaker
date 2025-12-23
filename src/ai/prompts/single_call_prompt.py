@@ -77,6 +77,13 @@ These are key executives frequently referenced in meetings. ALWAYS use these exa
 - Scott Schatz - Executive Vice President, Technology
 - Claire Yenicay - Executive Vice President, Investor Relations and Corporate Communications
 - Heather Hagar - Senior Vice President, Communications
+- Lisa Daretta - Executive Assistant (frequently coordinates SSP schedules)
+
+**COMMON TRANSCRIPTION CORRECTIONS:**
+
+Teams transcription often mishears these phrases. ALWAYS correct them:
+- "half power" or "half-power" → "half-hour" (e.g., "half-hour calls")
+- "Lisa Durata" or "Lisa Durado" → "Lisa Daretta"
 
 **REQUIRED OUTPUT STRUCTURE:**
 
@@ -93,7 +100,8 @@ These are key executives frequently referenced in meetings. ALWAYS use these exa
   "technical_entities": [...],     // Array of tools, libraries, ports, services mentioned
   "projects_referenced": [...],    // Array of project/repo names discussed
   "rejected_alternatives": [...],  // Array of options that were NOT chosen (with reasons)
-  "risk_indicators": {{...}}       // Object with sentiment, urgency, risk flags
+  "risk_indicators": {{...}},      // Object with sentiment, urgency, risk flags
+  "knowledge_graph_links": [...]   // Array of relationship triples (subject-predicate-object)
 }}
 
 ---
@@ -321,10 +329,20 @@ The meeting addressed several staffing decisions. **Scott** approved immediate t
 
 Identify questions EXPLICITLY ASKED during the meeting that AI can help answer with general knowledge.
 
-**CRITICAL: Only include questions that were ACTUALLY ASKED verbally.**
-- Look for question marks, interrogative phrases ("What is...", "How do I...", "Why does...")
-- The speaker must have genuinely asked for information or clarification
-- Do NOT infer questions from tool mentions or discussions (e.g., if someone mentions "Zetta" or "Red Canary", that is NOT a question unless they explicitly asked "What is Zetta?")
+**EXPLICIT INQUIRY RULE (STRICTLY ENFORCE):**
+A question only exists if the transcript contains a speaker ACTIVELY SEEKING INFORMATION.
+
+- **INFERRED QUESTIONS ARE FORBIDDEN**: Do NOT create a question just because a tool (e.g., Zetta, Red Canary, Datto) was mentioned. Mentioning a platform is NOT asking about it.
+- **VERB CHECK**: The transcript MUST contain a question mark (?) or a clear interrogative verb ("What is...", "How do I...", "Can you explain...") from a specific speaker.
+- **VALIDATION**: If you cannot find the SPECIFIC SENTENCE where the speaker asked the question, do NOT include it.
+- **CITE YOUR SOURCE**: For each question, you must be able to point to an actual utterance in the transcript.
+
+Example of what is NOT a question:
+- Transcript: "We use Zetta for our broadcast operations" → This is a STATEMENT, not a question. Do NOT create "What is Zetta?"
+- Transcript: "Red Canary provides our threat intelligence" → This is a STATEMENT, not a question. Do NOT create "What is Red Canary?"
+
+Example of what IS a question:
+- Transcript: "What exactly is a web socket? I've heard the term but don't fully understand it." → This IS an explicit question.
 
 For each ACTUAL question provide:
 - **question**: The question as actually stated (verbatim or close paraphrase)
@@ -425,6 +443,21 @@ Assess the meeting's overall risk/urgency profile:
   "has_deadline_pressure": true | false,
   "risk_keywords": ["disaster recovery", "compaction", "bug", etc.] // Keywords that indicate risk
 }}
+
+**KNOWLEDGE GRAPH LINKS:**
+Create relationship triples connecting People, Projects, and Tools for future RAG queries.
+For each relationship provide:
+- **subject**: Person or entity name
+- **predicate**: Relationship type (owner_of, works_on, expert_in, manages, presented, decided, blocked_by)
+- **object**: Project, tool, or concept
+
+Examples:
+{{"subject": "Erica Anderson", "predicate": "owner_of", "object": "TLA Upload Tool"}}
+{{"subject": "Joe Ainsworth", "predicate": "expert_in", "object": "Nginx proxy configuration"}}
+{{"subject": "Mike Mrozek", "predicate": "works_on", "object": "Active Directory monitoring"}}
+{{"subject": "Scott Schatz", "predicate": "decided", "object": "Use Claude Haiku over Gemini Flash"}}
+
+This enables queries like: "Who is the primary contact for Nginx issues?" or "What projects is Erica working on?"
 
 ---
 

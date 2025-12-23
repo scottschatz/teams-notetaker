@@ -15,6 +15,7 @@ import os
 import logging
 
 from src.core.database import DatabaseManager, UserSession
+from src.core.config import get_config
 from src.core.exceptions import AuthenticationError, SessionExpiredError, UnauthorizedError
 from src.utils.validators import validate_email, validate_domain
 
@@ -293,10 +294,9 @@ class AuthManager:
 
     def _validate_domain(self, email: str) -> bool:
         """
-        Validate that email is from allowed domain.
+        Validate that email is from an allowed domain.
 
-        Currently hardcoded to townsquaremedia.com.
-        In production, this could be configurable.
+        Uses AZURE_AD_ALLOWED_DOMAINS from config (supports multiple domains).
 
         Args:
             email: Email address to validate
@@ -304,7 +304,10 @@ class AuthManager:
         Returns:
             True if from allowed domain, False otherwise
         """
-        return validate_domain(email, "townsquaremedia.com")
+        config = get_config()
+        allowed_domains = config.azure_ad.allowed_domains
+        is_valid, _ = validate_domain(email, allowed_domains)
+        return is_valid
 
     def _generate_jwt(self, email: str, role: str) -> str:
         """

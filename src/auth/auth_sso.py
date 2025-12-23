@@ -263,7 +263,7 @@ class AzureADAuth:
 
     def validate_user(self, email: str) -> Tuple[bool, str]:
         """
-        Validate user email against allowed domain.
+        Validate user email against allowed domains.
 
         Args:
             email: User email address
@@ -276,8 +276,8 @@ class AzureADAuth:
         if not is_valid:
             return False, f"Invalid email format: {error}"
 
-        # Validate domain
-        is_valid, error = validate_domain(email, self.config.allowed_domain)
+        # Validate domain against allowed domains list
+        is_valid, error = validate_domain(email, self.config.allowed_domains)
         if not is_valid:
             return False, f"Domain not allowed: {error}"
 

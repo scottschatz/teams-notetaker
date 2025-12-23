@@ -2,6 +2,8 @@
 Admin routes for user management and system configuration.
 """
 
+import html
+import logging
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 from fastapi import APIRouter, Request, Form, HTTPException, Query
@@ -15,10 +17,146 @@ from ...graph.client import GraphAPIClient
 from ...core.exceptions import GraphAPIError
 from ...preferences.user_preferences import PreferenceManager
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/admin", tags=["admin"])
 templates = Jinja2Templates(directory="src/web/templates")
 config = get_config()
 db = DatabaseManager(config.database.connection_string)
+
+
+# =============================================================================
+# Admin Notification Emails
+# =============================================================================
+
+def _get_system_description() -> str:
+    """Return HTML description of the meeting summary system."""
+    return """
+    <div style="background: #f8f9fa; border-left: 4px solid #2563eb; padding: 15px; margin: 15px 0; border-radius: 4px;">
+        <h3 style="margin-top: 0; color: #1e40af;">How This Works</h3>
+        <p style="margin: 10px 0;">This is an automated meeting summary service that:</p>
+        <ul style="margin: 10px 0; padding-left: 20px;">
+            <li><strong>Monitors your Teams meetings</strong> that have transcription enabled</li>
+            <li><strong>Generates AI-powered summaries</strong> using Claude, including action items, decisions, and key discussion points</li>
+            <li><strong>Sends you an email summary</strong> after each meeting you attend</li>
+        </ul>
+        <p style="margin: 10px 0; font-size: 13px; color: #666;">
+            Summaries are only generated for meetings where someone enables transcription.
+            Your meeting content is processed securely and not stored beyond what's needed for the summary.
+        </p>
+    </div>
+    """
+
+
+def _send_admin_notification(
+    to_email: str,
+    to_name: str,
+    subject: str,
+    body_html: str
+) -> bool:
+    """Send an admin notification email using Graph API."""
+    try:
+        graph_client = GraphAPIClient(config.graph_api)
+        endpoint = f"/users/{config.app.email_from}/sendMail"
+
+        payload = {
+            "message": {
+                "subject": subject,
+                "body": {
+                    "contentType": "HTML",
+                    "content": body_html
+                },
+                "toRecipients": [
+                    {
+                        "emailAddress": {
+                            "address": to_email,
+                            "name": to_name or to_email
+                        }
+                    }
+                ]
+            }
+        }
+
+        graph_client.post(endpoint, json=payload)
+        logger.info(f"Sent admin notification to {to_email}: {subject}")
+        return True
+
+    except Exception as e:
+        logger.error(f"Failed to send admin notification to {to_email}: {e}")
+        return False
+
+
+def _send_admin_welcome_email(email: str, display_name: str = None):
+    """Send welcome email when admin adds a user."""
+    safe_name = html.escape(display_name) if display_name else 'there'
+    unsubscribe_link = f"mailto:{config.app.email_from}?subject=unsubscribe"
+
+    body = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <h2>You've Been Added to Meeting Summaries</h2>
+        <p>Hi {safe_name},</p>
+        <p>An administrator has subscribed you to the automated meeting summary service.</p>
+
+        {_get_system_description()}
+
+        <p>You'll start receiving summaries for any Teams meetings you attend that have transcription enabled.</p>
+
+        <p style="margin: 20px 0;">
+            <strong>Don't want to receive these emails?</strong> Click below to unsubscribe:
+        </p>
+        <p style="margin: 20px 0;">
+            <a href="{unsubscribe_link}"
+               style="display: inline-block; padding: 12px 24px; background-color: #6b7280; color: white;
+                      text-decoration: none; border-radius: 6px; font-weight: bold;">
+                Unsubscribe
+            </a>
+        </p>
+        <p style="font-size: 12px; color: #666;">
+            Or reply to any summary email with "unsubscribe" in the subject line.
+        </p>
+        <p>Best regards,<br/>Meeting Notes Bot</p>
+    </body>
+    </html>
+    """
+
+    _send_admin_notification(email, display_name, "Meeting Summaries - You've Been Subscribed", body)
+
+
+def _send_admin_unsubscribe_email(email: str, display_name: str = None, reason: str = "disabled"):
+    """Send unsubscribe notification when admin disables or deletes a user."""
+    safe_name = html.escape(display_name) if display_name else 'there'
+    subscribe_link = f"mailto:{config.app.email_from}?subject=subscribe"
+
+    if reason == "deleted":
+        action_text = "removed you from"
+    else:
+        action_text = "disabled your subscription to"
+
+    body = f"""
+    <html>
+    <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+        <h2>Unsubscribed from Meeting Summaries</h2>
+        <p>Hi {safe_name},</p>
+        <p>An administrator has {action_text} the automated meeting summary service.</p>
+        <p>You will no longer receive AI-generated meeting summaries via email.</p>
+
+        <p style="margin: 20px 0;">
+            <strong>Want to resubscribe?</strong> Click below or contact your administrator:
+        </p>
+        <p style="margin: 20px 0;">
+            <a href="{subscribe_link}"
+               style="display: inline-block; padding: 12px 24px; background-color: #2563eb; color: white;
+                      text-decoration: none; border-radius: 6px; font-weight: bold;">
+                Resubscribe
+            </a>
+        </p>
+        <p>Best regards,<br/>Meeting Notes Bot</p>
+    </body>
+    </html>
+    """
+
+    _send_admin_notification(email, display_name, "Meeting Summaries - You've Been Unsubscribed", body)
 
 
 @router.get("/users", response_class=HTMLResponse)
@@ -125,6 +263,7 @@ async def add_user(email: str = Form(...)):
     """Add a new user to the subscription list.
 
     Uses PreferenceManager to resolve email to GUID and create preference.
+    Sends welcome email explaining the service.
     """
     email = email.strip().lower()
 
@@ -145,12 +284,25 @@ async def add_user(email: str = Form(...)):
             detail="Failed to add user. Could not resolve Azure AD identity."
         )
 
+    # Get display name from email alias if available
+    display_name = None
+    with db.get_session() as session:
+        alias = session.query(EmailAlias).filter_by(alias_email=email).first()
+        if alias:
+            display_name = alias.display_name
+
+    # Send welcome email
+    _send_admin_welcome_email(email, display_name)
+
     return RedirectResponse(url="/admin/users", status_code=303)
 
 
 @router.post("/users/{email}/toggle")
 async def toggle_user(email: str):
-    """Toggle user's receive_emails status."""
+    """Toggle user's receive_emails status.
+
+    Sends notification email when disabling (unsubscribe) or enabling (welcome).
+    """
     email = email.lower().strip()
 
     with db.get_session() as session:
@@ -171,16 +323,39 @@ async def toggle_user(email: str):
         if not user:
             raise HTTPException(status_code=404, detail="User not found")
 
+        # Track previous state for notification
+        was_subscribed = user.receive_emails
         user.receive_emails = not user.receive_emails
         session.commit()
+
+        # Get display name for email
+        display_name = alias.display_name if alias else None
+
+        # Send appropriate notification
+        if was_subscribed and not user.receive_emails:
+            # User was disabled - send unsubscribe notification
+            _send_admin_unsubscribe_email(email, display_name, reason="disabled")
+        elif not was_subscribed and user.receive_emails:
+            # User was re-enabled - send welcome email
+            _send_admin_welcome_email(email, display_name)
 
         return {"success": True, "receive_emails": user.receive_emails}
 
 
 @router.delete("/users/{email}")
 async def delete_user(email: str):
-    """Delete a user from the subscription list."""
+    """Delete a user from the subscription list.
+
+    Sends unsubscribe notification before deleting.
+    """
     email = email.lower().strip()
+
+    # Get display name before deletion for the notification email
+    display_name = None
+    with db.get_session() as session:
+        alias = session.query(EmailAlias).filter_by(alias_email=email).first()
+        if alias:
+            display_name = alias.display_name
 
     # Use PreferenceManager for consistent GUID-based deletion
     pref_manager = PreferenceManager(db)
@@ -188,6 +363,9 @@ async def delete_user(email: str):
 
     if not success:
         raise HTTPException(status_code=404, detail="User not found")
+
+    # Send unsubscribe notification after successful deletion
+    _send_admin_unsubscribe_email(email, display_name, reason="deleted")
 
     return {"success": True}
 

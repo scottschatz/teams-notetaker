@@ -25,65 +25,6 @@ You MUST return ONLY a valid JSON object. No explanatory text before or after. N
 
 ---
 
-**AUDIENCE INFERENCE & ADAPTATION (CRITICAL):**
-
-Infer the primary audience for this meeting based on:
-- Participant roles and titles
-- Topics discussed
-- Level of technical detail in the transcript
-
-Audience types:
-- TECHNICAL: Engineers, IT, developers; implementation detail expected
-- OPERATIONAL: Mixed technical + business; systems, process, execution
-- BUSINESS: Managers, sales, leadership; outcomes, tradeoffs, implications
-
-**CRITICAL: BUSINESS audience does NOT mean company-wide summary.**
-BUSINESS audience means: explain technical context briefly so non-technical readers can follow.
-It does NOT mean: remove detail, abstract specifics, or sanitize content.
-
-Audience inference priority (in order):
-1. Level of technical detail in conversation (code, systems, configs)
-2. Decisions being made (technical vs strategic)
-3. Participant titles (only if #1 and #2 are unclear)
-
-Rules:
-- Audience inference affects ONLY explanation depth and terminology.
-- Audience inference MUST NOT remove:
-  - Technical detail
-  - Numbers or metrics
-  - Named tools or systems
-  - Action items
-  - Decision rationale
-- Do NOT abstract or sanitize content for executives.
-- Assume readers did NOT attend the meeting.
-
-Explanation guidance:
-- TECHNICAL: Assume domain knowledge; minimal background explanation.
-- OPERATIONAL: Explain tools/processes only where needed for coordination.
-- BUSINESS: Briefly explain technical concepts on first mention.
-
----
-
-**INTERNAL CLASSIFICATION (DO NOT OUTPUT):**
-
-Before generating the summary, internally determine:
-- inferred_audience: technical | operational | business
-- meeting_complexity: low | medium | high
-
-Meeting complexity is based on CONTENT, not duration:
-- LOW: Single-topic sync, status update, brief check-in
-- MEDIUM: Multi-topic discussion, some decisions, moderate detail
-- HIGH: Strategic decisions, financial analysis, multi-stakeholder, technical architecture
-
-Use this classification ONLY to:
-- Adjust explanation depth
-- Determine discussion_notes length
-- Shape executive_summary tone
-
-Do NOT output these values.
-
----
-
 **CRITICAL PRESERVATION RULES (APPLY TO ALL SECTIONS):**
 
 These rules ensure NO detail is lost. Each section is INDEPENDENT - do not reduce detail in one section to make room for another.
@@ -144,19 +85,6 @@ Teams transcription often mishears these phrases. ALWAYS correct them:
 - "half power" or "half-power" → "half-hour" (e.g., "half-hour calls")
 - "Lisa Durata" or "Lisa Durado" → "Lisa Daretta"
 
-**IMPORTANT COMPANY TERMINOLOGY & ACRONYMS:**
-
-These are key business terms and acronyms used at Townsquare. Preserve these exactly as written:
-
-- **SSP** = Strategic Sales Plan (executive planning process coordinated by Lisa Daretta)
-- **AMPED** = A sales/advertising product
-- **AMPED ex** or **AMPED ex 3rd party** = AMPED product that can exclude a sales source (important distinction)
-- **Ignite** = Townsquare Ignite, a key business unit
-- **TSI** = Townsquare Ignite (abbreviation)
-- **Townsquare Ignite** = Full name of the Ignite business unit
-
-When these terms appear in the transcript, preserve them in your summary with correct capitalization and spelling.
-
 **REQUIRED OUTPUT STRUCTURE:**
 
 {{
@@ -165,27 +93,22 @@ When these terms appear in the transcript, preserve them in your summary with co
   "highlights": [...],         // Array of key moment objects (5-8 max)
   "key_numbers": [...],        // Array of quantitative metric objects (max 20)
   "executive_summary": "...",  // String (50-125 words, varies by meeting complexity)
-  "discussion_notes": "...",   // String (appropriate length based on audience + complexity)
-  "collapsible_call_notes": "...", // String (30-50% of discussion_notes, scannable version)
-  "ai_answerable_questions": [...], // Array of questions ACTUALLY ASKED (strict - real askers only)
-  "topics_to_explore": [...],      // Array of inferred topics worth exploring (no fake askers)
+  "discussion_notes": "...",   // String (appropriate length based on meeting complexity)
+  "ai_answerable_questions": [...], // Array of ALL questions AI can help answer (no limit)
 
   // RAG/SEARCH METADATA (for future chatbot and knowledge base)
   "technical_entities": [...],     // Array of tools, libraries, ports, services mentioned
   "projects_referenced": [...],    // Array of project/repo names discussed
   "rejected_alternatives": [...],  // Array of options that were NOT chosen (with reasons)
   "risk_indicators": {{...}},      // Object with sentiment, urgency, risk flags
-  "knowledge_graph_links": [...],  // Array of relationship triples (subject-predicate-object)
-
-  // QUALITY FLAGS (optional - include only if applicable)
-  "quality_flags": {{...}}         // Optional object for programmatic escalation decisions
+  "knowledge_graph_links": [...]   // Array of relationship triples (subject-predicate-object)
 }}
 
 ---
 
 **ACTION ITEMS EXTRACTION:**
 
-Extract FUTURE action items, tasks, and to-dos. For each provide:
+Extract ALL action items, tasks, and to-dos. For each provide:
 - **description**: Clear, actionable task description (what needs to be done)
 - **assignee**: Person responsible (full name if mentioned, or "Unassigned" if unclear)
 - **deadline**: Due date or timeframe. Use these formats:
@@ -200,43 +123,16 @@ Extract FUTURE action items, tasks, and to-dos. For each provide:
   - "follow_up" - Task to be done but no specific deadline mentioned
   - "sop" - Standard Operating Procedure / ongoing practice / cultural habit (e.g., "commit code frequently", "document projects", "check in weekly")
 
-**TEMPORAL FILTERING - CRITICAL:**
-Only include FUTURE actions. EXCLUDE actions that are:
-- **Already completed** (past tense): "Derek did the walkthrough yesterday", "we signed the lease", "she finished that"
-- **Already in progress** (no new instruction): "she has been searching", "he's working on that"
-- **Already delegated** (just status updates): "I told Amanda to start" (Amanda already has this task)
-
-Look for FUTURE signals:
-- "waiting for [name] to..." → Future action for [name]
-- "can you..." / "please..." → Future request
-- "[name] will..." / "I'll..." → Future commitment
-- "we need to..." → Future need (only if assignee is clear)
-
-**MEETING PARTICIPANT RULE - CRITICAL:**
-Action items MUST be assigned to people who were IN THIS MEETING: {participant_names}
-
-When external people/vendors are mentioned:
-- The MEETING PARTICIPANT who will follow up gets the action item, NOT the external person
-- Frame the description as the participant's action, not the external person's
-
-CORRECT example:
-  Transcript: "Can you guys give Mark Ray some candidate names for the CEO search?"
-  Assignee: "Joe Ainsworth" (meeting participant)
-  Description: "Provide RCS CEO candidate recommendations to Erik for Mark Ray's search"
-
-INCORRECT example:
-  Assignee: "Mark Ray" (external person, NOT in meeting)
-  Description: "Find CEO candidates" (sounds like Mark's task)
-
-**General Guidelines:**
+Guidelines:
 - Only include EXPLICIT action items (not general discussions)
 - Look for phrases like: "can you...", "please...", "we need to...", "I'll...", "[name] will..."
 - **NEVER COMBINE**: If the same task applies to multiple people, create SEPARATE action items for each person
+- Include both immediate tasks and follow-up items
 - Do NOT include hypothetical or conditional tasks ("if we decide to...")
 - **ORDERING**: List "immediate" tasks FIRST, then "follow_up", then "sop" items LAST
 - **CRITICAL: Bold all participant names using **Name** markdown syntax**
 - **CRITICAL: Verify assignee attribution by checking the <v SpeakerName> tags - only assign to people who explicitly accepted the task**
-- **CRITICAL: If in doubt about whether something is a FUTURE action, include it. But if clearly past-tense or already delegated, EXCLUDE it.**
+- **CRITICAL: Prefer MORE action items over fewer. If in doubt about whether something is an action item, include it.**
 
 Example action_items entries:
 {{
@@ -377,19 +273,6 @@ Content:
 - Include specific names, numbers, and dates from the transcript
 - **IMPORTANT: Bold all participant names** using **Name** markdown
 
-**EXECUTIVE SUMMARY AUDIENCE ALIGNMENT:**
-
-Adapt tone and explanation level to inferred audience:
-- Technical: Focus on outcomes and decisions; minimal explanation
-- Operational: Bridge technical execution and business impact
-- Business: Include brief context for technical decisions
-
-Executive summary MUST still include:
-- Named participants
-- Key decisions
-- Quantitative metrics
-- Why outcomes matter
-
 Example executive_summary:
 "**Scott Schatz** led a strategic meeting addressing AI technology decisions, personnel changes, and market opportunities. The team decided to build an in-house AI call summary solution instead of purchasing Ignite licenses, saving significant licensing costs while providing **Joe Ainsworth** more customization control. **Scott** approved immediate termination of underperforming personnel including **James Tejada**. The group discussed a potential $600K Danbury-Shreveport market swap with Cumulus, though **Bill Jones** raised cash flow concerns requiring careful CapEx analysis before proceeding."
 
@@ -399,24 +282,10 @@ Example executive_summary:
 
 Create a consolidated narrative summary organized by THEME (not chronologically).
 
-**DISCUSSION NOTES LENGTH GUIDANCE:**
-
-Determine length using BOTH inferred audience and meeting complexity:
-
-LOW complexity:
-- Any audience: 200–300 words
-
-MEDIUM complexity:
-- Technical: 350–500 words
-- Operational: 300–450 words
-- Business: 250–400 words
-
-HIGH complexity:
-- Technical: 500–800 words
-- Operational: 400–650 words
-- Business: 350–600 words
-
-Failure to meet appropriate depth for audience and complexity is INVALID output.
+**LENGTH**: Make the discussion notes appropriate to the meeting complexity and content:
+- SHORT meetings (<30 min, few topics): 200-300 words
+- MEDIUM meetings (30-60 min, moderate complexity): 300-500 words
+- COMPLEX meetings (60+ min, many topics/decisions): 500-800 words
 
 The goal is comprehensive coverage of key themes, not arbitrary word limits.
 Focus on quality and completeness over brevity.
@@ -453,42 +322,6 @@ The meeting addressed several staffing decisions. **Scott** approved immediate t
 **Market Opportunities and Financial Analysis**
 
 **Eric Williams** and the team evaluated a proposed $600K Danbury-Shreveport market swap with Cumulus. While the strategic benefits were clear, **Bill Jones** raised concerns about Danbury cash flow implications and emphasized the need for careful CapEx analysis before proceeding. **Eric** also highlighted that trade revenue reached $3.8M this year versus the typical $1M baseline, demonstrating strong performance."
-
----
-
-**COLLAPSIBLE CALL NOTES (REQUIRED):**
-
-Generate a condensed, scannable version of discussion_notes designed for collapsible UI display (e.g., Teams, dashboards).
-
-Rules:
-- 30–50% of the length of discussion_notes
-- Organized by the SAME thematic subheadings
-- Preserve:
-  - Decisions
-  - Key numbers
-  - Action-driving context
-- Remove:
-  - Narrative elaboration
-  - Redundant explanation
-- **PREFER short paragraphs over bullets** - bullets only if listing 3+ parallel items
-- Do NOT introduce new information
-- Do NOT remove named tools, systems, or people
-- Must stand alone if expanded independently
-- **IMPORTANT: Bold all participant names** using **Name** markdown
-- **CRITICAL: Bold the thematic subheadings** using **Subheading** markdown
-
-Example collapsible_call_notes:
-"**AI Technology Decisions**
-
-**Scott Schatz** approved in-house AI call summary solution over Ignite licenses for cost savings and customization. **Joe Ainsworth** to lead implementation using Claude API.
-
-**Personnel Changes**
-
-**Scott** approved termination of **James Tejada** and NY engineer. **Eric Williams** identified $4M potential savings in broadcast personnel. Teams/VoIP migration completing mid-January.
-
-**Market Opportunities**
-
-$600K Danbury-Shreveport swap with Cumulus under evaluation. **Bill Jones** raised Danbury cash flow concerns; CapEx analysis required. Trade revenue reached $3.8M vs $1M typical."
 
 ---
 
@@ -532,23 +365,9 @@ For each ACTUAL question provide:
 - Company-specific decisions ("Did we approve X?", "What did leadership decide?")
 - Rhetorical or social questions ("How are you?", "Right?", "You know?")
 
-**ABSOLUTE RULE - NO INVENTED QUESTIONS:**
-This section is ONLY for questions that were LITERALLY SPOKEN as questions in the transcript.
-
-⛔ NEVER INCLUDE:
-- Questions you think "would be helpful" to answer
-- Questions implied by topics discussed
-- Questions the team "probably has" about concepts mentioned
-- ANY question where asked_by would be "Not explicitly asked" or similar
-
-✅ ONLY INCLUDE:
-- Questions where you can point to exact transcript text showing someone asking
-- Questions with a real person's name in asked_by (verify with <v SpeakerName> tags)
-
-**IT IS BETTER TO RETURN AN EMPTY ARRAY than to invent questions.**
-Many meetings have zero AI-answerable questions - that's completely fine.
-
-Guidelines for ACTUAL questions only:
+Guidelines:
+- Include ALL genuinely asked AI-answerable questions (no limit - this section is high value)
+- ONLY include questions where your answer would genuinely help the team
 - Provide SPECIFIC, ACTIONABLE answers (tool names, approaches, resources)
 - If you're not confident in an answer, still provide it with appropriate caveats
 - Follow-up prompts should help them dig deeper on the topic
@@ -642,74 +461,6 @@ This enables queries like: "Who is the primary contact for Nginx issues?" or "Wh
 
 ---
 
-**QUALITY FLAGS (OPTIONAL):**
-
-Include this field ONLY if one or more conditions apply. If no flags apply, omit the entire field.
-
-{{
-  "confidence_level": "high" | "medium" | "low",
-  "potential_detail_loss": true | false,
-  "reason": "Brief explanation if low confidence or potential loss"
-}}
-
-When to include:
-- **confidence_level: "low"** - Transcript is fragmented, speakers unclear, or key context missing
-- **potential_detail_loss: true** - Meeting had high complexity but summary may have compressed too much
-
-This enables programmatic escalation to Sonnet when Haiku output quality is uncertain.
-Do NOT include quality_flags if confidence is high and no detail loss concerns.
-
----
-
-**TOPICS TO EXPLORE (Low Priority - Generate Last):**
-
-This section captures valuable topics discussed that AI could help with, even if no one explicitly asked a question.
-These are INFERRED from the discussion - areas where external knowledge would provide real value.
-
-**HIGH QUALITY BAR - Only include topics that:**
-1. Were discussed for more than a passing mention (substantive conversation)
-2. Have a SPECIFIC, ACTIONABLE knowledge gap (not generic advice)
-3. Would provide REAL VALUE to someone re-reading this summary
-4. Are NOT internal company decisions (those don't need external research)
-
-**INCLUDE topics where:**
-- A technical concept or tool was discussed but the team seemed uncertain about best practices
-- A significant cost/budget decision could benefit from market research or alternatives
-- Legal, regulatory, or compliance implications were raised but not fully resolved
-- A comparison between vendors/tools/approaches was discussed without a clear winner
-- Risk mitigation strategies were needed but not fully explored
-
-**DO NOT include:**
-- Topics mentioned in passing without substantive discussion
-- Generic "best practices" that are obvious or easily searchable
-- Internal company-specific topics (budgets, headcount, org structure decisions)
-- Topics already covered in ai_answerable_questions
-- Hypothetical or "nice to have" research topics
-- Topics where the team already demonstrated expertise
-
-**QUANTITY GUIDELINE:** Quality over quantity. It's better to have ZERO topics than to include filler.
-
-For each topic provide:
-- **topic**: A specific question (e.g., "What are the FCC requirements for FM antenna consolidation?")
-- **context**: Why this topic is relevant based on the discussion (1 sentence)
-- **answer**: Your helpful answer (2-4 sentences with specific, actionable details)
-- **follow_up_prompts**: Array of 1-2 suggested prompts for deeper research
-
-Example topics_to_explore entry:
-{{
-  "topic": "What are the regulatory considerations when consolidating multiple FM antennas on a single tower?",
-  "context": "Team discussed Saint George FM consolidation project with potential interference concerns",
-  "answer": "FCC regulations require interference studies (47 CFR 73.318) before co-locating FM antennas. Key considerations: (1) Minimum vertical separation requirements; (2) Intermodulation product analysis; (3) RF hazard compliance for tower workers. Most consolidations require an engineering study filed with the FCC.",
-  "follow_up_prompts": [
-    "What's involved in an FM intermodulation study?",
-    "How do I calculate required antenna separation for FM stations?"
-  ]
-}}
-
-If no topics meet the high quality bar, use: "topics_to_explore": []
-
----
-
 **TRANSCRIPT:**
 
 {transcript}
@@ -726,7 +477,6 @@ Remember:
 - Do NOT echo back the transcript in your response
 - Ensure all strings are properly quoted and escaped
 - Ensure all JSON arrays and objects are properly closed
-- **AVOID UNESCAPED QUOTATION MARKS** - use single quotes or escape double quotes in string values
 - Discussion notes should be appropriate length for meeting complexity (200-800 words)
 
 **FINAL PRESERVATION CHECK:**
@@ -739,24 +489,4 @@ Before returning, verify:
 □ Every decision has technical/business justification in reasoning, not just "what" but "why"
 □ Every specific detail in executive_summary is explained in discussion_notes (Cross-Reference)
 □ All relative dates (Tomorrow, Next week) are converted to absolute dates
-
-**QUALITY FAILURE CONDITIONS (INVALID OUTPUT):**
-The following conditions make output INVALID:
-□ Discussion_notes explanation depth mismatched to inferred audience
-□ Over-explaining basic concepts in technical meetings
-□ Under-explaining technical decisions in business meetings
-□ Collapsible_call_notes omits a decision or key number present in discussion_notes
-□ Collapsible_call_notes exceeds 50% of discussion_notes length
-□ Missing required JSON fields
-
-**FINAL SELF-CHECK (SILENT):**
-
-Before returning output:
-- Verify audience inference consistency
-- Verify collapsible_call_notes accuracy
-- Verify no detail loss between discussion_notes and collapsible_call_notes
-
-If any issue is detected:
-- Regenerate the FULL response once
-- Do NOT mention retries or checks
 """

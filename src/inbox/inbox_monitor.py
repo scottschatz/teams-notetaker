@@ -449,7 +449,21 @@ class InboxMonitor:
             <h2>Subscription Confirmed</h2>
             <p>Hi {safe_name},</p>
             <p>You've been successfully subscribed to meeting summary emails.</p>
-            <p>You'll receive summaries for any Teams meetings you attend that have transcription enabled.</p>
+
+            <div style="background: #f8f9fa; border-left: 4px solid #2563eb; padding: 15px; margin: 15px 0; border-radius: 4px;">
+                <h3 style="margin-top: 0; color: #1e40af;">How This Works</h3>
+                <p style="margin: 10px 0;">This is an automated meeting summary service that:</p>
+                <ul style="margin: 10px 0; padding-left: 20px;">
+                    <li><strong>Monitors your Teams meetings</strong> that have transcription enabled</li>
+                    <li><strong>Generates AI-powered summaries</strong> using Claude, including action items, decisions, and key discussion points</li>
+                    <li><strong>Sends you an email summary</strong> after each meeting you attend</li>
+                </ul>
+                <p style="margin: 10px 0; font-size: 13px; color: #666;">
+                    Summaries are only generated for meetings where someone enables transcription.
+                    Your meeting content is processed securely and not stored beyond what's needed for the summary.
+                </p>
+            </div>
+
             <p>If you ever want to unsubscribe, click the button below or reply to any summary email with "unsubscribe" in the subject line.</p>
             <p style="margin: 20px 0;">
                 <a href="mailto:{self.mailbox_email}?subject=unsubscribe"

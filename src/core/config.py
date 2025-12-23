@@ -78,13 +78,19 @@ class AzureADConfig:
     client_secret: str = ""
     tenant_id: str = ""
     redirect_uri: str = "http://localhost:8000/auth/callback"
-    allowed_domain: str = "townsquaremedia.com"
+    allowed_domains: str = "townsquaremedia.com"  # Comma-separated list of allowed domains
     authority: str = ""
 
     def __post_init__(self):
         """Build authority URL from tenant ID if not provided."""
         if self.tenant_id and not self.authority:
             self.authority = f"https://login.microsoftonline.com/{self.tenant_id}"
+
+    def get_allowed_domains_list(self) -> list:
+        """Get list of allowed domains from comma-separated config."""
+        if not self.allowed_domains:
+            return []
+        return [d.strip().lower() for d in self.allowed_domains.split(",") if d.strip()]
 
     def is_whitelist_enabled(self) -> bool:
         """Check if user whitelist is enabled."""
@@ -259,7 +265,7 @@ class ConfigManager:
             client_secret=os.getenv("AZURE_AD_CLIENT_SECRET", ""),
             tenant_id=os.getenv("AZURE_AD_TENANT_ID", ""),
             redirect_uri=os.getenv("AZURE_AD_REDIRECT_URI", "http://localhost:8000/auth/callback"),
-            allowed_domain=os.getenv("AZURE_AD_ALLOWED_DOMAIN", "townsquaremedia.com"),
+            allowed_domains=os.getenv("AZURE_AD_ALLOWED_DOMAINS", "townsquaremedia.com"),
         )
 
         # Azure Relay configuration (for webhooks)

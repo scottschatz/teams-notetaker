@@ -30,31 +30,50 @@ def validate_email(email: str) -> bool:
     return bool(re.match(pattern, email))
 
 
-def validate_domain(email: str, allowed_domain: str) -> bool:
+def validate_domain(email: str, allowed_domains) -> tuple:
     """
-    Validate that email is from allowed domain.
+    Validate that email is from an allowed domain.
 
     Args:
         email: Email address to check
-        allowed_domain: Allowed domain (e.g., "townsquaremedia.com")
+        allowed_domains: Single domain string, comma-separated string, or list of domains
+                        (e.g., "townsquaremedia.com" or ["townsquaremedia.com", "townsquareignite.com"])
 
     Returns:
-        True if email is from allowed domain, False otherwise
+        Tuple of (is_valid: bool, error_message: str or None)
 
     Example:
-        validate_domain("user@townsquaremedia.com", "townsquaremedia.com") -> True
-        validate_domain("user@gmail.com", "townsquaremedia.com") -> False
+        validate_domain("user@townsquaremedia.com", "townsquaremedia.com") -> (True, None)
+        validate_domain("user@gmail.com", "townsquaremedia.com") -> (False, "gmail.com not in allowed domains")
+        validate_domain("user@townsquareignite.com", ["townsquaremedia.com", "townsquareignite.com"]) -> (True, None)
     """
-    if not email or not allowed_domain:
-        return False
+    if not email:
+        return False, "Email is required"
 
     if "@" not in email:
-        return False
+        return False, "Invalid email format"
 
     email_domain = email.split("@")[1].lower()
-    allowed_domain = allowed_domain.lower()
 
-    return email_domain == allowed_domain
+    # Handle different input types for allowed_domains
+    if not allowed_domains:
+        return False, "No allowed domains configured"
+
+    if isinstance(allowed_domains, str):
+        # Split comma-separated string into list
+        domains_list = [d.strip().lower() for d in allowed_domains.split(",") if d.strip()]
+    elif isinstance(allowed_domains, list):
+        domains_list = [d.lower() for d in allowed_domains if d]
+    else:
+        return False, "Invalid allowed_domains configuration"
+
+    if not domains_list:
+        return False, "No allowed domains configured"
+
+    if email_domain in domains_list:
+        return True, None
+
+    return False, f"{email_domain} not in allowed domains"
 
 
 def validate_meeting_id(meeting_id: str) -> bool:

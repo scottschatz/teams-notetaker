@@ -159,10 +159,8 @@ class DistributionProcessor(BaseProcessor):
             if not bypass_opt_in and not send_to_email:
                 filtered_emails = []
                 for email in participant_emails:
-                    # For resend_target='organizer', skip preference check (always send to organizer)
-                    if resend_target == 'organizer':
-                        filtered_emails.append(email)
-                    elif self.pref_manager.should_send_email(email, meeting_id):
+                    # Always check subscription status, even for organizer resends
+                    if self.pref_manager.should_send_email(email, meeting_id):
                         filtered_emails.append(email)
                     else:
                         logger.debug(f"Skipping {email} based on preferences")
@@ -233,7 +231,8 @@ class DistributionProcessor(BaseProcessor):
                     "highlights": summary.highlights_json or [],
                     "mentions": summary.mentions_json or [],
                     "key_numbers": summary.key_numbers_json or [],  # Financial/quantitative metrics
-                    "ai_answerable_questions": summary.ai_answerable_questions_json or []  # AI research assistant
+                    "ai_answerable_questions": summary.ai_answerable_questions_json or [],  # Questions actually asked
+                    "topics_to_explore": summary.topics_to_explore_json or []  # Inferred topics
                 }
             else:
                 enhanced_summary_data = {
@@ -243,7 +242,8 @@ class DistributionProcessor(BaseProcessor):
                     "highlights": [],
                     "mentions": [],
                     "key_numbers": [],
-                    "ai_answerable_questions": []
+                    "ai_answerable_questions": [],
+                    "topics_to_explore": []
                 }
 
             # Build transcript stats (v2.1: includes speaker breakdown)

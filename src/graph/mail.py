@@ -626,13 +626,21 @@ class EmailSender:
 """
                 for p in top_speakers:
                     email = p.get("email") or ""
-                    name = p.get("display_name", email)
+                    speaker_data = p.get('_speaker_data', {})
+                    # Prefer transcript speaker name if it looks like a proper name (has space)
+                    # Otherwise fall back to participant display_name
+                    transcript_name = speaker_data.get('name', '')
+                    participant_name = p.get("display_name", email)
+                    # Use transcript name if it has a space (proper name) or if participant name is username format
+                    if transcript_name and (' ' in transcript_name or '.' in participant_name or '@' in participant_name):
+                        name = transcript_name
+                    else:
+                        name = participant_name
                     # Handle None values safely
                     is_org = (email.lower() == organizer_email.lower()) if email and organizer_email else False
                     role = " (Organizer)" if is_org else ""
                     job_title = p.get("job_title", "")
                     photo_base64 = p.get("photo_base64", "")
-                    speaker_data = p.get('_speaker_data', {})
 
                     # Show speaker with photo, name, title, and FULL stats
                     html += f"""            <div style="display: flex; align-items: center; margin-bottom: 15px;">
@@ -680,7 +688,16 @@ class EmailSender:
                 # Show first 5 (or all if <=5) with full detail + photos
                 for p in show_with_photos:
                     email = p.get("email") or ""
-                    name = p.get("display_name", email)
+                    speaker_data = p.get('_speaker_data', {})
+                    # Prefer transcript speaker name if it looks like a proper name (has space)
+                    # Otherwise fall back to participant display_name
+                    transcript_name = speaker_data.get('name', '')
+                    participant_name = p.get("display_name", email)
+                    # Use transcript name if it has a space (proper name) or if participant name is username format
+                    if transcript_name and (' ' in transcript_name or '.' in participant_name or '@' in participant_name):
+                        name = transcript_name
+                    else:
+                        name = participant_name
                     is_org = (email.lower() == organizer_email.lower()) if email and organizer_email else False
                     role = " (Organizer)" if is_org else ""
                     job_title = p.get("job_title", "")
@@ -719,8 +736,15 @@ class EmailSender:
                 if show_compact:
                     compact_names = []
                     for p in show_compact:
-                        name = p.get("display_name", p.get("email", ""))
                         email = p.get("email") or ""
+                        speaker_data = p.get('_speaker_data', {})
+                        # Prefer transcript speaker name if it looks like a proper name
+                        transcript_name = speaker_data.get('name', '')
+                        participant_name = p.get("display_name", email)
+                        if transcript_name and (' ' in transcript_name or '.' in participant_name or '@' in participant_name):
+                            name = transcript_name
+                        else:
+                            name = participant_name
                         is_org = (email.lower() == organizer_email.lower()) if email and organizer_email else False
                         if is_org:
                             name += " (Organizer)"
@@ -732,6 +756,7 @@ class EmailSender:
 """
 
             # Invited section - show invitees who may not have attended
+            # Truncate to show first 5 names + "+X more" if list is long
             if invitees and len(invitees) > 0:
                 html += """            <div style="margin-top: 20px; margin-bottom: 10px;"><strong>Invited:</strong></div>
 """
@@ -741,7 +766,17 @@ class EmailSender:
                     name = inv.get("name") or inv.get("email", "").split("@")[0]
                     invitee_names.append(name)
 
-                html += f"""            <div style="padding: 10px; background: #fff3e0; border-radius: 4px; font-size: 0.9em; color: #666;">
+                # Truncate if more than 5 invitees
+                MAX_INVITEES_SHOWN = 5
+                if len(invitee_names) > MAX_INVITEES_SHOWN:
+                    shown_names = invitee_names[:MAX_INVITEES_SHOWN]
+                    remaining_count = len(invitee_names) - MAX_INVITEES_SHOWN
+                    html += f"""            <div style="padding: 10px; background: #fff3e0; border-radius: 4px; font-size: 0.9em; color: #666;">
+                {', '.join(shown_names)}, <strong>+{remaining_count} more</strong>
+            </div>
+"""
+                else:
+                    html += f"""            <div style="padding: 10px; background: #fff3e0; border-radius: 4px; font-size: 0.9em; color: #666;">
                 {', '.join(invitee_names)}
             </div>
 """
@@ -902,44 +937,85 @@ class EmailSender:
             # Too many numbers - skip section (would be overwhelming and lose meaning)
             logger.debug(f"Skipping Key Numbers section: {len(key_numbers)} numbers exceeds limit of {MAX_KEY_NUMBERS}")
 
-        # AI Research Assistant Section (v2.2: NEW - questions AI can help answer)
+        # AI Research Assistant Section (v2.3: Two-tier - Questions Asked + Topics to Explore)
         ai_questions = enhanced_summary_data.get("ai_answerable_questions", [])
-        if ai_questions:
+        topics_to_explore = enhanced_summary_data.get("topics_to_explore", [])
+
+        if ai_questions or topics_to_explore:
             html += """        <div style="background: #f3e5f5; padding: 15px; margin: 25px 0; border-radius: 4px; border-left: 4px solid #9c27b0;">
             <h3 style="margin-top: 0; color: #7b1fa2;">🤖 AI Research Assistant</h3>
-            <p style="font-size: 12px; color: #666; margin-top: -5px; margin-bottom: 15px;">Questions from this meeting that AI can help answer</p>
 """
-            for i, q in enumerate(ai_questions[:5]):  # Limit to 5 questions
-                question = q.get("question", "")
-                asked_by = q.get("asked_by", "")
-                answer = q.get("answer", "")
-                follow_ups = q.get("follow_up_prompts", [])
+            # Section 1: Questions Actually Asked
+            if ai_questions:
+                html += """            <p style="font-size: 13px; font-weight: 600; color: #4a148c; margin-bottom: 10px;">❓ Questions Asked</p>
+"""
+                for i, q in enumerate(ai_questions[:5]):  # Limit to 5 questions
+                    question = q.get("question", "")
+                    asked_by = q.get("asked_by", "")
+                    answer = q.get("answer", "")
+                    follow_ups = q.get("follow_up_prompts", [])
 
-                # Apply blue+bold styling to names
-                question = self._make_names_blue(question)
-                answer = self._make_names_blue(answer)
-                if asked_by:
-                    asked_by = self._make_names_blue(f"**{asked_by}**")
+                    # Apply blue+bold styling to names
+                    question = self._make_names_blue(question)
+                    answer = self._make_names_blue(answer)
+                    if asked_by:
+                        asked_by = self._make_names_blue(f"**{asked_by}**")
 
-                html += f"""            <div style="background: white; padding: 12px; margin-bottom: 12px; border-radius: 4px; border: 1px solid #e1bee7;">
-                <p style="margin: 0 0 8px 0; font-weight: 600; color: #4a148c;">❓ {question}</p>
+                    html += f"""            <div style="background: white; padding: 12px; margin-bottom: 12px; border-radius: 4px; border: 1px solid #e1bee7;">
+                <p style="margin: 0 0 8px 0; font-weight: 600; color: #4a148c;">{question}</p>
 """
-                if asked_by:
-                    html += f"""                <p style="margin: 0 0 8px 0; font-size: 12px; color: #666;">Asked by: {asked_by}</p>
+                    if asked_by:
+                        html += f"""                <p style="margin: 0 0 8px 0; font-size: 12px; color: #666;">Asked by: {asked_by}</p>
 """
-                if answer:
-                    html += f"""                <p style="margin: 0 0 8px 0; color: #333;"><strong>Answer:</strong> {answer}</p>
+                    if answer:
+                        html += f"""                <p style="margin: 0 0 8px 0; color: #333;"><strong>Answer:</strong> {answer}</p>
 """
-                if follow_ups:
-                    html += """                <p style="margin: 0 0 4px 0; font-size: 12px; color: #7b1fa2;"><strong>Dig deeper:</strong></p>
+                    if follow_ups:
+                        html += """                <p style="margin: 0 0 4px 0; font-size: 12px; color: #7b1fa2;"><strong>Dig deeper:</strong></p>
                 <ul style="margin: 0; padding-left: 20px; font-size: 12px; color: #666;">
 """
-                    for prompt in follow_ups[:2]:  # Limit to 2 follow-up prompts
-                        html += f"""                    <li style="margin-bottom: 4px;">{prompt}</li>
+                        for prompt in follow_ups[:2]:  # Limit to 2 follow-up prompts
+                            html += f"""                    <li style="margin-bottom: 4px;">{prompt}</li>
 """
-                    html += """                </ul>
+                        html += """                </ul>
 """
-                html += """            </div>
+                    html += """            </div>
+"""
+
+            # Section 2: Topics to Explore (inferred from discussion)
+            if topics_to_explore:
+                html += """            <p style="font-size: 13px; font-weight: 600; color: #4a148c; margin-bottom: 10px; margin-top: 15px;">💡 Topics Worth Exploring</p>
+            <p style="font-size: 11px; color: #666; margin-top: -8px; margin-bottom: 10px;">Based on topics discussed in the meeting</p>
+"""
+                for i, t in enumerate(topics_to_explore[:5]):  # Limit to 5 topics
+                    topic = t.get("topic", "")
+                    context = t.get("context", "")
+                    answer = t.get("answer", "")
+                    follow_ups = t.get("follow_up_prompts", [])
+
+                    # Apply blue+bold styling to names
+                    topic = self._make_names_blue(topic)
+                    answer = self._make_names_blue(answer)
+
+                    html += f"""            <div style="background: white; padding: 12px; margin-bottom: 12px; border-radius: 4px; border: 1px solid #ce93d8;">
+                <p style="margin: 0 0 8px 0; font-weight: 600; color: #6a1b9a;">{topic}</p>
+"""
+                    if context:
+                        html += f"""                <p style="margin: 0 0 8px 0; font-size: 12px; color: #888; font-style: italic;">{context}</p>
+"""
+                    if answer:
+                        html += f"""                <p style="margin: 0 0 8px 0; color: #333;">{answer}</p>
+"""
+                    if follow_ups:
+                        html += """                <p style="margin: 0 0 4px 0; font-size: 12px; color: #7b1fa2;"><strong>Dig deeper:</strong></p>
+                <ul style="margin: 0; padding-left: 20px; font-size: 12px; color: #666;">
+"""
+                        for prompt in follow_ups[:2]:  # Limit to 2 follow-up prompts
+                            html += f"""                    <li style="margin-bottom: 4px;">{prompt}</li>
+"""
+                        html += """                </ul>
+"""
+                    html += """            </div>
 """
             html += """        </div>
 

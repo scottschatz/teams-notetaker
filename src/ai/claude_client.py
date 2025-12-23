@@ -40,13 +40,17 @@ class ClaudeClient:
     """
 
     # Model pricing (per million tokens) - as of Dec 2025
-    # Source: https://platform.claude.com/docs/en/about-claude/models/overview
+    # Source: https://docs.anthropic.com/en/docs/about-claude/models
     MODEL_PRICING = {
-        # Latest Claude 4.5 models
+        # Claude 4 models (short aliases used in config)
+        "claude-haiku-4-5": {"input": 1.00, "output": 5.00},
+        "claude-sonnet-4-5": {"input": 3.00, "output": 15.00},
+        "claude-opus-4-5": {"input": 15.00, "output": 75.00},
+        # Claude 4 models (full IDs with dates)
         "claude-sonnet-4-5-20250929": {"input": 3.00, "output": 15.00},
         "claude-haiku-4-5-20251001": {"input": 1.00, "output": 5.00},
-        "claude-opus-4-5-20251101": {"input": 5.00, "output": 25.00},
-        # Legacy models
+        "claude-opus-4-5-20251101": {"input": 15.00, "output": 75.00},
+        # Claude 3.5 models
         "claude-sonnet-4-20250514": {"input": 3.00, "output": 15.00},
         "claude-3-5-haiku-20241022": {"input": 0.80, "output": 4.00},
         "claude-3-5-sonnet-20241022": {"input": 3.00, "output": 15.00},
@@ -65,6 +69,9 @@ class ClaudeClient:
         self.max_retries = 3  # Max retry attempts for transient errors
         logger.info(f"ClaudeClient initialized (model: {config.model})")
 
+    # Threshold for using streaming (requests that may take >10 minutes)
+    STREAMING_THRESHOLD = 16000  # Use streaming for max_tokens >= this
+
     def _make_api_call_with_retry(
         self,
         model: str,
@@ -77,6 +84,9 @@ class ClaudeClient:
     ):
         """
         Make Claude API call with retry logic for transient errors.
+
+        Uses streaming for large requests (max_tokens >= 16000) to avoid
+        timeout issues on long-running operations.
 
         Handles:
         - Rate limiting (429): Wait based on retry-after or exponential backoff
@@ -100,14 +110,32 @@ class ClaudeClient:
             ClaudeAPIError: If API error and max retries exceeded
         """
         try:
-            return self._client.messages.create(
-                model=model,
-                max_tokens=max_tokens,
-                temperature=temperature,
-                system=system,
-                messages=messages,
-                stop_sequences=stop_sequences
-            )
+            # Use streaming for large requests to avoid 10-minute timeout
+            use_streaming = max_tokens >= self.STREAMING_THRESHOLD
+
+            if use_streaming:
+                logger.debug(f"Using streaming for large request (max_tokens={max_tokens})")
+                # Use streaming API and collect the full response
+                with self._client.messages.stream(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                    messages=messages,
+                    stop_sequences=stop_sequences
+                ) as stream:
+                    # Get the final message which contains full response and usage stats
+                    return stream.get_final_message()
+            else:
+                # Standard non-streaming call for smaller requests
+                return self._client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    system=system,
+                    messages=messages,
+                    stop_sequences=stop_sequences
+                )
 
         except AnthropicRateLimitError as e:
             # Rate limited - retry with backoff
@@ -403,7 +431,22 @@ class ClaudeClient:
             - Cache reads: 90% discount ($0.30/MTok for Sonnet 4.5)
             - Cache TTL: 5 minutes
         """
-        pricing = self.MODEL_PRICING.get(model, {"input": 3.00, "output": 15.00})
+        # Try exact match first
+        pricing = self.MODEL_PRICING.get(model)
+
+        # If not found, try partial matching (e.g., "claude-haiku-4-5" matches "haiku")
+        if not pricing:
+            model_lower = model.lower()
+            if "haiku" in model_lower:
+                pricing = {"input": 1.00, "output": 5.00}
+            elif "opus" in model_lower:
+                pricing = {"input": 15.00, "output": 75.00}
+            elif "sonnet" in model_lower:
+                pricing = {"input": 3.00, "output": 15.00}
+            else:
+                # Default to Haiku pricing (cheapest) if unknown
+                logger.warning(f"Unknown model '{model}' for pricing, defaulting to Haiku rates")
+                pricing = {"input": 1.00, "output": 5.00}
 
         # Regular input tokens
         regular_input_cost = (input_tokens / 1_000_000) * pricing["input"]

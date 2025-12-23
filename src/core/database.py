@@ -369,7 +369,8 @@ class Summary(Base):
     highlights_json = Column(JSONB)  # List of {title, timestamp, why_important, type}
     mentions_json = Column(JSONB)  # List of {person, mentioned_by, context, timestamp, type}
     key_numbers_json = Column(JSONB)  # List of {value, unit, context, magnitude} - financial/quantitative metrics
-    ai_answerable_questions_json = Column(JSONB)  # List of {question, asked_by, context, answer, follow_up_prompts} - questions AI can help answer
+    ai_answerable_questions_json = Column(JSONB)  # List of {question, asked_by, context, answer, follow_up_prompts} - questions ACTUALLY asked
+    topics_to_explore_json = Column(JSONB)  # List of {topic, context, answer, follow_up_prompts} - inferred topics worth exploring
 
     # Versioning (NEW - for re-summarization)
     version = Column(Integer, default=1, nullable=False, index=True)
@@ -386,6 +387,15 @@ class Summary(Base):
     # Processing details
     generated_at = Column(DateTime, default=func.now(), index=True)
     generation_time_ms = Column(Integer)
+
+    # Cost tracking
+    generation_cost = Column(DECIMAL(8, 6))  # Cost of initial generation in USD
+    review_model = Column(String(100))  # Model used for review pass (null if no review)
+    review_tokens = Column(Integer)  # Tokens used in review pass
+    review_cost = Column(DECIMAL(8, 6))  # Cost of review pass in USD
+    total_cost = Column(DECIMAL(8, 6))  # Total cost (generation + review)
+    was_reviewed = Column(Boolean, default=False)  # Whether review pass was performed
+    review_trigger = Column(String(100))  # What triggered review: "participant_count", "executive", "financial", "quality_flags"
 
     # Quality metadata
     confidence_score = Column(DECIMAL(3, 2))  # 0.00-1.00

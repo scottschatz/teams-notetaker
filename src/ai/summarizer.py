@@ -353,7 +353,8 @@ class EnhancedSummary:
         highlights: List of key moments
         mentions: List of person mentions
         key_numbers: List of extracted quantitative metrics
-        ai_answerable_questions: List of questions AI can help answer with responses
+        ai_answerable_questions: List of questions ACTUALLY ASKED (strict verification)
+        topics_to_explore: List of inferred topics worth exploring (no fake askers)
         metadata: Summary generation metadata
     """
     overall_summary: str  # Markdown narrative
@@ -364,6 +365,7 @@ class EnhancedSummary:
     mentions: List[Dict[str, Any]]
     key_numbers: List[Dict[str, Any]]
     ai_answerable_questions: List[Dict[str, Any]]
+    topics_to_explore: List[Dict[str, Any]]
     metadata: SummaryMetadata
 
     def to_dict(self) -> Dict[str, Any]:
@@ -377,6 +379,7 @@ class EnhancedSummary:
             "mentions": self.mentions,
             "key_numbers": self.key_numbers,
             "ai_answerable_questions": self.ai_answerable_questions,
+            "topics_to_explore": self.topics_to_explore,
             "metadata": asdict(self.metadata)
         }
 
@@ -588,6 +591,7 @@ class EnhancedMeetingSummarizer:
                 mentions=mentions,
                 key_numbers=key_numbers,
                 ai_answerable_questions=[],  # Not extracted in multi-stage
+                topics_to_explore=[],  # Not extracted in multi-stage
                 metadata=metadata
             )
 
@@ -998,13 +1002,18 @@ class SingleCallSummarizer:
             "Preserve ALL markdown formatting including bold participant names (**Name**) and bold subheadings."
         )
 
-        # Make Claude API call
+        # Build cache prefix for prompt caching (saves 90% on re-summarizations)
+        # The transcript portion is cached for 5 minutes, subsequent calls reuse it
+        cache_prefix = f"**TRANSCRIPT:**\n\n{transcript_text}\n\n---"
+
+        # Make Claude API call with prompt caching enabled
         logger.info("Calling Claude Haiku API for single-call extraction (fallback)")
         response = self.claude_client.generate_text(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            max_tokens=16000,  # Increased for RAG metadata fields
+            max_tokens=24000,  # Increased to handle large meetings (200+ participants)
             temperature=0.5,
+            cache_prefix=cache_prefix  # Enable caching for transcript portion
         )
 
         # Parse JSON response
@@ -1044,6 +1053,7 @@ class SingleCallSummarizer:
         highlights = data.get("highlights", [])
         key_numbers = data.get("key_numbers", [])
         ai_answerable_questions = data.get("ai_answerable_questions", [])
+        topics_to_explore = data.get("topics_to_explore", [])
         executive_summary = data.get("executive_summary", "")
         discussion_notes = data.get("discussion_notes", "")
 
@@ -1077,6 +1087,7 @@ class SingleCallSummarizer:
             mentions=[],  # Not extracted in single-call
             key_numbers=key_numbers,
             ai_answerable_questions=ai_answerable_questions,
+            topics_to_explore=topics_to_explore,
             overall_summary=overall_summary,
             metadata=metadata
         )
@@ -1275,5 +1286,375 @@ class SingleCallSummarizer:
         result["has_customer_complaint"] = flags.get("has_customer_complaint", False)
         result["has_technical_discussion"] = flags.get("has_technical_discussion", False)
         result["is_confidential"] = flags.get("is_confidential", False)
+
+        return result
+
+    # ============================================================================
+    # TWO-PASS REVIEW SYSTEM
+    # ============================================================================
+    # After Haiku generates the initial summary, optionally review with:
+    # - Haiku: For normal meetings (cheap quality polish)
+    # - Sonnet: For important meetings (executive, large, financial)
+    # ============================================================================
+
+    # Review prompt for quality polish (used by both Haiku and Sonnet review)
+    # Acts as Chief of Staff to the COO for executive-level precision
+    # Standard review prompt (JSON only) - for Haiku reviews and smaller meetings
+    REVIEW_PROMPT = """**ROLE:** You are the Chief of Staff to the COO of Townsquare Media. Your goal is to review the initial meeting summary for executive precision, internal logic, and strategic alignment.
+
+**TASK:**
+Review and refine the provided JSON summary. Your output must be the FINAL, polished JSON object that will be sent to 2,000 employees and stored in the RAG database.
+
+**REVIEW CRITERIA:**
+1. **Internal Consistency:** Do the dates in "discussion_notes" match the "action_items"? (e.g., if someone says calls start Jan 7th, ensure the Action Item isn't listed as Jan 8th).
+2. **Technical Precision:** Verify all "key_numbers" against the summary content. Use exact figures, not approximations.
+3. **Hierarchy of Importance:** Ensure "decisions" captures the *strategic intent* (the "Why"), not just the "What."
+4. **AI Questions (STRICT):** Do NOT add questions to ai_answerable_questions. If any question has asked_by as "Not explicitly asked" or similar vague attribution, DELETE that entry entirely. Only keep questions that were genuinely asked by a named person.
+5. **Name/Role Accuracy:** Cross-reference all names with Townsquare leadership roster:
+   - Bill Wilson - CEO
+   - Erik Hellum - COO
+   - Stuart Rosenstein - CFO
+   - Cristina Cipolla - CDO
+   - Kelly Quinn - CRO Ignite
+   - Scott Schatz - EVP Technology
+6. **JSON Integrity:** Ensure the final output is a single, valid JSON object. Escape all special characters.
+7. **Tone:** Executive, authoritative, and concise. Remove hedging language ("seems", "might", "possibly").
+8. **Action Item Quality:** Ensure no action items combine multiple assignees (split if needed). Each action item needs a clear owner.
+
+**FINAL CHECK (SILENT):**
+- Did I catch any mismatched deadlines?
+- Are key numbers consistent between executive_summary and key_numbers array?
+- Are all proper nouns consistently capitalized?
+
+**OUTPUT:**
+Return ONLY the refined JSON object. No commentary, no explanation.
+
+**JSON TO REVIEW:**
+{json_content}"""
+
+    # Enhanced review prompt (with transcript) - for high-stakes Sonnet reviews
+    # Used for: 50+ participants, executive meetings, financial discussions
+    REVIEW_PROMPT_WITH_TRANSCRIPT = """**ROLE:** You are the Chief of Staff to the COO of Townsquare Media. You have access to BOTH the original transcript AND the initial summary. Your goal is to ensure nothing important was missed and the summary accurately reflects the meeting.
+
+**TASK:**
+Review and refine the provided JSON summary by cross-referencing with the original transcript. Your output must be the FINAL, polished JSON object that will be sent to 2,000 employees and stored in the RAG database.
+
+**REVIEW CRITERIA (with transcript verification):**
+1. **Completeness Check:** Scan the transcript for any missed action items, decisions, or key numbers that weren't captured.
+2. **Quote Accuracy:** Verify that any quoted statements or specific numbers in the summary match the transcript.
+3. **Internal Consistency:** Do the dates in "discussion_notes" match the "action_items"? Cross-check against transcript.
+4. **Technical Precision:** Verify all "key_numbers" against BOTH the summary AND the original transcript. Use exact figures.
+5. **Hierarchy of Importance:** Ensure "decisions" captures the *strategic intent* (the "Why"), not just the "What."
+6. **AI Questions (STRICT):** Do NOT add questions to ai_answerable_questions. Only REMOVE questions that weren't actually spoken as questions in the transcript. If asked_by is vague or "Not explicitly asked", DELETE that entry.
+7. **Name/Role Accuracy:** Cross-reference all names with the transcript AND Townsquare leadership roster:
+   - Bill Wilson - CEO
+   - Erik Hellum - COO
+   - Stuart Rosenstein - CFO
+   - Cristina Cipolla - CDO
+   - Kelly Quinn - CRO Ignite
+   - Scott Schatz - EVP Technology
+8. **Speaker Attribution:** Verify that action items are assigned to the correct person based on transcript context.
+9. **JSON Integrity:** Ensure the final output is a single, valid JSON object. Escape all special characters.
+10. **Tone:** Executive, authoritative, and concise. Remove hedging language ("seems", "might", "possibly").
+11. **Action Item Quality:** Ensure no action items combine multiple assignees (split if needed). Each action item needs a clear owner.
+
+**FINAL CHECK (SILENT):**
+- Did I catch any mismatched deadlines?
+- Are key numbers consistent between executive_summary, key_numbers array, AND the transcript?
+- Are all proper nouns consistently capitalized?
+- Did I miss any important context from the transcript?
+
+**OUTPUT:**
+Return ONLY the refined JSON object. No commentary, no explanation.
+
+**JSON TO REVIEW:**
+{json_content}"""
+
+    # Thresholds for review escalation
+    REVIEW_CONFIG = {
+        "enable_review": True,              # Master toggle for review pass
+        "haiku_review_threshold": 0,        # Always do Haiku review (cheap ~$0.01-0.02)
+        "sonnet_review_threshold": 50,      # Participant count for Sonnet review
+        "sonnet_model": "claude-sonnet-4-5", # Sonnet model for important meetings
+    }
+
+    # Executive titles that trigger Sonnet review
+    EXECUTIVE_TITLES = [
+        "ceo", "cfo", "coo", "cto", "cmo", "cro",
+        "chief executive", "chief financial", "chief operating",
+        "chief technology", "chief marketing", "chief revenue",
+        "president", "evp", "executive vice president"
+    ]
+
+    def _should_review(
+        self,
+        data: dict,
+        meeting_metadata: Optional[Dict[str, Any]] = None
+    ) -> tuple[bool, str]:
+        """
+        Determine if review pass is needed and which model to use.
+
+        Args:
+            data: Parsed JSON response from initial generation
+            meeting_metadata: Meeting metadata including participants
+
+        Returns:
+            Tuple of (should_review: bool, model: "haiku" | "sonnet")
+        """
+        if not self.REVIEW_CONFIG.get("enable_review", True):
+            return False, "none"
+
+        use_sonnet = False
+        use_haiku = False
+
+        # Check quality_flags from Haiku output
+        quality_flags = data.get("quality_flags", {})
+        if quality_flags.get("confidence_level") == "low":
+            use_sonnet = True
+            logger.info("Review triggered: low confidence_level in quality_flags")
+        if quality_flags.get("potential_detail_loss"):
+            use_sonnet = True
+            logger.info("Review triggered: potential_detail_loss in quality_flags")
+
+        # Check participant count
+        participant_count = 0
+        if meeting_metadata:
+            participant_count = meeting_metadata.get("participant_count", 0)
+            participant_names = meeting_metadata.get("participant_names", [])
+
+            # Check for executive participants
+            for name in participant_names:
+                name_lower = name.lower()
+                for title in self.EXECUTIVE_TITLES:
+                    if title in name_lower:
+                        use_sonnet = True
+                        logger.info(f"Review triggered: executive participant '{name}'")
+                        break
+
+            # Check participant count thresholds
+            if participant_count >= self.REVIEW_CONFIG.get("sonnet_review_threshold", 50):
+                use_sonnet = True
+                logger.info(f"Review triggered: large meeting ({participant_count} participants >= 50)")
+            elif participant_count >= self.REVIEW_CONFIG.get("haiku_review_threshold", 25):
+                use_haiku = True
+                logger.info(f"Review triggered: medium meeting ({participant_count} participants >= 25)")
+
+        # Check for financial discussion flag
+        if data.get("has_financial_discussion") or any(
+            kn.get("category") == "financial" for kn in data.get("key_numbers", [])
+        ):
+            use_sonnet = True
+            logger.info("Review triggered: financial discussion detected")
+
+        if use_sonnet:
+            return True, "sonnet"
+        elif use_haiku:
+            return True, "haiku"
+        else:
+            return False, "none"
+
+    def _review_summary(
+        self,
+        data: dict,
+        use_sonnet: bool = False,
+        transcript_text: Optional[str] = None
+    ) -> dict:
+        """
+        Review and refine the summary JSON with a second pass.
+
+        Args:
+            data: Parsed JSON response from initial generation
+            use_sonnet: Whether to use Sonnet (True) or Haiku (False) for review
+            transcript_text: Optional transcript for high-stakes Sonnet reviews.
+                           When provided, enables cross-referencing for accuracy.
+
+        Returns:
+            Refined JSON data
+        """
+        start_time = time.time()
+
+        # Convert data back to JSON string for review
+        json_content = json.dumps(data, indent=2)
+
+        # System prompt for review
+        system_prompt = (
+            "You are an expert editor reviewing meeting summaries. "
+            "You MUST return ONLY valid, well-formed JSON. "
+            "Do not add commentary. Return NOTHING except the refined JSON object."
+        )
+
+        # Determine if this is a high-stakes review with transcript
+        include_transcript = use_sonnet and transcript_text is not None
+        cache_prefix = None
+
+        if include_transcript:
+            # High-stakes Sonnet review: include transcript for cross-referencing
+            # Build prompt with transcript first (for caching), then JSON
+            cache_prefix = f"**ORIGINAL TRANSCRIPT (for cross-reference):**\n\n{transcript_text}\n\n---\n\n"
+            review_prompt = cache_prefix + self.REVIEW_PROMPT_WITH_TRANSCRIPT.format(json_content=json_content)
+            logger.info(f"Sonnet review WITH transcript ({len(transcript_text)} chars, cached)")
+        else:
+            # Standard review: JSON only
+            review_prompt = self.REVIEW_PROMPT.format(json_content=json_content)
+
+        if use_sonnet:
+            # Create Sonnet client for review
+            sonnet_config = ClaudeConfig(
+                api_key=self.claude_config.api_key,
+                model=self.REVIEW_CONFIG.get("sonnet_model", "claude-sonnet-4-5"),
+                max_tokens=24000  # Increased to handle large meetings
+            )
+            review_client = ClaudeClient(sonnet_config)
+            review_type = "Sonnet+transcript" if include_transcript else "Sonnet"
+            logger.info(f"Performing {review_type} review pass for important meeting")
+        else:
+            # Use existing Haiku client
+            review_client = self.claude_client
+            logger.info("Performing Haiku review pass for quality polish")
+
+        try:
+            response = review_client.generate_text(
+                system_prompt=system_prompt,
+                user_prompt=review_prompt,
+                max_tokens=24000,  # Increased to handle large meetings
+                temperature=0.3,  # Lower temperature for consistent refinement
+                cache_prefix=cache_prefix  # Enable caching for transcript (if provided)
+            )
+
+            # Parse refined JSON
+            content = response["content"]
+            refined_data = self._parse_json_response(content)
+
+            generation_time = int((time.time() - start_time) * 1000)
+            model_used = "sonnet+transcript" if include_transcript else ("sonnet" if use_sonnet else "haiku")
+
+            # Log cache status if available
+            cache_status = ""
+            if response.get("cache_read_tokens", 0) > 0:
+                cache_status = " [CACHE HIT]"
+            elif response.get("cache_creation_tokens", 0) > 0:
+                cache_status = " [CACHE WRITE]"
+
+            logger.info(
+                f"✓ Review pass complete ({model_used}): "
+                f"{response['total_tokens']} tokens, ${response['cost']:.4f}, {generation_time}ms{cache_status}"
+            )
+
+            # Add review metadata
+            refined_data["_review_metadata"] = {
+                "reviewed": True,
+                "review_model": response["model"],
+                "review_tokens": response["total_tokens"],
+                "review_cost": response["cost"],
+                "review_time_ms": generation_time,
+                "included_transcript": include_transcript,
+                "cache_hit": response.get("cache_read_tokens", 0) > 0
+            }
+
+            return refined_data
+
+        except Exception as e:
+            logger.error(f"Review pass failed, using original: {e}")
+            # Return original data if review fails
+            data["_review_metadata"] = {
+                "reviewed": False,
+                "review_error": str(e)
+            }
+            return data
+
+    def generate_enhanced_summary_with_review(
+        self,
+        transcript_segments: List[Dict[str, Any]],
+        meeting_metadata: Optional[Dict[str, Any]] = None,
+        custom_instructions: Optional[str] = None,
+        force_review: Optional[str] = None  # "haiku", "sonnet", or None
+    ) -> EnhancedSummary:
+        """
+        Generate summary with optional review pass for quality improvement.
+
+        This is the recommended entry point for production use.
+
+        For high-stakes Sonnet reviews (50+ participants, executives, financial),
+        the transcript is passed to the reviewer for cross-referencing with
+        prompt caching enabled (saves 90% on the transcript input cost).
+
+        Args:
+            transcript_segments: List of transcript segments
+            meeting_metadata: Meeting metadata including participants
+            custom_instructions: Optional custom instructions
+            force_review: Force a specific review model ("haiku" or "sonnet")
+
+        Returns:
+            EnhancedSummary with refined content
+        """
+        # Format transcript for potential use in Sonnet review (cached)
+        transcript_text = self._format_transcript(transcript_segments)
+
+        # First pass: Generate with Haiku (transcript is cached here)
+        result = self.generate_enhanced_summary(
+            transcript_segments,
+            meeting_metadata,
+            custom_instructions
+        )
+
+        # Get the raw data for review decision
+        # We need to reconstruct data from result for review
+        data = {
+            "action_items": result.action_items,
+            "decisions": result.decisions,
+            "highlights": result.highlights,
+            "key_numbers": result.key_numbers,
+            "ai_answerable_questions": result.ai_answerable_questions,
+            "executive_summary": result.overall_summary.split("## Discussion Notes")[0].replace("## Executive Summary\n\n", "").strip(),
+            "discussion_notes": result.overall_summary.split("## Discussion Notes\n\n")[1] if "## Discussion Notes" in result.overall_summary else "",
+            "quality_flags": result.metadata.get("quality_flags", {}) if isinstance(result.metadata, dict) else {},
+        }
+
+        # Determine if review is needed
+        if force_review:
+            should_review = True
+            review_model = force_review
+        else:
+            should_review, review_model = self._should_review(data, meeting_metadata)
+
+        if should_review and review_model != "none":
+            use_sonnet = (review_model == "sonnet")
+
+            # For Sonnet reviews (high-stakes), include transcript for cross-referencing
+            # The transcript is cached from the Haiku call, so Sonnet gets a cache hit
+            review_transcript = transcript_text if use_sonnet else None
+
+            refined_data = self._review_summary(
+                data,
+                use_sonnet=use_sonnet,
+                transcript_text=review_transcript
+            )
+
+            # Update result with refined data
+            if refined_data.get("_review_metadata", {}).get("reviewed"):
+                # Rebuild EnhancedSummary with refined data
+                review_meta = refined_data.pop("_review_metadata", {})
+
+                # Update metadata with review info
+                if isinstance(result.metadata, dict):
+                    result.metadata["review"] = review_meta
+                    result.metadata["total_cost"] = result.metadata.get("total_cost", 0) + review_meta.get("review_cost", 0)
+                    result.metadata["total_tokens"] = result.metadata.get("total_tokens", 0) + review_meta.get("review_tokens", 0)
+
+                # Update content fields
+                result.action_items = refined_data.get("action_items", result.action_items)
+                result.decisions = refined_data.get("decisions", result.decisions)
+                result.highlights = refined_data.get("highlights", result.highlights)
+                result.key_numbers = refined_data.get("key_numbers", result.key_numbers)
+                result.ai_answerable_questions = refined_data.get("ai_answerable_questions", result.ai_answerable_questions)
+
+                # Rebuild overall_summary
+                exec_summary = refined_data.get("executive_summary", "")
+                disc_notes = refined_data.get("discussion_notes", "")
+                if exec_summary or disc_notes:
+                    result.overall_summary = f"## Executive Summary\n\n{exec_summary}\n\n## Discussion Notes\n\n{disc_notes}"
+
+                review_type = "sonnet+transcript" if use_sonnet else review_model
+                logger.info(f"Summary refined with {review_type} review pass")
 
         return result

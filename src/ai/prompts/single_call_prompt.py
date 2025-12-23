@@ -144,6 +144,19 @@ Teams transcription often mishears these phrases. ALWAYS correct them:
 - "half power" or "half-power" → "half-hour" (e.g., "half-hour calls")
 - "Lisa Durata" or "Lisa Durado" → "Lisa Daretta"
 
+**IMPORTANT COMPANY TERMINOLOGY & ACRONYMS:**
+
+These are key business terms and acronyms used at Townsquare. Preserve these exactly as written:
+
+- **SSP** = Strategic Sales Plan (executive planning process coordinated by Lisa Daretta)
+- **AMPED** = A sales/advertising product
+- **AMPED ex** or **AMPED ex 3rd party** = AMPED product that can exclude a sales source (important distinction)
+- **Ignite** = Townsquare Ignite, a key business unit
+- **TSI** = Townsquare Ignite (abbreviation)
+- **Townsquare Ignite** = Full name of the Ignite business unit
+
+When these terms appear in the transcript, preserve them in your summary with correct capitalization and spelling.
+
 **REQUIRED OUTPUT STRUCTURE:**
 
 {{
@@ -154,7 +167,8 @@ Teams transcription often mishears these phrases. ALWAYS correct them:
   "executive_summary": "...",  // String (50-125 words, varies by meeting complexity)
   "discussion_notes": "...",   // String (appropriate length based on audience + complexity)
   "collapsible_call_notes": "...", // String (30-50% of discussion_notes, scannable version)
-  "ai_answerable_questions": [...], // Array of ALL questions AI can help answer (no limit)
+  "ai_answerable_questions": [...], // Array of questions ACTUALLY ASKED (strict - real askers only)
+  "topics_to_explore": [...],      // Array of inferred topics worth exploring (no fake askers)
 
   // RAG/SEARCH METADATA (for future chatbot and knowledge base)
   "technical_entities": [...],     // Array of tools, libraries, ports, services mentioned
@@ -491,9 +505,23 @@ For each ACTUAL question provide:
 - Company-specific decisions ("Did we approve X?", "What did leadership decide?")
 - Rhetorical or social questions ("How are you?", "Right?", "You know?")
 
-Guidelines:
-- Include ALL genuinely asked AI-answerable questions (no limit - this section is high value)
-- ONLY include questions where your answer would genuinely help the team
+**ABSOLUTE RULE - NO INVENTED QUESTIONS:**
+This section is ONLY for questions that were LITERALLY SPOKEN as questions in the transcript.
+
+⛔ NEVER INCLUDE:
+- Questions you think "would be helpful" to answer
+- Questions implied by topics discussed
+- Questions the team "probably has" about concepts mentioned
+- ANY question where asked_by would be "Not explicitly asked" or similar
+
+✅ ONLY INCLUDE:
+- Questions where you can point to exact transcript text showing someone asking
+- Questions with a real person's name in asked_by (verify with <v SpeakerName> tags)
+
+**IT IS BETTER TO RETURN AN EMPTY ARRAY than to invent questions.**
+Many meetings have zero AI-answerable questions - that's completely fine.
+
+Guidelines for ACTUAL questions only:
 - Provide SPECIFIC, ACTIONABLE answers (tool names, approaches, resources)
 - If you're not confident in an answer, still provide it with appropriate caveats
 - Follow-up prompts should help them dig deeper on the topic
@@ -525,6 +553,51 @@ Example (finance domain):
 }}
 
 If no AI-answerable questions are identified, use: "ai_answerable_questions": []
+
+---
+
+**TOPICS TO EXPLORE (Separate from Questions Asked):**
+
+This section captures valuable topics discussed that AI can help with, even if no one explicitly asked a question.
+These are INFERRED from the discussion - things the team would benefit from learning more about.
+
+**INCLUDE topics where:**
+- A tool, technology, or concept was mentioned but not fully explained
+- The team discussed a challenge that has well-known solutions
+- Industry best practices could help with something discussed
+- A comparison or decision could benefit from external knowledge
+- Legal, ethical, or compliance considerations apply to something discussed (e.g., recording meetings, data privacy, employee monitoring)
+- Security or privacy implications weren't fully addressed
+- Cost or budget optimization opportunities exist (spending mentioned without ROI analysis)
+- Vendor/product alternatives exist that weren't discussed (e.g., "we use X" but Y and Z are strong alternatives)
+- Risks were raised but mitigation strategies weren't fully addressed
+- Scalability considerations apply to something being built or planned
+- Tribal knowledge is being shared that should be documented (processes, institutional knowledge)
+- Manual processes were described that could potentially be automated
+
+**DO NOT include:**
+- Internal company-specific topics (budgets, headcount, org decisions)
+- Topics already covered in ai_answerable_questions
+- Generic/obvious topics that wouldn't provide value
+
+For each topic provide:
+- **topic**: A question-formatted topic (e.g., "What are best practices for X?")
+- **context**: Why this topic is relevant based on the discussion (1 sentence)
+- **answer**: Your helpful answer (2-4 sentences with specific details)
+- **follow_up_prompts**: Array of 1-2 suggested prompts for deeper research
+
+Example topics_to_explore entry:
+{{
+  "topic": "What are best practices for managing SSL certificates across multiple Docker containers?",
+  "context": "Team discussed SSL setup for their proxy configuration",
+  "answer": "Centralized certificate management is recommended: (1) Use a reverse proxy (Nginx, Traefik) to handle TLS termination at one point; (2) Let's Encrypt with certbot automates free certificate renewal; (3) Store certificates in a shared Docker volume or use a secrets manager. This avoids certificate sprawl and simplifies renewal.",
+  "follow_up_prompts": [
+    "How do I set up automatic Let's Encrypt renewal with Nginx?",
+    "What's the best way to handle SSL certificates in Docker Swarm or Kubernetes?"
+  ]
+}}
+
+If no valuable topics are identified, use: "topics_to_explore": []
 
 ---
 

@@ -161,11 +161,13 @@ class SummaryProcessor(BaseProcessor):
                 if custom_instructions:
                     self._log_progress(job, f"Using custom instructions: {custom_instructions}")
 
-                # Generate enhanced summary (run in executor to avoid blocking event loop)
+                # Generate enhanced summary with optional review pass
+                # Review is triggered for: large meetings (25+ participants), executives, financial discussions
+                # Uses Haiku review for 25-49 participants, Sonnet review for 50+ or executives
                 loop = asyncio.get_event_loop()
                 enhanced_result: EnhancedSummary = await loop.run_in_executor(
                     None,
-                    lambda: self.summarizer.generate_enhanced_summary(
+                    lambda: self.summarizer.generate_enhanced_summary_with_review(
                         transcript_segments=transcript.parsed_content,  # Pass raw segments
                         meeting_metadata=meeting_metadata,
                         custom_instructions=custom_instructions
@@ -180,12 +182,13 @@ class SummaryProcessor(BaseProcessor):
                 mentions = enhanced_result.mentions
                 key_numbers = enhanced_result.key_numbers  # FIX: Extract key_numbers
                 ai_answerable_questions = enhanced_result.ai_answerable_questions
+                topics_to_explore = enhanced_result.topics_to_explore
                 metadata = enhanced_result.metadata
 
                 input_tokens = metadata.get("input_tokens", 0)
                 output_tokens = metadata.get("output_tokens", 0)
                 total_tokens = metadata.get("total_tokens", input_tokens + output_tokens)
-                cost = metadata.get("total_cost", 0.0)
+                generation_cost = metadata.get("total_cost", 0.0)
                 model = metadata.get("model", "unknown")
                 generation_time_ms = metadata.get("generation_time_ms", 0)
                 truncated = False  # Enhanced summarizer doesn't truncate
@@ -194,16 +197,33 @@ class SummaryProcessor(BaseProcessor):
                 approach = metadata.get("approach", "multi_stage")
                 extraction_calls = metadata.get("extraction_calls", 5)
 
+                # Extract review metadata (if two-pass review was performed)
+                review_meta = metadata.get("review", {})
+                was_reviewed = review_meta.get("reviewed", False)
+                review_model = review_meta.get("review_model") if was_reviewed else None
+                review_tokens = review_meta.get("review_tokens", 0) if was_reviewed else None
+                review_cost = review_meta.get("review_cost", 0.0) if was_reviewed else None
+                total_cost = generation_cost + (review_cost or 0.0)
+
+                # For backward compatibility, use generation_cost as 'cost' for logging
+                cost = total_cost
+
+                # Log generation details
+                review_info = f" + {review_model} review (${review_cost:.4f})" if was_reviewed else ""
                 self._log_progress(
                     job,
                     f"✓ Summary generated using {approach} approach: {output_tokens} tokens, "
-                    f"${cost:.4f}, {extraction_calls} API call(s), {generation_time_ms}ms"
+                    f"${generation_cost:.4f}{review_info}, total=${total_cost:.4f}, {generation_time_ms}ms"
                 )
 
                 # Log discussion notes word count if available (single-call only)
                 word_count = metadata.get("discussion_notes_word_count")
                 if word_count:
                     logger.info(f"Discussion notes word count: {word_count}")
+
+                # Log review status
+                if was_reviewed:
+                    self._log_progress(job, f"✓ Two-pass review applied: {review_model} ({review_tokens} tokens)")
 
                 # Extract classification metadata (enterprise intelligence)
                 classification_data = {}
@@ -255,6 +275,13 @@ class SummaryProcessor(BaseProcessor):
                     completion_tokens=output_tokens,
                     total_tokens=total_tokens,
                     generation_time_ms=generation_time_ms,
+                    # Cost tracking (NEW)
+                    generation_cost=generation_cost,
+                    review_model=review_model,
+                    review_tokens=review_tokens,
+                    review_cost=review_cost,
+                    total_cost=total_cost,
+                    was_reviewed=was_reviewed,
                     # Enhanced summary data (NEW)
                     action_items_json=action_items,
                     decisions_json=decisions,
@@ -263,6 +290,7 @@ class SummaryProcessor(BaseProcessor):
                     mentions_json=mentions,
                     key_numbers_json=key_numbers,  # FIX: Add key_numbers_json
                     ai_answerable_questions_json=ai_answerable_questions,
+                    topics_to_explore_json=topics_to_explore,
                     version=version,
                     custom_instructions=custom_instructions,
                     # Enterprise intelligence metadata (classification extraction)

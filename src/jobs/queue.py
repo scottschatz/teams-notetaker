@@ -278,7 +278,7 @@ class JobQueueManager:
         with self.db.get_session() as session:
             job = session.query(JobQueue).filter_by(id=job_id).first()
             if job and job.status == "running":
-                job.heartbeat_at = datetime.now()
+                job.heartbeat_at = datetime.utcnow()  # Must use UTC to match stale_threshold
                 session.commit()
                 return True
             return False

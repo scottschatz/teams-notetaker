@@ -25,6 +25,65 @@ You MUST return ONLY a valid JSON object. No explanatory text before or after. N
 
 ---
 
+**AUDIENCE INFERENCE & ADAPTATION (CRITICAL):**
+
+Infer the primary audience for this meeting based on:
+- Participant roles and titles
+- Topics discussed
+- Level of technical detail in the transcript
+
+Audience types:
+- TECHNICAL: Engineers, IT, developers; implementation detail expected
+- OPERATIONAL: Mixed technical + business; systems, process, execution
+- BUSINESS: Managers, sales, leadership; outcomes, tradeoffs, implications
+
+**CRITICAL: BUSINESS audience does NOT mean company-wide summary.**
+BUSINESS audience means: explain technical context briefly so non-technical readers can follow.
+It does NOT mean: remove detail, abstract specifics, or sanitize content.
+
+Audience inference priority (in order):
+1. Level of technical detail in conversation (code, systems, configs)
+2. Decisions being made (technical vs strategic)
+3. Participant titles (only if #1 and #2 are unclear)
+
+Rules:
+- Audience inference affects ONLY explanation depth and terminology.
+- Audience inference MUST NOT remove:
+  - Technical detail
+  - Numbers or metrics
+  - Named tools or systems
+  - Action items
+  - Decision rationale
+- Do NOT abstract or sanitize content for executives.
+- Assume readers did NOT attend the meeting.
+
+Explanation guidance:
+- TECHNICAL: Assume domain knowledge; minimal background explanation.
+- OPERATIONAL: Explain tools/processes only where needed for coordination.
+- BUSINESS: Briefly explain technical concepts on first mention.
+
+---
+
+**INTERNAL CLASSIFICATION (DO NOT OUTPUT):**
+
+Before generating the summary, internally determine:
+- inferred_audience: technical | operational | business
+- meeting_complexity: low | medium | high
+
+Meeting complexity is based on CONTENT, not duration:
+- LOW: Single-topic sync, status update, brief check-in
+- MEDIUM: Multi-topic discussion, some decisions, moderate detail
+- HIGH: Strategic decisions, financial analysis, multi-stakeholder, technical architecture
+
+Use this classification ONLY to:
+- Adjust explanation depth
+- Determine discussion_notes length
+- Shape executive_summary tone
+
+Do NOT output these values.
+
+---
+
 **CRITICAL PRESERVATION RULES (APPLY TO ALL SECTIONS):**
 
 These rules ensure NO detail is lost. Each section is INDEPENDENT - do not reduce detail in one section to make room for another.
@@ -93,7 +152,8 @@ Teams transcription often mishears these phrases. ALWAYS correct them:
   "highlights": [...],         // Array of key moment objects (5-8 max)
   "key_numbers": [...],        // Array of quantitative metric objects (max 20)
   "executive_summary": "...",  // String (50-125 words, varies by meeting complexity)
-  "discussion_notes": "...",   // String (appropriate length based on meeting complexity)
+  "discussion_notes": "...",   // String (appropriate length based on audience + complexity)
+  "collapsible_call_notes": "...", // String (30-50% of discussion_notes, scannable version)
   "ai_answerable_questions": [...], // Array of ALL questions AI can help answer (no limit)
 
   // RAG/SEARCH METADATA (for future chatbot and knowledge base)
@@ -101,7 +161,10 @@ Teams transcription often mishears these phrases. ALWAYS correct them:
   "projects_referenced": [...],    // Array of project/repo names discussed
   "rejected_alternatives": [...],  // Array of options that were NOT chosen (with reasons)
   "risk_indicators": {{...}},      // Object with sentiment, urgency, risk flags
-  "knowledge_graph_links": [...]   // Array of relationship triples (subject-predicate-object)
+  "knowledge_graph_links": [...],  // Array of relationship triples (subject-predicate-object)
+
+  // QUALITY FLAGS (optional - include only if applicable)
+  "quality_flags": {{...}}         // Optional object for programmatic escalation decisions
 }}
 
 ---
@@ -273,6 +336,19 @@ Content:
 - Include specific names, numbers, and dates from the transcript
 - **IMPORTANT: Bold all participant names** using **Name** markdown
 
+**EXECUTIVE SUMMARY AUDIENCE ALIGNMENT:**
+
+Adapt tone and explanation level to inferred audience:
+- Technical: Focus on outcomes and decisions; minimal explanation
+- Operational: Bridge technical execution and business impact
+- Business: Include brief context for technical decisions
+
+Executive summary MUST still include:
+- Named participants
+- Key decisions
+- Quantitative metrics
+- Why outcomes matter
+
 Example executive_summary:
 "**Scott Schatz** led a strategic meeting addressing AI technology decisions, personnel changes, and market opportunities. The team decided to build an in-house AI call summary solution instead of purchasing Ignite licenses, saving significant licensing costs while providing **Joe Ainsworth** more customization control. **Scott** approved immediate termination of underperforming personnel including **James Tejada**. The group discussed a potential $600K Danbury-Shreveport market swap with Cumulus, though **Bill Jones** raised cash flow concerns requiring careful CapEx analysis before proceeding."
 
@@ -282,10 +358,24 @@ Example executive_summary:
 
 Create a consolidated narrative summary organized by THEME (not chronologically).
 
-**LENGTH**: Make the discussion notes appropriate to the meeting complexity and content:
-- SHORT meetings (<30 min, few topics): 200-300 words
-- MEDIUM meetings (30-60 min, moderate complexity): 300-500 words
-- COMPLEX meetings (60+ min, many topics/decisions): 500-800 words
+**DISCUSSION NOTES LENGTH GUIDANCE:**
+
+Determine length using BOTH inferred audience and meeting complexity:
+
+LOW complexity:
+- Any audience: 200–300 words
+
+MEDIUM complexity:
+- Technical: 350–500 words
+- Operational: 300–450 words
+- Business: 250–400 words
+
+HIGH complexity:
+- Technical: 500–800 words
+- Operational: 400–650 words
+- Business: 350–600 words
+
+Failure to meet appropriate depth for audience and complexity is INVALID output.
 
 The goal is comprehensive coverage of key themes, not arbitrary word limits.
 Focus on quality and completeness over brevity.
@@ -322,6 +412,42 @@ The meeting addressed several staffing decisions. **Scott** approved immediate t
 **Market Opportunities and Financial Analysis**
 
 **Eric Williams** and the team evaluated a proposed $600K Danbury-Shreveport market swap with Cumulus. While the strategic benefits were clear, **Bill Jones** raised concerns about Danbury cash flow implications and emphasized the need for careful CapEx analysis before proceeding. **Eric** also highlighted that trade revenue reached $3.8M this year versus the typical $1M baseline, demonstrating strong performance."
+
+---
+
+**COLLAPSIBLE CALL NOTES (REQUIRED):**
+
+Generate a condensed, scannable version of discussion_notes designed for collapsible UI display (e.g., Teams, dashboards).
+
+Rules:
+- 30–50% of the length of discussion_notes
+- Organized by the SAME thematic subheadings
+- Preserve:
+  - Decisions
+  - Key numbers
+  - Action-driving context
+- Remove:
+  - Narrative elaboration
+  - Redundant explanation
+- **PREFER short paragraphs over bullets** - bullets only if listing 3+ parallel items
+- Do NOT introduce new information
+- Do NOT remove named tools, systems, or people
+- Must stand alone if expanded independently
+- **IMPORTANT: Bold all participant names** using **Name** markdown
+- **CRITICAL: Bold the thematic subheadings** using **Subheading** markdown
+
+Example collapsible_call_notes:
+"**AI Technology Decisions**
+
+**Scott Schatz** approved in-house AI call summary solution over Ignite licenses for cost savings and customization. **Joe Ainsworth** to lead implementation using Claude API.
+
+**Personnel Changes**
+
+**Scott** approved termination of **James Tejada** and NY engineer. **Eric Williams** identified $4M potential savings in broadcast personnel. Teams/VoIP migration completing mid-January.
+
+**Market Opportunities**
+
+$600K Danbury-Shreveport swap with Cumulus under evaluation. **Bill Jones** raised Danbury cash flow concerns; CapEx analysis required. Trade revenue reached $3.8M vs $1M typical."
 
 ---
 
@@ -461,6 +587,25 @@ This enables queries like: "Who is the primary contact for Nginx issues?" or "Wh
 
 ---
 
+**QUALITY FLAGS (OPTIONAL):**
+
+Include this field ONLY if one or more conditions apply. If no flags apply, omit the entire field.
+
+{{
+  "confidence_level": "high" | "medium" | "low",
+  "potential_detail_loss": true | false,
+  "reason": "Brief explanation if low confidence or potential loss"
+}}
+
+When to include:
+- **confidence_level: "low"** - Transcript is fragmented, speakers unclear, or key context missing
+- **potential_detail_loss: true** - Meeting had high complexity but summary may have compressed too much
+
+This enables programmatic escalation to Sonnet when Haiku output quality is uncertain.
+Do NOT include quality_flags if confidence is high and no detail loss concerns.
+
+---
+
 **TRANSCRIPT:**
 
 {transcript}
@@ -477,6 +622,7 @@ Remember:
 - Do NOT echo back the transcript in your response
 - Ensure all strings are properly quoted and escaped
 - Ensure all JSON arrays and objects are properly closed
+- **AVOID UNESCAPED QUOTATION MARKS** - use single quotes or escape double quotes in string values
 - Discussion notes should be appropriate length for meeting complexity (200-800 words)
 
 **FINAL PRESERVATION CHECK:**
@@ -489,4 +635,24 @@ Before returning, verify:
 □ Every decision has technical/business justification in reasoning, not just "what" but "why"
 □ Every specific detail in executive_summary is explained in discussion_notes (Cross-Reference)
 □ All relative dates (Tomorrow, Next week) are converted to absolute dates
+
+**QUALITY FAILURE CONDITIONS (INVALID OUTPUT):**
+The following conditions make output INVALID:
+□ Discussion_notes explanation depth mismatched to inferred audience
+□ Over-explaining basic concepts in technical meetings
+□ Under-explaining technical decisions in business meetings
+□ Collapsible_call_notes omits a decision or key number present in discussion_notes
+□ Collapsible_call_notes exceeds 50% of discussion_notes length
+□ Missing required JSON fields
+
+**FINAL SELF-CHECK (SILENT):**
+
+Before returning output:
+- Verify audience inference consistency
+- Verify collapsible_call_notes accuracy
+- Verify no detail loss between discussion_notes and collapsible_call_notes
+
+If any issue is detected:
+- Regenerate the FULL response once
+- Do NOT mention retries or checks
 """

@@ -1,8 +1,8 @@
 # LLM Comparison Testing for Meeting Summarization
 
-**Date:** December 20, 2025
+**Date:** December 20, 2025 (Updated: December 23, 2025)
 **Purpose:** Evaluate alternative LLMs to Claude Haiku 4.5 for cost optimization
-**Status:** ⚠️ REVERTED TO HAIKU - Gemini disabled after quality comparison (infrastructure in place)
+**Status:** ⚠️ HAIKU PRIMARY - Gemini disabled after quality issues (infrastructure ready for re-enablement)
 
 ---
 
@@ -10,14 +10,39 @@
 
 | Model | Cost/Summary | Speed | Success Rate | Quality | Status |
 |-------|--------------|-------|--------------|---------|--------|
-| **Claude Haiku 4.5** | ~$0.004 | 2-6s | 100% | 9.5/10 | ✅ **ACTIVE** |
-| Gemini 3 Flash | ~$0.0025 | 15-24s | 100% | 9.0/10 | ⏸️ Disabled (code ready) |
+| **Claude Haiku 4.5** | ~$0.06 | 2-6s | 100% | 9.5/10 | ✅ **PRIMARY** |
+| Gemini 3 Flash | ~$0.03 | 15-24s | 100% | 8.5/10 | ⏸️ Disabled (quality issues) |
 | GPT-5 Mini | $0.012 | 90-130s | 100%* | 9.1/10 | Tested, not deployed |
 | Gemini 2.5 Flash | - | 34s | 20% | N/A | ❌ Not viable |
 
 *With optimized prompt and 16K token limit
 
-### Production Architecture (Deployed Dec 2025)
+**NOTE:** Cost estimates updated Dec 23, 2025 to reflect actual pricing:
+- Haiku: $1.00/MTok input, $5.00/MTok output (~$0.06/summary, not $0.004)
+- Gemini: $0.50/MTok input, $3.00/MTok output (~$0.03/summary, 48% cheaper)
+
+### Production Architecture (Current: Dec 2025)
+
+**CURRENT STATUS: Haiku Primary (Gemini Disabled)**
+
+```
+User Request
+    ↓
+┌─────────────────────────────────┐
+│ USE_GEMINI_PRIMARY = False      │  ← Toggle in src/ai/summarizer.py
+└───────────┬─────────────────────┘
+            ↓
+┌─────────────────────────────────┐
+│ Claude Haiku 4.5 (ONLY)         │  ← Primary path (Gemini disabled)
+│ - Uses single_call_prompt.py    │
+│ - $0.06/summary                  │
+│ - 100% reliable                  │
+└─────────────────────────────────┘
+```
+
+**AVAILABLE ARCHITECTURE (if Gemini re-enabled):**
+
+Set `USE_GEMINI_PRIMARY = True` in `src/ai/summarizer.py`:
 
 ```
 User Request
@@ -39,6 +64,12 @@ User Request
                 │ - Uses single_call_prompt.py │
                 └─────────────────────────┘
 ```
+
+**WHY GEMINI IS DISABLED:**
+- Duration extraction issues: "None minutes" in output
+- Lower detail quality in discussion notes compared to Haiku
+- Speaker participation stats inferior to Haiku
+- Infrastructure remains in place for easy re-enablement
 
 ### Key Files
 
@@ -816,5 +847,20 @@ The Gemini-optimized prompt (`gemini_prompt.py`) includes these key changes from
 ---
 
 *Document maintained by: Development Team*
-*Last updated: December 20, 2025*
-*Status: Gemini 3 Flash deployed as primary, Haiku as fallback*
+*Last updated: December 23, 2025*
+*Status: Haiku primary only (Gemini disabled due to quality issues, infrastructure ready for re-enablement)*
+
+---
+
+## Update Log
+
+### December 23, 2025
+- **Status Change**: Gemini disabled, Haiku running as primary only
+- **Reason**: Quality comparison revealed Gemini issues:
+  - Duration extraction: "None minutes" in outputs
+  - Discussion notes: Less detailed than Haiku
+  - Speaker stats: Inferior word counts and speaking time
+- **Cost Impact**: ~$0.06/summary (Haiku) vs projected $0.0025/summary (Gemini)
+- **Toggle**: `USE_GEMINI_PRIMARY = False` in `src/ai/summarizer.py`
+- **Infrastructure**: All Gemini code remains in place for easy re-enablement
+- **Pricing Correction**: Updated cost estimates to reflect actual per-summary costs ($0.06 not $0.004)

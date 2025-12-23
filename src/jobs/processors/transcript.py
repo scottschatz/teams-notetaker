@@ -373,6 +373,27 @@ class TranscriptProcessor(BaseProcessor):
                     if recording_sharepoint_url:
                         meeting_in_session.recording_sharepoint_url = recording_sharepoint_url
 
+                # Mark transcript speakers as attended
+                # The call record sessions don't always match who actually spoke
+                # This ensures the email shows correct "Top Speakers" list
+                if speaker_details:
+                    speaker_names = [s['name'].lower() for s in speaker_details if s.get('name') and s['name'] != 'Unknown']
+                    if speaker_names:
+                        from sqlalchemy import func
+                        from src.core.database import MeetingParticipant
+                        # Update attended=True for participants matching speaker names
+                        # Use flexible matching: exact or normalized (dots/underscores → spaces)
+                        updated = session.query(MeetingParticipant).filter(
+                            MeetingParticipant.meeting_id == meeting_id,
+                            MeetingParticipant.attended == False,
+                            func.lower(func.replace(func.replace(MeetingParticipant.display_name, '.', ' '), '_', ' ')).in_(
+                                [name.replace('.', ' ').replace('_', ' ') for name in speaker_names]
+                            )
+                        ).update({MeetingParticipant.attended: True}, synchronize_session=False)
+
+                        if updated > 0:
+                            self._log_progress(job, f"Marked {updated} transcript speakers as attended")
+
                 # Check auto_process flag from job input_data (default True for backwards compat)
                 auto_process = job.input_data.get("auto_process", True) if job.input_data else True
 

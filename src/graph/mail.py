@@ -579,11 +579,20 @@ class EmailSender:
         # v2.1: Attendees & Participation (HYBRID: top 3 speakers detailed, others simplified)
         speaker_details = transcript_stats.get("speaker_details", []) if transcript_stats else []
 
-        # Create speaker lookup for quick access
+        # Helper function to normalize names for matching
+        # Handles cases like "erik.hellum" vs "Erik Hellum"
+        def normalize_name(name: str) -> str:
+            if not name:
+                return ""
+            # Replace periods and underscores with spaces, lowercase, strip extra whitespace
+            normalized = name.lower().replace(".", " ").replace("_", " ")
+            return " ".join(normalized.split())  # Collapse multiple spaces
+
+        # Create speaker lookup for quick access (using normalized names)
         speaker_map = {}
         for speaker in speaker_details:
             name = speaker.get('name', '').strip()
-            speaker_map[name.lower()] = speaker
+            speaker_map[normalize_name(name)] = speaker
 
         if participants and len(participants) > 0:
             # Sort participants by speaking time (most active first)
@@ -591,7 +600,8 @@ class EmailSender:
             non_speakers = []
             for p in participants:
                 name = p.get("display_name", p.get("email", ""))
-                speaker_data = speaker_map.get(name.lower())
+                # Use normalized name for matching
+                speaker_data = speaker_map.get(normalize_name(name))
                 if speaker_data:
                     p['_speaker_data'] = speaker_data
                     speakers.append(p)
@@ -870,7 +880,9 @@ class EmailSender:
 
         # Key Numbers Section (v2.1: NEW - all financial/quantitative metrics)
         key_numbers = enhanced_summary_data.get("key_numbers", [])
-        if key_numbers:
+        MAX_KEY_NUMBERS = 20  # Skip section if too many numbers (loses meaning)
+
+        if key_numbers and len(key_numbers) <= MAX_KEY_NUMBERS:
             html += """        <div style="background: #e8f5e9; padding: 15px; margin: 25px 0; border-radius: 4px; border-left: 4px solid #4caf50;">
             <h3 style="margin-top: 0; color: #2e7d32;">📊 Key Numbers</h3>
             <ul style="list-style: none; padding-left: 0;">
@@ -886,6 +898,9 @@ class EmailSender:
         </div>
 
 """
+        elif key_numbers and len(key_numbers) > MAX_KEY_NUMBERS:
+            # Too many numbers - skip section (would be overwhelming and lose meaning)
+            logger.debug(f"Skipping Key Numbers section: {len(key_numbers)} numbers exceeds limit of {MAX_KEY_NUMBERS}")
 
         # AI Research Assistant Section (v2.2: NEW - questions AI can help answer)
         ai_questions = enhanced_summary_data.get("ai_answerable_questions", [])

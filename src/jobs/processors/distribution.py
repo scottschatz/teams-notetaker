@@ -568,13 +568,13 @@ class DistributionProcessor(BaseProcessor):
         self, job, meeting, participant_emails: List[str], session
     ) -> None:
         """
-        Expand distribution groups in meeting invitees and add pilot users who are members.
+        Expand distribution groups in meeting participants/invitees and add pilot users who are members.
 
         When a meeting is invited via a distribution group (e.g., salesleadership@company.com),
         the individual members don't appear in the participant list. This method:
-        1. Fetches the online meeting invitees
-        2. Identifies any invitee that is a distribution group (not a regular user)
-        3. Expands the group to get individual members
+        1. Collects all emails from both participant list AND online meeting invitees
+        2. Checks each email to see if it's a distribution group
+        3. Expands groups to get individual members
         4. Adds any pilot users from the group to participant_emails
 
         Args:
@@ -583,66 +583,70 @@ class DistributionProcessor(BaseProcessor):
             participant_emails: List to append new emails to (modified in place)
             session: Database session for pilot user lookup
         """
-        if not meeting.join_url or not meeting.organizer_user_id:
-            return
-
         try:
             loop = asyncio.get_event_loop()
 
-            # Fetch online meeting invitees
-            online_meetings = await loop.run_in_executor(
-                None,
-                lambda: self.graph_client.get(
-                    f"/users/{meeting.organizer_user_id}/onlineMeetings",
-                    params={"$filter": f"joinWebUrl eq '{meeting.join_url}'"}
-                )
-            )
+            # Collect all potential emails to check for distribution groups
+            # Start with existing participant emails (which may include groups from call records)
+            emails_to_check = {e.lower() for e in participant_emails if e}
 
-            if not online_meetings.get("value"):
-                return
+            # Also add invitees from online meeting if available
+            if meeting.join_url and meeting.organizer_user_id:
+                try:
+                    online_meetings = await loop.run_in_executor(
+                        None,
+                        lambda: self.graph_client.get(
+                            f"/users/{meeting.organizer_user_id}/onlineMeetings",
+                            params={"$filter": f"joinWebUrl eq '{meeting.join_url}'"}
+                        )
+                    )
 
-            om = online_meetings["value"][0]
-            om_participants = om.get("participants", {})
+                    if online_meetings.get("value"):
+                        om = online_meetings["value"][0]
+                        om_participants = om.get("participants", {})
 
-            # Get all invitee emails (organizer + attendees)
-            invitee_emails = set()
-            org = om_participants.get("organizer", {})
-            if org.get("upn"):
-                invitee_emails.add(org["upn"].lower())
+                        org = om_participants.get("organizer", {})
+                        if org.get("upn"):
+                            emails_to_check.add(org["upn"].lower())
 
-            for att in om_participants.get("attendees", []):
-                if att.get("upn"):
-                    invitee_emails.add(att["upn"].lower())
+                        for att in om_participants.get("attendees", []):
+                            if att.get("upn"):
+                                emails_to_check.add(att["upn"].lower())
+                except Exception as e:
+                    self._log_progress(job, f"Could not fetch online meeting invitees: {e}", "warning")
 
-            # Track emails already in participant list
-            existing_emails = {e.lower() for e in participant_emails if e}
-
-            # Check each invitee to see if it's a distribution group
+            # Track emails of actual users (not groups) for deduplication
+            user_emails = set()
             groups_expanded = 0
             pilot_users_added = 0
 
-            for invitee_email in invitee_emails:
-                # Skip if already in participant list
-                if invitee_email in existing_emails:
-                    continue
-
+            # Check each email to see if it's a distribution group
+            for email in emails_to_check:
                 # Try to expand as distribution group
                 members = await loop.run_in_executor(
                     None,
-                    lambda email=invitee_email: self.graph_client.get_distribution_group_members(email)
+                    lambda email=email: self.graph_client.get_distribution_group_members(email)
                 )
 
                 if members:
+                    # It's a distribution group - expand it
                     groups_expanded += 1
                     self._log_progress(
                         job,
-                        f"Expanding distribution group: {invitee_email} ({len(members)} members)"
+                        f"Expanding distribution group: {email} ({len(members)} members)"
                     )
 
                     # Check each member against pilot users
                     for member in members:
                         member_email = member.get("email", "").lower()
-                        if not member_email or member_email in existing_emails:
+                        if not member_email or member_email in user_emails:
+                            continue
+
+                        # Track as a real user email
+                        user_emails.add(member_email)
+
+                        # Skip if already in the original participant list
+                        if member_email in {e.lower() for e in participant_emails}:
                             continue
 
                         # Check if member is a pilot user
@@ -650,12 +654,14 @@ class DistributionProcessor(BaseProcessor):
                             # Check preferences - only add if should receive emails
                             if self.pref_manager.should_send_email(member_email, meeting.id):
                                 participant_emails.append(member_email)
-                                existing_emails.add(member_email)
                                 pilot_users_added += 1
                                 self._log_progress(
                                     job,
                                     f"  + Added pilot user from group: {member.get('displayName')} ({member_email})"
                                 )
+                else:
+                    # Not a group - it's a regular user
+                    user_emails.add(email)
 
             if groups_expanded > 0:
                 self._log_progress(

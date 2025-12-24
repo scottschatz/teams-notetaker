@@ -169,6 +169,8 @@ class PreferenceManager:
         Resolve email to user_id (GUID) via Graph API.
 
         Fetches user info from Azure AD and caches the alias mapping.
+        First tries direct lookup by email (works if email == UPN).
+        Falls back to search by mail address if direct lookup fails.
 
         Args:
             email: Email address to resolve
@@ -186,10 +188,37 @@ class PreferenceManager:
             config = get_config()
             graph_client = GraphAPIClient(config.graph_api)
 
-            user_info = graph_client.get(
-                f"/users/{email}",
-                params={"$select": "id,mail,userPrincipalName,displayName,jobTitle"}
-            )
+            user_info = None
+
+            # First try direct lookup (works when email == UPN)
+            try:
+                user_info = graph_client.get(
+                    f"/users/{email}",
+                    params={"$select": "id,mail,userPrincipalName,displayName,jobTitle"}
+                )
+            except GraphAPIError as e:
+                # Direct lookup failed - try search by mail address
+                # This handles cases where mail != UPN (e.g., Becky.Degener vs rebecca.degener)
+                logger.debug(f"Direct lookup failed for {email}, trying search: {e}")
+                try:
+                    search_result = graph_client.get(
+                        "/users",
+                        params={
+                            "$filter": f"mail eq '{email}'",
+                            "$select": "id,mail,userPrincipalName,displayName,jobTitle",
+                            "$top": "1"
+                        }
+                    )
+                    users = search_result.get("value", [])
+                    if users:
+                        user_info = users[0]
+                        logger.info(f"Found {email} via mail search (UPN: {user_info.get('userPrincipalName')})")
+                except GraphAPIError as search_error:
+                    logger.warning(f"Search by mail also failed for {email}: {search_error}")
+
+            if not user_info:
+                logger.warning(f"Could not resolve {email} via direct lookup or mail search")
+                return None, email, ""
 
             user_id = user_info.get("id")
             primary_email = user_info.get("mail") or user_info.get("userPrincipalName", "")
